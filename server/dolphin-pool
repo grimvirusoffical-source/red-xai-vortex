@@ -1,0 +1,10 @@
+#!/bin/sh
+# dolphin-pool on|off|status : toggle llama.cpp RPC pooling with Mac rpc-server via SSH reverse tunnel (127.0.0.1:50052)
+F=/etc/dolphin/pool.env; P=${DOLPHIN_RPC_PORT:-50052}
+case "$1" in
+ on)  if ! timeout 3 bash -c "</dev/tcp/127.0.0.1/$P" 2>/dev/null; then echo "no rpc-server reachable on 127.0.0.1:$P (start tunnel from Mac first)"; exit 2; fi
+      echo "DOLPHIN_POOL_ARGS=--rpc 127.0.0.1:$P" > $F; systemctl restart dolphin-llm; echo pool=on;;
+ off) echo "DOLPHIN_POOL_ARGS=" > $F; systemctl restart dolphin-llm; echo pool=off;;
+ status) if grep -q -- --rpc $F; then echo pool=on; else echo pool=off; fi; systemctl is-active dolphin-llm;;
+ *) echo "usage: dolphin-pool on|off|status"; exit 1;;
+esac

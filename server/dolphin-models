@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""dolphin-models list|available|pull <id>|remove <id>|default [id]|jobs [--json]"""
+import json, os, sys, shutil, subprocess, time, urllib.request, glob
+MD='/opt/dolphin/models'; PART='/opt/dolphin/cache/partial'; CAT='/etc/dolphin/catalog.json'
+PRESET='/etc/dolphin/presets.ini'; DEF='/etc/dolphin/default-model'; JOBS='/opt/dolphin/cache/jobs'
+DISK_CAP=200e9; DISK_RESERVE=20e9; RAM_CAP=27e9
+J='--json' in sys.argv; args=[a for a in sys.argv[1:] if a!='--json']
+def cat(): return json.load(open(CAT))
+def gb(b): return round(b/1e9,1)
+def ram_need(m): return int(m['bytes']*1.08+(0.3e9 if m['category']=='embeddings' else 1.6e9))
+def speed(m):
+    if m['category']=='embeddings': return 'instant'
+    act=m['bytes']*(0.3 if 'mixtral' in m['id'] else 1.0)
+    return f"~{max(1,int(190e9/act))} tok/s"
+def path_of(id):
+    p=os.path.join(MD,id+'.gguf')
+    if os.path.exists(p): return p
+    d=os.path.join(MD,id)
+    if os.path.isdir(d): return d
+    return None
+def used():
+    t=0
+    for r,_,fs in os.walk(MD):
+        for f in fs: t+=os.path.getsize(os.path.join(r,f))
+    return t
+def installed():
+    c={m['id']:m for m in cat()}; out=[]
+    for e in sorted(os.listdir(MD)):
+        if e.startswith('.'): continue
+        id=e[:-5] if e.endswith('.gguf') else e
+        p=os.path.join(MD,e)
+        b=os.path.getsize(p) if os.path.isfile(p) else sum(os.path.getsize(x) for x in glob.glob(p+'/*'))
+        m=dict(c.get(id,{'id':id,'category':'other','name':id,'license':'?','about':''})); m['bytes']=b
+        out.append(m)
+    return out
+def default():
+    try: return open(DEF).read().strip()
+    except: return ''
+def write_presets():
+    s=['version = 1','']
+    for m in installed():
+        if m.get('category')=='embeddings':
+            s+=[f'[{m["id"]}]',f'model = {MD}/{m["id"]}.gguf','embeddings = true','ctx-size = 2048','']
+    open(PRESET,'w').write('\n'.join(s))
+def restart(): subprocess.run(['systemctl','restart','dolphin-llm'],check=False)
+def job_write(id,**kw):
+    os.makedirs(JOBS,exist_ok=True); p=f'{JOBS}/{id}.json'
+    try: d=json.load(open(p))
+    except: d={}
+    d.update(kw,id=id,ts=int(time.time())); open(p+'.t','w').write(json.dumps(d)); os.replace(p+'.t',p)
+def out(o,txt):
+    print(json.dumps(o) if J else txt)
+cmd=args[0] if args else 'list'
+if cmd=='list':
+    d=default(); ins=installed()
+    for m in ins: m['default']=m['id']==d; m['ram_bytes']=ram_need(m); m['speed']=speed(m)
+    st=shutil.disk_usage('/')
+    out({'installed':ins,'disk_free':st.free,'models_bytes':used(),'cap_bytes':int(DISK_CAP),'default':d},
+        '\n'.join(f"{'*' if m['default'] else ' '} {m['id']:34} {m['category']:12} {gb(m['bytes']):6} GB" for m in ins)+f"\nmodels {gb(used())}/{gb(DISK_CAP)} GB, disk free {gb(st.free)} GB")
+elif cmd=='available':
+    ins={m['id'] for m in installed()}; c=cat()
+    for m in c: m['installed']=m['id'] in ins; m['ram_bytes']=ram_need(m); m['speed']=speed(m); m['fits']=ram_need(m)<=RAM_CAP; m['pullable']=bool(m.get('repo'))
+    out({'catalog':c},'\n'.join(f"{'[x]' if m['installed'] else '[ ]'} {m['id']:32} {m['category']:12} {gb(m['bytes']):5} GB  RAM {gb(m['ram_bytes'])} GB  {m['speed']}  {m['license']}" for m in c))
+elif cmd=='pull':
+    id=args[1]; m={x['id']:x for x in cat()}.get(id)
+    if not m or not m.get('repo'): out({'error':'unknown or not downloadable'},'unknown model'); sys.exit(2)
+    if path_of(id): out({'ok':True,'already':True},'already installed'); sys.exit(0)
+    if ram_need(m)>RAM_CAP: out({'error':f'needs {gb(ram_need(m))} GB RAM, limit {gb(RAM_CAP)}'},'too big for RAM'); sys.exit(3)
+    if used()+m['bytes']>DISK_CAP or shutil.disk_usage('/').free-m['bytes']<DISK_RESERVE:
+        out({'error':'not enough disk (200 GB model cap / 20 GB reserve)'},'not enough disk'); sys.exit(4)
+    os.makedirs(PART,exist_ok=True)
+    files=[m['file']]+([m['mmproj']] if m.get('mmproj') else [])
+    done=0; job_write(id,state='downloading',done=0,total=m['bytes'])
+    try:
+        for f in files:
+            dst=f'{PART}/{id}--{f}'
+            with urllib.request.urlopen(f"https://huggingface.co/{m['repo']}/resolve/main/{f}",timeout=60) as r, open(dst,'wb') as o:
+                last=0
+                while True:
+                    b=r.read(1<<20)
+                    if not b: break
+                    o.write(b); done+=len(b)
+                    if time.time()-last>1: job_write(id,done=done); last=time.time()
+        if m.get('mmproj'):
+            d=f'{MD}/{id}'; os.makedirs(d,exist_ok=True)
+            os.replace(f'{PART}/{id}--{m["file"]}',f'{d}/{m["file"]}'); os.replace(f'{PART}/{id}--{m["mmproj"]}',f'{d}/{m["mmproj"]}')
+        else: os.replace(f'{PART}/{id}--{m["file"]}',f'{MD}/{id}.gguf')
+        subprocess.run(['chown','-R','dolphin:root',MD])
+        write_presets(); restart(); job_write(id,state='done',done=m['bytes'])
+        out({'ok':True},'installed '+id)
+    except Exception as e:
+        for f in glob.glob(f'{PART}/{id}--*'): os.remove(f)
+        job_write(id,state='error',error=str(e)); out({'error':str(e)},'failed: '+str(e)); sys.exit(5)
+elif cmd=='remove':
+    id=args[1]; p=path_of(id)
+    if not p: out({'error':'not installed'},'not installed'); sys.exit(2)
+    b=os.path.getsize(p) if os.path.isfile(p) else sum(os.path.getsize(x) for x in glob.glob(p+'/*'))
+    shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
+    if default()==id: os.remove(DEF)
+    write_presets(); restart()
+    try: os.remove(f'{JOBS}/{id}.json')
+    except: pass
+    out({'ok':True,'freed_bytes':b,'disk_free':shutil.disk_usage('/').free},f'removed {id}, freed {gb(b)} GB')
+elif cmd=='default':
+    if len(args)>1:
+        if not path_of(args[1]): out({'error':'not installed'},'not installed'); sys.exit(2)
+        open(DEF,'w').write(args[1])
+    out({'default':default()},default())
+elif cmd=='jobs':
+    js=[json.load(open(f)) for f in glob.glob(JOBS+'/*.json')] if os.path.isdir(JOBS) else []
+    out({'jobs':js},'\n'.join(f"{j['id']}: {j.get('state')} {gb(j.get('done',0))}/{gb(j.get('total',0))} GB" for j in js))
+else: print(__doc__); sys.exit(1)

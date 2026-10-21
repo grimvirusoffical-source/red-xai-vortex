@@ -1,0 +1,17 @@
+[Unit]
+Description=RedX AI key gateway (OpenAI-compatible) for dolphin-llm
+After=dolphin-llm.service
+Wants=dolphin-llm.service
+
+[Service]
+ExecStart=/usr/local/bin/dolphin-gateway
+Restart=on-failure
+RestartSec=3
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/etc/dolphin /opt/dolphin
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

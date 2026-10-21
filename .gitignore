@@ -1,0 +1,9 @@
+.build/
+build/
+*.app
+.sign-id
+*.key
+*.pem
+*.gguf
+.DS_Store
+gateway/dolphin-gateway

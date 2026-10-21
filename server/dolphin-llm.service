@@ -1,0 +1,26 @@
+[Unit]
+Description=Dolphin LLM (llama.cpp router)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=dolphin
+Group=dolphin
+EnvironmentFile=-/etc/dolphin/pool.env
+Environment=LD_LIBRARY_PATH=/opt/dolphin/bin
+WorkingDirectory=/opt/dolphin
+ExecStart=/opt/dolphin/bin/llama-server --host 127.0.0.1 --port 8090 --models-dir /opt/dolphin/models --models-max 2 --models-preset /etc/dolphin/presets.ini -t 16 -c 8192 --api-key-file /etc/dolphin/api-keys --jinja $DOLPHIN_POOL_ARGS
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+LimitNOFILE=65536
+MemoryMax=29G
+Nice=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/dolphin/cache /opt/dolphin/datasets
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

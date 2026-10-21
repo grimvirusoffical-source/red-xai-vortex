@@ -1,0 +1,233 @@
+[
+ {
+  "id": "dolphin3-llama3.2-3b-q4km",
+  "category": "general",
+  "name": "Dolphin 3 Llama 3.2 3B",
+  "repo": null,
+  "file": "dolphin3-llama3.2-3b-q4km.gguf",
+  "mmproj": null,
+  "license": "Apache-2.0/Llama",
+  "bytes": 2019382400,
+  "about": "Uncensored general chat (Dolphin)"
+ },
+ {
+  "id": "dolphin3-llama3.1-8b-q8",
+  "category": "general",
+  "name": "Dolphin 3 Llama 3.1 8B",
+  "repo": null,
+  "file": "dolphin3-llama3.1-8b-q8.gguf",
+  "mmproj": null,
+  "license": "Apache-2.0/Llama",
+  "bytes": 8540792160,
+  "about": "Uncensored general chat (Dolphin)"
+ },
+ {
+  "id": "dolphin3-mistral-24b-q6k",
+  "category": "general",
+  "name": "Dolphin 3 Mistral 24B",
+  "repo": null,
+  "file": "dolphin3-mistral-24b-q6k.gguf",
+  "mmproj": null,
+  "license": "Apache-2.0/Llama",
+  "bytes": 19345957760,
+  "about": "Uncensored general chat (Dolphin)"
+ },
+ {
+  "id": "dolphin2.7-mixtral-8x7b-iq4xs",
+  "category": "general",
+  "name": "Dolphin Mixtral 8x7B",
+  "repo": null,
+  "file": "dolphin2.7-mixtral-8x7b-iq4xs.gguf",
+  "mmproj": null,
+  "license": "Apache-2.0/Llama",
+  "bytes": 25080550848,
+  "about": "Uncensored general chat (Dolphin)"
+ },
+ {
+  "id": "qwen2.5-coder-7b",
+  "category": "coding",
+  "name": "Qwen2.5-Coder 7B",
+  "repo": "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
+  "file": "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+  "mmproj": null,
+  "license": "Apache-2.0",
+  "bytes": 4683074336,
+  "about": "Writes, explains and fixes code"
+ },
+ {
+  "id": "qwen2.5-coder-14b",
+  "category": "coding",
+  "name": "Qwen2.5-Coder 14B",
+  "repo": "bartowski/Qwen2.5-Coder-14B-Instruct-GGUF",
+  "file": "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf",
+  "mmproj": null,
+  "license": "Apache-2.0",
+  "bytes": 8988111072,
+  "about": "Writes, explains and fixes code"
+ },
+ {
+  "id": "qwen2.5-coder-32b",
+  "category": "coding",
+  "name": "Qwen2.5-Coder 32B",
+  "repo": "bartowski/Qwen2.5-Coder-32B-Instruct-GGUF",
+  "file": "Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf",
+  "mmproj": null,
+  "license": "Apache-2.0",
+  "bytes": 19851336672,
+  "about": "Writes, explains and fixes code"
+ },
+ {
+  "id": "r1-distill-qwen-14b",
+  "category": "reasoning",
+  "name": "DeepSeek-R1-Distill-Qwen 14B",
+  "repo": "bartowski/DeepSeek-R1-Distill-Qwen-14B-GGUF",
+  "file": "DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
+  "mmproj": null,
+  "license": "MIT",
+  "bytes": 8988110240,
+  "about": "Step-by-step thinking for math, logic and planning"
+ },
+ {
+  "id": "r1-distill-qwen-32b",
+  "category": "reasoning",
+  "name": "DeepSeek-R1-Distill-Qwen 32B",
+  "repo": "bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF",
+  "file": "DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
+  "mmproj": null,
+  "license": "MIT",
+  "bytes": 19851335840,
+  "about": "Step-by-step thinking for math, logic and planning"
+ },
+ {
+  "id": "qwq-32b",
+  "category": "reasoning",
+  "name": "QwQ 32B",
+  "repo": "bartowski/Qwen_QwQ-32B-GGUF",
+  "file": "Qwen_QwQ-32B-Q4_K_M.gguf",
+  "mmproj": null,
+  "license": "Apache-2.0",
+  "bytes": 19851336512,
+  "about": "Step-by-step thinking for math, logic and planning"
+ },
+ {
+  "id": "llama3.2-3b",
+  "category": "fast",
+  "name": "Llama 3.2 3B Instruct",
+  "repo": "bartowski/Llama-3.2-3B-Instruct-GGUF",
+  "file": "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+  "mmproj": null,
+  "license": "Llama-3.2",
+  "bytes": 2019377696,
+  "about": "Small and quick for simple chats"
+ },
+ {
+  "id": "phi4-mini",
+  "category": "fast",
+  "name": "Phi-4 mini",
+  "repo": "bartowski/microsoft_Phi-4-mini-instruct-GGUF",
+  "file": "microsoft_Phi-4-mini-instruct-Q4_K_M.gguf",
+  "mmproj": null,
+  "license": "MIT",
+  "bytes": 2491874688,
+  "about": "Small and quick for simple chats"
+ },
+ {
+  "id": "qwen2.5-vl-7b",
+  "category": "vision",
+  "name": "Qwen2.5-VL 7B",
+  "repo": "ggml-org/Qwen2.5-VL-7B-Instruct-GGUF",
+  "file": "Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf",
+  "mmproj": "mmproj-Qwen2.5-VL-7B-Instruct-f16.gguf",
+  "license": "Apache-2.0",
+  "bytes": 6037234944,
+  "about": "Understands images you attach"
+ },
+ {
+  "id": "gemma3-12b-vision",
+  "category": "vision",
+  "name": "Gemma 3 12B (vision)",
+  "repo": "ggml-org/gemma-3-12b-it-GGUF",
+  "file": "gemma-3-12b-it-Q4_K_M.gguf",
+  "mmproj": "mmproj-model-f16.gguf",
+  "license": "Gemma",
+  "bytes": 8154775200,
+  "about": "Understands images you attach"
+ },
+ {
+  "id": "mistral-nemo-12b",
+  "category": "writing",
+  "name": "Mistral Nemo 12B",
+  "repo": "bartowski/Mistral-Nemo-Instruct-2407-GGUF",
+  "file": "Mistral-Nemo-Instruct-2407-Q4_K_M.gguf",
+  "mmproj": null,
+  "license": "Apache-2.0",
+  "bytes": 7477208192,
+  "about": "Creative writing, stories and roleplay"
+ },
+ {
+  "id": "mistral-small-24b",
+  "category": "writing",
+  "name": "Mistral Small 24B",
+  "repo": "bartowski/Mistral-Small-24B-Instruct-2501-GGUF",
+  "file": "Mistral-Small-24B-Instruct-2501-Q4_K_M.gguf",
+  "mmproj": null,
+  "license": "Apache-2.0",
+  "bytes": 14333908672,
+  "about": "Creative writing, stories and roleplay"
+ },
+ {
+  "id": "qwen2.5-14b",
+  "category": "multilingual",
+  "name": "Qwen2.5 14B Instruct",
+  "repo": "bartowski/Qwen2.5-14B-Instruct-GGUF",
+  "file": "Qwen2.5-14B-Instruct-Q4_K_M.gguf",
+  "mmproj": null,
+  "license": "Apache-2.0",
+  "bytes": 8988110976,
+  "about": "Strong in 29+ languages"
+ },
+ {
+  "id": "qwen2.5-7b",
+  "category": "multilingual",
+  "name": "Qwen2.5 7B Instruct",
+  "repo": "bartowski/Qwen2.5-7B-Instruct-GGUF",
+  "file": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+  "mmproj": null,
+  "license": "Apache-2.0",
+  "bytes": 4683074240,
+  "about": "Strong in 29+ languages"
+ },
+ {
+  "id": "nomic-embed-v1.5",
+  "category": "embeddings",
+  "name": "nomic-embed-text v1.5",
+  "repo": "nomic-ai/nomic-embed-text-v1.5-GGUF",
+  "file": "nomic-embed-text-v1.5.Q8_0.gguf",
+  "mmproj": null,
+  "license": "Apache-2.0",
+  "bytes": 146146432,
+  "about": "Turns text into vectors for search/RAG"
+ },
+ {
+  "id": "bge-m3",
+  "category": "embeddings",
+  "name": "BGE-M3 (multilingual)",
+  "repo": "gpustack/bge-m3-GGUF",
+  "file": "bge-m3-Q8_0.gguf",
+  "mmproj": null,
+  "license": "MIT",
+  "bytes": 634553760,
+  "about": "Turns text into vectors for search/RAG"
+ },
+ {
+  "id": "bge-small-en-v1.5",
+  "category": "embeddings",
+  "name": "BGE small en v1.5",
+  "repo": "CompendiumLabs/bge-small-en-v1.5-gguf",
+  "file": "bge-small-en-v1.5-q8_0.gguf",
+  "mmproj": null,
+  "license": "MIT",
+  "bytes": 36806944,
+  "about": "Turns text into vectors for search/RAG"
+ }
+]
