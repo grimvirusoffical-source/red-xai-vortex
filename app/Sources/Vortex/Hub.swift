@@ -182,11 +182,12 @@ struct HubView: View {
             TabView(selection: $tab) {
                 LibraryView().tabItem { Label("Library", systemImage: "books.vertical") }.tag("library")
                 MergesView().tabItem { Label("Merges", systemImage: "arrow.triangle.merge") }.tag("merges")
-                RedXAIView().tabItem { Label("Red-XAI", systemImage: "sparkles") }.tag("redxai")
+                RedXAIView().tabItem { Label("Vortex", systemImage: "sparkles") }.tag("redxai")
                 ServersView().tabItem { Label("Servers", systemImage: "server.rack") }.tag("servers")
                 ProvidersView().tabItem { Label("Providers", systemImage: "cloud") }.tag("providers")
                 KeysView().tabItem { Label("API Keys", systemImage: "key") }.tag("keys")
                 DocsView().tabItem { Label("Use in Other Apps", systemImage: "app.connected.to.app.below.fill") }.tag("docs")
+                HelpView().tabItem { Label("Help", systemImage: "questionmark.circle") }.tag("help")
             }
             if !hub.error.isEmpty {
                 HStack { Image(systemName: "info.circle"); Text(hub.error).lineLimit(2); Spacer(); Button("Dismiss") { hub.error = "" } }

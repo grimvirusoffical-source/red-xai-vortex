@@ -19,6 +19,8 @@ iconutil -c icns $IS -o "$APP/Contents/Resources/AppIcon.icns"
 W=~/Projects/redx-node/llama.cpp/build/bin/ggml-rpc-server
 if [ -x "$W" ]; then cp "$W" "$APP/Contents/Resources/ggml-rpc-server"
   codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP/Contents/Resources/ggml-rpc-server" 2>&1 | tail -1; fi
+# in-app Help: the docs/ guides
+mkdir -p "$APP/Contents/Resources/Help"; cp help/*.md "$APP/Contents/Resources/Help/" 2>/dev/null || cp ../docs/*.md "$APP/Contents/Resources/Help/" 2>/dev/null || true
 # server installer for one-click Servers > Install
 [ -f server/install.sh ] && cp server/install.sh "$APP/Contents/Resources/install.sh"
 # local mode runtime (Metal); signed without hardened runtime so it can load Homebrew's OpenSSL
@@ -34,8 +36,8 @@ cat > "$APP/Contents/Info.plist" <<P
 <key>CFBundleExecutable</key><string>Vortex</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>2.0</string>
-<key>CFBundleVersion</key><string>6</string>
+<key>CFBundleShortVersionString</key><string>2.1</string>
+<key>CFBundleVersion</key><string>7</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>

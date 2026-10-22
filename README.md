@@ -62,8 +62,11 @@ Create a key under **Library, Merges & Keys → API Keys**, then point any OpenA
 `https://YOUR_DOMAIN/v1` (or `http://127.0.0.1:18091/v1` through an SSH tunnel). See [docs/API.md](docs/API.md).
 
 ## Docs
+- **[Complete guide (start here)](docs/USER-GUIDE.md)** · [Troubleshooting](docs/TROUBLESHOOTING.md) · [FAQ](docs/FAQ.md)
+- [Merging models (with diagrams)](docs/MERGES.md)
+- [Servers, failover, pooling and nodes](docs/POOLING.md)
+- [Owner vs user permissions](docs/PERMISSIONS.md)
 - [API reference (OpenAI + Ollama + admin)](docs/API.md)
-- [Merges](docs/MERGES.md)
 - [Outside providers](docs/PROVIDERS.md)
 - [Gateway build & crypto backends](docs/GATEWAY.md)
 - [Vortex, the learning model](docs/VORTEX.md)

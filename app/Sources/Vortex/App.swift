@@ -40,6 +40,8 @@ struct VortexApp: App {
                 Button("Import Chats…") { store.importJSON() }
             }
         }
+        Window("Red-XAI Vortex Help", id: "help") { HelpView() }
+            .commands { CommandGroup(replacing: .help) { OpenHelpButton() } }
         Window("Library, Merges & Keys", id: "hub") { HubView() }
             .commands { CommandMenu("Models") { OpenHubButton(); Button("Browse Models in Browser…") { ModelBrowserServer.shared.open() }.keyboardShortcut("b", modifiers: [.command, .shift]) } }
         Settings {
