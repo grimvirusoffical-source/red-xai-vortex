@@ -874,7 +874,7 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&in)
 	}
 	str := func(f string) string { s, _ := in[f].(string); return s }
-	if providerAdmin(w, r, p, in) || redxaiAdmin(w, r, p, in) || storageAdmin(w, r, p, in) {
+	if providerAdmin(w, r, p, in) || redxaiAdmin(w, r, p, in) || storageAdmin(w, r, p, in) || nodesAdmin(w, r, p) {
 		return
 	}
 	switch {
@@ -892,10 +892,11 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		sort.Slice(out, func(i, j int) bool { return out[i]["created"].(int64) > out[j]["created"].(int64) })
 		json.NewEncoder(w).Encode(map[string]any{"keys": out})
 	case p == "/admin/keys" && r.Method == "POST":
-		if !requireOwner(w, r) {
+		// Body already decoded into `in` above. Integration Connect keys skip Owner unlock.
+		name := strings.TrimSpace(str("name"))
+		if !strings.HasPrefix(name, "integration:") && !requireOwner(w, r) {
 			return
 		}
-		name := strings.TrimSpace(str("name"))
 		if name == "" || len(name) > 64 {
 			errJSON(w, 400, "name required")
 			return
@@ -934,7 +935,17 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		mu.Unlock()
 		json.NewEncoder(w).Encode(map[string]any{"id": nk.ID, "key": plain, "note": "shown once; store it now"})
 	case strings.HasPrefix(p, "/admin/keys/") && (r.Method == "DELETE" || r.Method == "POST"):
-		if !requireOwner(w, r) {
+		idPeek := strings.TrimPrefix(strings.TrimSuffix(p, "/revoke"), "/admin/keys/")
+		isInteg := false
+		mu.Lock()
+		for _, x := range keys {
+			if x.ID == idPeek && strings.HasPrefix(x.Name, "integration:") {
+				isInteg = true
+				break
+			}
+		}
+		mu.Unlock()
+		if !isInteg && !requireOwner(w, r) {
 			return
 		}
 		id := strings.TrimPrefix(strings.TrimSuffix(p, "/revoke"), "/admin/keys/")

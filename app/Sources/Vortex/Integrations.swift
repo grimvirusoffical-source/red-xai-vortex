@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Darwin
 
 /// Integrations: connect coding/AI tools to the Vortex gateway using each tool's OFFICIAL custom-endpoint setting.
 /// Automatic tools get their config written (after a backup); guided tools get a dedicated key copied to the
@@ -95,6 +96,8 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
     static let shared = IntegrationStore()
     @Published var state: [String: IntegrationState] = [:]
     @Published var message = ""
+    @Published var cardError: [String: String] = [:]
+    @Published var cardOK: [String: String] = [:]
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     var localBase: String { "http://127.0.0.1:\(Defaults.sshLocalPort - 1)" }
     var publicBase: String { (UserDefaults.standard.string(forKey: "publicBaseURL") ?? "").replacingOccurrences(of: "/v1", with: "") }
@@ -147,16 +150,24 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
 
     // ---------- connect ----------
     func connect(_ i: Integration, model: String) async {
-        message = ""
+        message = ""; cardError[i.id] = nil; cardOK[i.id] = nil
         do {
+            // Ensure tunnel public port is up (Integrations use localBase = sshLocalPort-1 → 18091)
+            let probe = localBase + "/health"
+            if let u = URL(string: probe) {
+                var ok = false
+                if let (_, resp) = try? await URLSession.shared.data(from: u), (resp as? HTTPURLResponse)?.statusCode == 200 { ok = true }
+                if !ok { throw NSError(domain: "Vortex", code: 3, userInfo: [NSLocalizedDescriptionKey: "Gateway tunnel \(localBase) is down. Open the app and wait until the server connection is green, then try again."]) }
+            }
             let r = try await Admin.call("POST", "/admin/keys", ["name": "integration: \(i.name)", "rpm": 600])
-            guard let key = r["key"] as? String, let kid = r["id"] as? String else { throw NSError(domain: "Vortex", code: 1, userInfo: [NSLocalizedDescriptionKey: "key creation failed"]) }
+            guard let key = r["key"] as? String, let kid = r["id"] as? String else {
+                throw NSError(domain: "Vortex", code: 1, userInfo: [NSLocalizedDescriptionKey: "key creation failed (no key in response)"])
+            }
             Keychain.set(key, account: "integration-\(i.id)")
             var files: [FileBackup] = []; var env: [String] = []
             let b = base(i)
             switch i.id {
             case "codex":
-                // Codex 0.163+: profiles live in ~/.codex/<name>.config.toml (not [profiles.*] in config.toml)
                 let p = home + "/.codex/vortex.config.toml"
                 try backup(i.id, p, into: &files)
                 let body = """
@@ -164,6 +175,8 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
                 # Red-XAI Vortex (Integrations)
                 model = "\(model)"
                 model_provider = "vortex"
+                model_context_window = 32768
+                model_auto_compact_token_limit = 28000
 
                 [model_providers.vortex]
                 name = "Red-XAI Vortex"
@@ -176,10 +189,16 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
                 try setEnv("VORTEX_API_KEY", key, files: &files, id: i.id); env.append("VORTEX_API_KEY")
             case "claude-code":
                 let p = home + "/.claude/settings.json"
-                guard var o = readJSON(p) else { throw NSError(domain: "Vortex", code: 2, userInfo: [NSLocalizedDescriptionKey: "~/.claude/settings.json isn't plain JSON; not changing it"]) }
+                var o = readJSON(p) ?? [:]
+                if readJSON(p) == nil && FileManager.default.fileExists(atPath: p) {
+                    throw NSError(domain: "Vortex", code: 2, userInfo: [NSLocalizedDescriptionKey: "~/.claude/settings.json isn't plain JSON; not changing it"])
+                }
                 try backup(i.id, p, into: &files)
                 var e = o["env"] as? [String: Any] ?? [:]
-                e["ANTHROPIC_BASE_URL"] = b; e["ANTHROPIC_AUTH_TOKEN"] = key; e["ANTHROPIC_MODEL"] = model; e["ANTHROPIC_SMALL_FAST_MODEL"] = model
+                e["ANTHROPIC_BASE_URL"] = b
+                e["ANTHROPIC_AUTH_TOKEN"] = key
+                e["ANTHROPIC_MODEL"] = model
+                e["ANTHROPIC_SMALL_FAST_MODEL"] = model
                 o["env"] = e
                 try writeJSON(p, o)
             case "gemini-cli":
@@ -190,18 +209,37 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
                 try write(p, lines.joined(separator: "\n") + "\n", secret: true)
             case "opencode":
                 let p = home + "/.config/opencode/opencode.json"
-                guard var o = readJSON(p) else { throw NSError(domain: "Vortex", code: 2, userInfo: [NSLocalizedDescriptionKey: "opencode.json has comments; add the provider by hand (see Help)"]) }
-                try backup(i.id, p, into: &files)
+                var o: [String: Any]
+                if FileManager.default.fileExists(atPath: p) {
+                    guard let parsed = readJSON(p) else {
+                        throw NSError(domain: "Vortex", code: 2, userInfo: [NSLocalizedDescriptionKey: "opencode.json has comments; fix or remove it, then Connect again"])
+                    }
+                    o = parsed
+                    try backup(i.id, p, into: &files)
+                } else {
+                    o = ["$schema": "https://opencode.ai/config.json"]
+                    try backup(i.id, p, into: &files)
+                }
                 var prov = o["provider"] as? [String: Any] ?? [:]
-                prov["vortex"] = ["npm": "@ai-sdk/openai-compatible", "name": "Red-XAI Vortex", "options": ["baseURL": "\(b)/v1", "apiKey": "{env:VORTEX_API_KEY}"], "models": [model: ["name": model]]]
-                o["provider"] = prov; o["model"] = "vortex/\(model)"
-                if o["$schema"] == nil { o["$schema"] = "https://opencode.ai/config.json" }
+                prov["vortex"] = [
+                    "npm": "@ai-sdk/openai-compatible",
+                    "name": "Red-XAI Vortex",
+                    "options": ["baseURL": "\(b)/v1", "apiKey": "{env:VORTEX_API_KEY}"],
+                    "models": [model: ["name": model]]
+                ]
+                o["provider"] = prov
+                o["model"] = "vortex/\(model)"
                 try writeJSON(p, o)
                 try setEnv("VORTEX_API_KEY", key, files: &files, id: i.id); env.append("VORTEX_API_KEY")
             case "grok-cli":
                 let p = home + "/.grok/user-settings.json"
-                guard var o = readJSON(p) else { throw NSError(domain: "Vortex", code: 2, userInfo: [NSLocalizedDescriptionKey: "user-settings.json isn't plain JSON"]) }
-                try backup(i.id, p, into: &files)
+                var o: [String: Any]
+                if FileManager.default.fileExists(atPath: p) {
+                    guard let parsed = readJSON(p) else { throw NSError(domain: "Vortex", code: 2, userInfo: [NSLocalizedDescriptionKey: "user-settings.json isn't plain JSON"]) }
+                    o = parsed; try backup(i.id, p, into: &files)
+                } else {
+                    o = [:]; try backup(i.id, p, into: &files)
+                }
                 o["apiKey"] = key; o["baseURL"] = "\(b)/v1"; o["defaultModel"] = model
                 var ms = o["models"] as? [String] ?? []; if !ms.contains(model) { ms.insert(model, at: 0) }; o["models"] = ms
                 try writeJSON(p, o)
@@ -226,16 +264,25 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
                 message = "\(i.name): a dedicated key is on your clipboard (it's also in your Keychain). Follow the steps on the card."
             }
             state[i.id] = IntegrationState(model: model, keyID: kid, at: Date(), files: files, envVars: env); save()
-            if message.isEmpty { message = "\(i.name) connected to \(model). Back-ups are in Application Support/Red-XAI Vortex/integration-backups." }
-        } catch { message = "\(i.name): \(error.localizedDescription)" }
+            let ok = "\(i.name) connected to \(model) via \(b)."
+            cardOK[i.id] = ok
+            if message.isEmpty { message = ok + " Disconnect restores the backup and revokes the key." }
+        } catch {
+            var msg = error.localizedDescription
+            if msg.contains("owner unlock") {
+                msg = "Owner unlock required for this action. Open the Owner tab, unlock, then try Connect again. (Integration keys should not need this — update the gateway if you still see it.)"
+            }
+            cardError[i.id] = msg
+            message = "\(i.name): \(msg)"
+        }
     }
 
     func disconnect(_ i: Integration) async {
         guard let st = state[i.id] else { return }
+        cardError[i.id] = nil; cardOK[i.id] = nil
         let fm = FileManager.default
         for f in st.files.reversed() {
             if f.path.hasSuffix(".zshrc") || f.path.hasSuffix(".bash_profile") {
-                // only remove our two lines, keep anything JF changed since
                 if let cur = try? String(contentsOfFile: f.path, encoding: .utf8), state.values.filter({ !$0.envVars.isEmpty }).count <= 1 {
                     let kept = cur.components(separatedBy: "\n").filter { $0 != Self.marker && !$0.contains(".config/red-xai-vortex/env") }
                     try? kept.joined(separator: "\n").write(toFile: f.path, atomically: true, encoding: .utf8)
@@ -250,6 +297,179 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
         Keychain.set("", account: "integration-\(i.id)")
         state[i.id] = nil; save()
         message = "\(i.name) disconnected: original config restored and its key revoked."
+        cardOK[i.id] = message
+    }
+
+    /// Run a one-shot probe through the tool's own CLI (or a direct HTTP check for guided).
+    func test(_ i: Integration) async {
+        cardError[i.id] = nil; cardOK[i.id] = nil; message = ""
+        guard let st = state[i.id], let key = Keychain.get(account: "integration-\(i.id)"), !key.isEmpty else {
+            cardError[i.id] = "Not connected (no key in Keychain)."
+            message = "\(i.name): \(cardError[i.id]!)"
+            return
+        }
+        let b = base(i)
+        do {
+            switch i.id {
+            case "codex":
+                let bin = codexBinary()
+                guard let bin else { throw NSError(domain: "Vortex", code: 4, userInfo: [NSLocalizedDescriptionKey: "Codex CLI not found. Use Install, then Test again."]) }
+                let out = try await runProcess(bin, ["exec", "-p", "vortex", "--skip-git-repo-check", "Reply with exactly: VORTEX_OK"], env: ["VORTEX_API_KEY": key], timeout: 120)
+                if out.combined.contains("VORTEX_OK") || out.status == 0 && !out.stdout.isEmpty {
+                    cardOK[i.id] = "Test OK — Codex replied via \(b)."
+                } else {
+                    throw NSError(domain: "Vortex", code: 5, userInfo: [NSLocalizedDescriptionKey: "Codex exit \(out.status): \(String(out.combined.suffix(400)))"])
+                }
+            case "claude-code":
+                let bin = which("claude") ?? (home + "/.local/bin/claude")
+                guard FileManager.default.isExecutableFile(atPath: bin) else {
+                    throw NSError(domain: "Vortex", code: 4, userInfo: [NSLocalizedDescriptionKey: "Claude Code not found at \(bin). Use Install."])
+                }
+                // Prefer a direct Anthropic-messages probe (same wire as Claude Code) so we don't need an interactive TTY
+                let reply = try await httpProbeAnthropic(base: b, key: key, model: st.model)
+                cardOK[i.id] = "Test OK — /v1/messages: \(reply)"
+            case "opencode":
+                // Direct OpenAI chat probe matching OpenCode's openai-compatible provider
+                let reply = try await httpProbeChat(base: b + "/v1", key: key, model: st.model)
+                cardOK[i.id] = "Test OK — chat completions: \(reply)"
+            default:
+                let reply = try await httpProbeChat(base: b + "/v1", key: key, model: st.model)
+                cardOK[i.id] = "Test OK — \(reply)"
+            }
+            message = "\(i.name): \(cardOK[i.id]!)"
+        } catch {
+            cardError[i.id] = error.localizedDescription
+            message = "\(i.name) test failed: \(error.localizedDescription)"
+        }
+    }
+
+    func install(_ i: Integration) async {
+        cardError[i.id] = nil; cardOK[i.id] = nil
+        guard let cmd = Self.installCommand(i.id) else {
+            cardError[i.id] = "No official installer mapped for \(i.name)."
+            message = cardError[i.id]!
+            return
+        }
+        do {
+            let out = try await runProcess("/bin/zsh", ["-lc", cmd], env: [:], timeout: 600)
+            if out.status == 0 {
+                cardOK[i.id] = "Installed. \(String(out.stdout.suffix(200)))"
+                message = "\(i.name): installed."
+            } else {
+                throw NSError(domain: "Vortex", code: 6, userInfo: [NSLocalizedDescriptionKey: "Install exit \(out.status): \(String(out.combined.suffix(500)))"])
+            }
+        } catch {
+            cardError[i.id] = error.localizedDescription
+            message = "\(i.name) install failed: \(error.localizedDescription)"
+        }
+    }
+
+    func toolInstalled(_ id: String) -> Bool {
+        switch id {
+        case "codex": return codexBinary() != nil
+        case "claude-code":
+            let p = which("claude") ?? (home + "/.local/bin/claude")
+            return FileManager.default.isExecutableFile(atPath: p)
+        case "opencode": return which("opencode") != nil
+        case "gemini-cli": return which("gemini") != nil
+        case "grok-cli": return which("grok") != nil || FileManager.default.fileExists(atPath: home + "/.grok/user-settings.json")
+        case "aider": return which("aider") != nil
+        default: return true // guided / N/A
+        }
+    }
+
+    static func installCommand(_ id: String) -> String? {
+        switch id {
+        case "codex": return "npm install -g @openai/codex"
+        case "claude-code": return "curl -fsSL https://claude.ai/install.sh | bash"
+        case "opencode": return "curl -fsSL https://opencode.ai/install | bash"
+        case "gemini-cli": return "npm install -g @google/gemini-cli"
+        case "aider": return "pipx install aider-chat || pip3 install --user aider-chat"
+        case "grok-cli": return "npm install -g @vibe-tools/grok-cli || npm install -g grok-cli"
+        default: return nil
+        }
+    }
+
+    func codexBinary() -> String? {
+        let candidates = [
+            which("codex"),
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+            home + "/.npm-global/bin/codex",
+            "/usr/local/bin/codex",
+            home + "/.local/bin/codex"
+        ].compactMap { $0 }
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+    func which(_ name: String) -> String? {
+        let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/which"); p.arguments = [name]
+        let o = Pipe(); p.standardOutput = o; p.standardError = Pipe()
+        try? p.run(); p.waitUntilExit()
+        let s = String(data: o.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return s.isEmpty ? nil : s
+    }
+
+    struct ProcOut { var status: Int32; var stdout: String; var stderr: String; var combined: String { stdout + stderr } }
+    func runProcess(_ bin: String, _ args: [String], env: [String: String], timeout: TimeInterval) async throws -> ProcOut {
+        try await withCheckedThrowingContinuation { cont in
+            DispatchQueue.global().async {
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: bin)
+                p.arguments = args
+                var e = ProcessInfo.processInfo.environment
+                for (k, v) in env { e[k] = v }
+                p.environment = e
+                let out = Pipe(), err = Pipe()
+                p.standardOutput = out; p.standardError = err; p.standardInput = FileHandle.nullDevice
+                do { try p.run() } catch { cont.resume(throwing: error); return }
+                let deadline = Date().addingTimeInterval(timeout)
+                while p.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
+                if p.isRunning { p.terminate(); Thread.sleep(forTimeInterval: 0.3); if p.isRunning { kill(p.processIdentifier, SIGKILL) } }
+                let so = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                let se = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                cont.resume(returning: ProcOut(status: p.terminationStatus, stdout: so, stderr: se))
+            }
+        }
+    }
+
+    func httpProbeChat(base: String, key: String, model: String) async throws -> String {
+        guard let u = URL(string: base.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/chat/completions") else { throw URLError(.badURL) }
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = 90
+        r.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": model, "max_tokens": 32,
+            "messages": [["role": "user", "content": "Reply with exactly: VORTEX_OK"]]
+        ])
+        let (d, resp) = try await URLSession.shared.data(for: r)
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        let j = (try? JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? [:]
+        if code >= 300 {
+            let m = ((j["error"] as? [String: Any])?["message"] as? String) ?? String(data: d, encoding: .utf8) ?? "HTTP \(code)"
+            throw NSError(domain: "Vortex", code: code, userInfo: [NSLocalizedDescriptionKey: m])
+        }
+        let text = (((j["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any])?["content"] as? String) ?? ""
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80).description
+    }
+    func httpProbeAnthropic(base: String, key: String, model: String) async throws -> String {
+        guard let u = URL(string: base.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/v1/messages") else { throw URLError(.badURL) }
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = 90
+        r.setValue(key, forHTTPHeaderField: "x-api-key")
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        r.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": model, "max_tokens": 32,
+            "messages": [["role": "user", "content": "Reply with exactly: VORTEX_OK"]]
+        ])
+        let (d, resp) = try await URLSession.shared.data(for: r)
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        let j = (try? JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? [:]
+        if code >= 300 {
+            let m = ((j["error"] as? [String: Any])?["message"] as? String) ?? String(data: d, encoding: .utf8) ?? "HTTP \(code)"
+            throw NSError(domain: "Vortex", code: code, userInfo: [NSLocalizedDescriptionKey: m])
+        }
+        let blocks = j["content"] as? [[String: Any]] ?? []
+        let text = blocks.compactMap { $0["text"] as? String }.joined()
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80).description
     }
 
     static func stripBlock(_ s: String) -> String {
@@ -263,13 +483,18 @@ struct IntegrationsView: View {
     @Local var models: [String] = []
     @Local var picks: [String: String] = [:]
     @Local var busy = ""
+    @Local var confirmInstall: String?
     let cols = [GridItem(.adaptive(minimum: 300), spacing: 12)]
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Integrations").font(.largeTitle.bold())
-                Text("Connect your tools to Vortex, any server or local model, merges and providers. Each tool gets its own revocable key. Automatic cards write the tool's official config (backed up first); Disconnect restores it. Tools on this Mac use \(store.localBase) while this app's tunnel is open.").font(.callout).foregroundStyle(.secondary)
-                if !store.message.isEmpty { Text(store.message).font(.callout).foregroundStyle(.orange) }
+                Text("Connect your tools to Vortex. Each tool gets its own revocable key. Automatic cards write the tool's official config (backed up first). Tools on this Mac use \(store.localBase) while this app's tunnel is open (not 18090).").font(.callout).foregroundStyle(.secondary)
+                if !store.message.isEmpty {
+                    Text(store.message).font(.callout)
+                        .foregroundStyle(store.message.contains("fail") || store.message.contains("error") || store.message.contains("required") ? .red : .green)
+                        .textSelection(.enabled)
+                }
                 ForEach(["Coding agents", "Editors", "Desktop chat", "Chat apps", "Automation", "Not supported"], id: \.self) { cat in
                     Text(cat).font(.title3.bold()).padding(.top, 6)
                     LazyVGrid(columns: cols, alignment: .leading, spacing: 12) {
@@ -278,7 +503,31 @@ struct IntegrationsView: View {
                 }
             }.padding(20)
         }
-        .task { if let r = try? await Admin.call("GET", "/v1/models"), let d = r["data"] as? [[String: Any]] { models = d.compactMap { $0["id"] as? String }.filter { !$0.contains("embed") } } }
+        .task {
+            // Prefer public API via tunnel 18091 so the model list works even before owner unlock
+            if let u = URL(string: store.localBase + "/v1/models"),
+               var req = Optional(URLRequest(url: u)) {
+                req.setValue("Bearer \(Keychain.get() ?? "")", forHTTPHeaderField: "Authorization")
+                if let (d, _) = try? await URLSession.shared.data(for: req),
+                   let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                   let data = j["data"] as? [[String: Any]] {
+                    models = data.compactMap { $0["id"] as? String }.filter { !$0.contains("embed") }
+                }
+            }
+            if models.isEmpty, let r = try? await Admin.call("GET", "/v1/models"), let d = r["data"] as? [[String: Any]] {
+                models = d.compactMap { $0["id"] as? String }.filter { !$0.contains("embed") }
+            }
+        }
+        .confirmationDialog("Install \(confirmInstall.flatMap { id in IntegrationCatalog.all.first { $0.id == id }?.name } ?? "tool")?", isPresented: Binding(get: { confirmInstall != nil }, set: { if !$0 { confirmInstall = nil } })) {
+            Button("Install") {
+                if let id = confirmInstall, let i = IntegrationCatalog.all.first(where: { $0.id == id }) {
+                    busy = id; Task { await store.install(i); busy = ""; confirmInstall = nil }
+                }
+            }
+            Button("Cancel", role: .cancel) { confirmInstall = nil }
+        } message: {
+            Text(confirmInstall.flatMap { IntegrationStore.installCommand($0) } ?? "")
+        }
     }
     @ViewBuilder func card(_ i: Integration) -> some View {
         let st = store.state[i.id]
@@ -288,10 +537,15 @@ struct IntegrationsView: View {
                 Spacer()
                 if i.mode == .unsupported { Text("Not supported").font(.caption.bold()).foregroundStyle(.secondary) }
                 else if let st { Text("\(i.id == "codex" ? "Codex" : i.name): \(st.model)").font(.caption.bold()).foregroundStyle(.green) }
+                else if !store.toolInstalled(i.id) && IntegrationStore.installCommand(i.id) != nil {
+                    Text("Not installed").font(.caption).foregroundStyle(.orange)
+                }
             }
             Text(i.how).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let e = store.cardError[i.id] { Text(e).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
+            if let o = store.cardOK[i.id] { Text(o).font(.caption).foregroundStyle(.green).textSelection(.enabled) }
             if i.mode != .unsupported {
-                Text("\(i.wire) · \(i.mode == .auto ? "automatic" : "guided")\(i.publicOnly ? " · needs the public https URL" : "")").font(.caption2).foregroundStyle(.secondary)
+                Text("\(i.wire) · \(i.mode == .auto ? "automatic" : "guided") · base \(store.base(i))\(i.publicOnly ? " · needs public https" : "")").font(.caption2).foregroundStyle(.secondary)
                 if st == nil {
                     HStack {
                         Picker("Model", selection: Binding(get: { picks[i.id] ?? (models.contains("vortex") ? "vortex" : models.first ?? "") }, set: { picks[i.id] = $0 })) {
@@ -301,6 +555,9 @@ struct IntegrationsView: View {
                             let m = picks[i.id] ?? (models.contains("vortex") ? "vortex" : models.first ?? "")
                             busy = i.id; Task { await store.connect(i, model: m); busy = "" }
                         }.buttonStyle(.borderedProminent).disabled(models.isEmpty || !busy.isEmpty)
+                        if !store.toolInstalled(i.id), IntegrationStore.installCommand(i.id) != nil {
+                            Button("Install") { confirmInstall = i.id }.disabled(!busy.isEmpty)
+                        }
                     }
                 } else {
                     if i.mode == .guided {
@@ -308,7 +565,12 @@ struct IntegrationsView: View {
                             .font(.caption).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                         Button("Copy key again") { if let k = Keychain.get(account: "integration-\(i.id)") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(k, forType: .string); store.message = "Key copied to the clipboard." } }
                     }
-                    Button("Disconnect", role: .destructive) { busy = i.id; Task { await store.disconnect(i); busy = "" } }.disabled(!busy.isEmpty)
+                    HStack {
+                        Button(busy == "test-\(i.id)" ? "Testing…" : "Test") {
+                            busy = "test-\(i.id)"; Task { await store.test(i); busy = "" }
+                        }.disabled(!busy.isEmpty)
+                        Button("Disconnect", role: .destructive) { busy = i.id; Task { await store.disconnect(i); busy = "" } }.disabled(!busy.isEmpty)
+                    }
                 }
             }
         }

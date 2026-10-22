@@ -111,6 +111,12 @@ These apps have no official custom-endpoint setting. Changing them anyway would 
 - **Claude.ai / Claude desktop**: use Claude Code.
 - **Google Antigravity (IDE)**: no bring-your-own-endpoint (only the Antigravity SDK has `LocalOpenAIAgentConfig`).
 
+## Test and Install
+Each connected card has a **Test** button that sends a real prompt through that tool's config (or the same HTTP API the tool uses) and shows the reply on the card.
+If a CLI tool is missing, an **Install** button runs the official installer (with confirmation).
+
+Base URL for Mac tools is always `http://127.0.0.1:18091` (the app's SSH tunnel to the gateway public port). Nothing uses 18090.
+
 ## Verified end to end
 - **Codex CLI 0.163** with `codex exec -p vortex` through the tunnel: provider `vortex` / Responses API auth works. Codex's default agent prompt is large — the llama.cpp server needs `n_ctx` ≥ ~16k (currently 8k on the VPS), or pick a model/server with a bigger window. A direct `/v1/responses` call with the same key returned `VORTEX_OK`.
 - The Anthropic (`/v1/messages`, streaming, `x-api-key`), Responses and Gemini shims were tested with curl.
