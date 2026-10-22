@@ -40,3 +40,6 @@ Run every feature check from Terminal:
 "/Applications/Red-XAI Vortex.app/Contents/MacOS/Vortex" --selftest /tmp/vortex-selftest.json
 ```
 Add `--only plugins,skills` to run only some areas. The test restores the settings it changes. It also creates one temporary API key and revokes it.
+
+### Backup server shows "failover candidates reachable: no other server answered"
+A backup only works for failover if it runs its own `dolphin-llm` and `dolphin-gateway` (an RPC/storage-only node has neither). Install both on the backup, keep its RPC service disabled, and sync keys/config from the main server on a timer (e.g. a systemd timer using an `rrsync`-restricted key). Then run `Vortex --selftest out.json --only servers`; the "real failover" check switches to the backup, sends a chat, and switches back.

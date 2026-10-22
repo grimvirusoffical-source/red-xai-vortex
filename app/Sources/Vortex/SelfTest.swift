@@ -127,6 +127,22 @@ import AVFoundation
             return "reachable: " + ok.joined(separator: ", ")
         }
 
+        await t("Servers", "real failover: switch, chat on backup, switch back") {
+            let ss = ServerStore.shared; let orig = ss.activeID
+            guard ss.servers.count > 1 else { return "only one server configured" }
+            guard let b = await ss.failover() else { throw err("failover() found no server") }
+            defer { ss.activate(orig) }
+            var r = URLRequest(url: URL(string: b.chatURL + "/chat/completions")!); r.httpMethod = "POST"; r.timeoutInterval = 180
+            r.setValue("Bearer \(ss.key(for: b))", forHTTPHeaderField: "Authorization"); r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            r.httpBody = try JSONSerialization.data(withJSONObject: ["model": "dolphin3-llama3.1-8b-q8", "max_tokens": 8, "messages": [["role": "user", "content": "Reply with the word ok."]]])
+            let (d, resp) = try await URLSession.shared.data(for: r)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            try expect(code == 200, "\(b.name) chat HTTP \(code)")
+            let j = try JSONSerialization.jsonObject(with: d) as? [String: Any]
+            let c = ((j?["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any])?["content"] as? String ?? ""
+            return "switched to \(b.name), reply: \(c.prefix(30)); restored"
+        }
+
         // ---- integrations (only those already connected; never writes configs)
         let integ = IntegrationStore.shared
         integ.refreshInstalledTools()
