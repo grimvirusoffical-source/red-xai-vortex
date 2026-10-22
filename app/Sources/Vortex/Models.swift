@@ -8,6 +8,7 @@ struct Message: Identifiable, Codable, Equatable {
     var rating: Int? = nil
     var attachments: [Attachment]? = nil
     var toolLog: [String]? = nil
+    var model: String? = nil      // group chat: which model wrote this reply
 }
 
 struct Chat: Identifiable, Codable, Equatable {
@@ -17,6 +18,9 @@ struct Chat: Identifiable, Codable, Equatable {
     var created = Date()
     var updated = Date()
     var pinned = false
+    var participants: [String]? = nil   // group chat: models taking part, in turn order
+    var turnMode: String? = nil         // "all" (each replies in order) | "rotate" (one per turn)
+    var nextTurn: Int? = nil
 }
 
 struct Persona: Identifiable, Codable, Equatable, Hashable {

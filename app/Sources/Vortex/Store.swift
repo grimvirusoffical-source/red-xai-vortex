@@ -10,7 +10,7 @@ final class ChatStore: ObservableObject {
     @Published var streaming = false
     @Published var status = ""
     @Published var availableModels: [String] = [Defaults.model, Defaults.fallbackModel]
-    private var task: Task<Void, Never>?
+    var task: Task<Void, Never>?
 
     static var dir: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -42,6 +42,7 @@ final class ChatStore: ObservableObject {
         guard let i = idx(selection), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty, !streaming else { return }
         chats[i].messages.append(Message(role: "user", content: text, attachments: attachments.isEmpty ? nil : attachments))
         if chats[i].title == "New Chat" { chats[i].title = String((text.isEmpty ? attachments.map(\.name).joined(separator: ", ") : text).prefix(40)) }
+        if let ps = chats[i].participants, !ps.isEmpty { generateGroup(chatIndex: i, text: text, systemPrompt: systemPrompt, contextTokens: contextTokens, params: params); return }
         generate(chatIndex: i, systemPrompt: systemPrompt, contextTokens: contextTokens, params: params)
     }
 

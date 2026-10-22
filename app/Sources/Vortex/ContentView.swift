@@ -90,6 +90,7 @@ struct ChatView: View {
     @Local var dropTarget = false
     @StateObject var skills = SkillStore.shared
     @Local var voiceCall = false
+    @Local var groupSetup = false
 
     var params: ChatParams {
         ChatParams(baseURL: serverURL, apiKey: Keychain.get() ?? "", model: model, temperature: temperature, topP: topP,
@@ -142,6 +143,7 @@ struct ChatView: View {
                 Text(sendOnEnter ? "Enter to send · Shift+Enter for newline" : "⌘Enter to send").font(.caption2).foregroundStyle(.tertiary)
             }.padding(.horizontal, 12).padding(.bottom, 6)
         }
+        .sheet(isPresented: $groupSetup) { GroupSetupView().environmentObject(store) }
         .sheet(isPresented: $voiceCall) { VoiceCallView { t in input = t; send() }.environmentObject(store) }
         .overlay { if dropTarget { RoundedRectangle(cornerRadius: 12).stroke(Color.accent(accent), lineWidth: 3).padding(4).allowsHitTesting(false) } }
         .onDrop(of: [.fileURL], isTargeted: $dropTarget) { providers in
@@ -163,6 +165,8 @@ struct ChatView: View {
                 Toggle(isOn: Binding(get: { ToolRegistry.chatToolsOn }, set: { ToolRegistry.chatToolsOn = $0; store.objectWillChange.send() })) {
                     Image(systemName: "wrench.and.screwdriver")
                 }.toggleStyle(.button).help("Let the model call tools (plugins, MCP, PC control)")
+                Button { groupSetup = true } label: { Image(systemName: (store.current?.participants?.isEmpty == false) ? "person.3.fill" : "person.3") }
+                    .help("Group chat: several models reply in turn; @mention one to ask only it")
                 Button { voiceCall = true } label: { Image(systemName: "phone.fill") }.help("Voice call (whisper.cpp + Piper on this Mac)")
                 Button { store.regenerate(systemPrompt: systemPrompt, contextTokens: contextTokens, params: params) } label: {
                     Image(systemName: "arrow.clockwise") }.help("Regenerate last reply").disabled(store.streaming)
@@ -238,6 +242,7 @@ struct BubbleView: View {
         HStack(alignment: .top) {
             if isUser { Spacer(minLength: 60) } else { Text("🐬").font(.title2) }
             VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
+                if let who = message.model { Text(who).font(.caption.bold()).foregroundStyle(GroupColors.color(who)) }
                 if let a = message.attachments, !a.isEmpty { AttachmentChips(items: a) }
                 if let l = message.toolLog, !l.isEmpty {
                     DisclosureGroup("\(l.count) tool call(s)") {
