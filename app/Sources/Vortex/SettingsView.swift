@@ -8,7 +8,7 @@ struct SettingsView: View {
             PersonaSettings().tabItem { Label("Personas", systemImage: "person.text.rectangle") }
             AppearanceSettings().tabItem { Label("Appearance", systemImage: "paintpalette") }
             DataSettings().tabItem { Label("Chats & Data", systemImage: "tray.full") }
-            LumiSettings().tabItem { Label("Lumi Training", systemImage: "graduationcap") }
+            VortexTrainingSettings().tabItem { Label("Vortex Training", systemImage: "graduationcap") }
             NodeSettings().tabItem { Label("Compute", systemImage: "cpu") }
         }
         .frame(width: 720, height: 560)
@@ -138,6 +138,9 @@ struct PersonaSettings: View {
         }.formStyle(.grouped)
         .onAppear {
             personas = (try? JSONDecoder().decode([Persona].self, from: Data(personasJSON.utf8))) ?? Defaults.personas
+            if let i = personas.firstIndex(where: { $0.name == "Lumi Trainer" }), let v = Defaults.personas.first(where: { $0.name == "Vortex Trainer" }) {
+                personas[i] = v; persist() // renamed preset: training now targets Vortex
+            }
         }
     }
     func persist() { if let d = try? JSONEncoder().encode(personas) { personasJSON = String(data: d, encoding: .utf8) ?? "" } }
@@ -190,79 +193,49 @@ struct DataSettings: View {
     }
 }
 
-struct LumiSettings: View {
+struct VortexTrainingSettings: View {
     @EnvironmentObject var store: ChatStore
-    @AppStorage("systemPrompt") var systemPrompt = Defaults.systemPrompt
-    @AppStorage("lumiSystemPrompt") var lumiPrompt = "You are Lumi. She is warm, clever and concise."
+    @AppStorage("vortexSystemPrompt") var vortexPrompt = "You are Vortex, the Red-XAI Vortex assistant: direct, warm and precise."
     @AppStorage("omniRouteURL") var omniRouteURL = ""
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Training Lumi from the VPS").font(.title2.bold())
+                Text("Training Vortex").font(.title2.bold())
+                Text("Everything you collect here trains Red-XAI Vortex itself. Each trained version is installed as vortex-v1, vortex-v2, … and you choose which one \"vortex\" uses in the Vortex tab.").foregroundStyle(.secondary)
                 Group {
-                    h("1. Where everything lives on the VPS (YOUR_SERVER)")
-                    code("""
-                    Server binary : /opt/dolphin/bin/llama-server  (llama.cpp, CPU build)
-                    Models        : /opt/dolphin/models/*.gguf
-                                    dolphin3-llama3.1-8b-q8.gguf   (main, 8.5 GB)
-                                    dolphin3-llama3.2-3b-q4km.gguf (fallback, 2.0 GB)
-                    Service       : systemctl status dolphin-llm   (6 threads, CPUQuota 500%, MemoryMax 12G)
-                    API key file  : /etc/dolphin/api-keys  (root/dolphin only)
-                    Endpoint (VPS): http://127.0.0.1:8090/v1   (localhost only)
-                    Endpoint (Mac): http://127.0.0.1:18090/v1  (through Red-XAI Vortex's SSH tunnel)
-                    Logs          : journalctl -u dolphin-llm -f
-                    """)
-                    h("2. Build a dataset")
-                    Text("Chat with Red-XAI Vortex (the \"Lumi Trainer\" persona helps), keep the good conversations, then export. Each line is one conversation in OpenAI chat format: {\"messages\":[{\"role\":\"system\",…},{\"role\":\"user\",…},{\"role\":\"assistant\",…}]}. Lumi is she/her, so keep her voice consistent in every example.")
-                    TextField("System prompt written into the training file", text: $lumiPrompt)
+                    h("1. Where Vortex's training data comes from")
+                    Text("• Training mode (Vortex tab, off by default, plus consent): 👍 👎 and corrections on any reply.\n• Learn from the active model: replies from whatever model or merge you chat with, judge-scored; only the best are used.\n• Merges that include Vortex: the judge's or refiner's final answer is the preferred sample, and the other members' answers are kept as alternatives.\n• Your own chats exported below (optional).\nPersonal details are scrubbed and everything is stored encrypted on your server.")
+                    h("2. Add your chats (optional)")
+                    Text("Use the \"Vortex Trainer\" persona to write example answers in Vortex's voice, keep the good conversations, then export. Each line is one conversation in OpenAI chat format.")
+                    TextField("System prompt written into the training file", text: $vortexPrompt)
                     HStack {
-                        Button("Export for Training (all chats)…") { store.exportTraining(systemPrompt: lumiPrompt, onlyCurrent: false) }.buttonStyle(.borderedProminent)
-                        Button("Export current chat only…") { store.exportTraining(systemPrompt: lumiPrompt, onlyCurrent: true) }
+                        Button("Export for Training (all chats)…") { store.exportTraining(systemPrompt: vortexPrompt, onlyCurrent: false) }.buttonStyle(.borderedProminent)
+                        Button("Export current chat only…") { store.exportTraining(systemPrompt: vortexPrompt, onlyCurrent: true) }
                     }
                     if !store.status.isEmpty { Text(store.status).font(.caption).foregroundStyle(.secondary) }
-                    code("scp -i ~/.ssh/id_ed25519 lumi-train.jsonl root@YOUR_SERVER:/opt/dolphin/datasets/")
+                    code("scp vortex-train.jsonl root@YOUR_SERVER:/opt/dolphin/redxai/export/")
                 }
                 Group {
-                    h("3. LoRA fine-tuning: honest expectations")
-                    Text("The VPS (YOUR_SERVER) in the reference setup has 16 vCPUs, 32 GB RAM and no GPU. Inference works well; training does not scale there. CPU LoRA on a 3B model is possible for small adapters (a few hundred examples, short sequences) and takes hours; an 8B model on CPU is days and can run out of RAM next to production. Stop dolphin-llm while training. For real runs, train on a GPU machine (a rented 24 GB GPU, or an Apple Silicon Mac with MLX), then copy the adapter back.")
-                    h("Option A: GPU box with Unsloth (recommended)")
+                    h("3. Export Vortex's dataset on the server")
+                    code("redxai-train export     # -> /opt/dolphin/redxai/export/train-*.jsonl (best samples; merge rows include a \"rejected\" alternative)")
+                    h("4. Train a Vortex version (needs a GPU)")
+                    Text("The reference server has no GPU, so training there is impractical. Rent a 24–48 GB GPU for an hour or two, or use an Apple Silicon Mac with MLX. Train a LoRA on the SAME base model Vortex uses (see the Vortex tab → config \"base\").").font(.callout)
                     code("""
-                    pip install unsloth
-                    # base: cognitivecomputations/Dolphin3.0-Llama3.1-8B (or Llama3.2-3B)
-                    # load_in_4bit=True, LoRA r=16, alpha=16, lr=2e-4, 1-3 epochs on lumi-train.jsonl
-                    # then: model.save_pretrained_gguf("lumi", tokenizer, quantization_method="q8_0")
-                    scp lumi-*.gguf root@YOUR_SERVER:/opt/dolphin/models/
-                    ssh root@YOUR_SERVER 'chown dolphin: /opt/dolphin/models/*; systemctl restart dolphin-llm'
+                    pip install unsloth          # or axolotl; for "rejected" pairs use a DPO/ORPO trainer
+                    # LoRA r=16, alpha=32, 2-3 epochs on train-*.jsonl (+ vortex-train.jsonl)
+                    python llama.cpp/convert_lora_to_gguf.py --base <hf-base-dir> <lora-dir> --outfile vortex-lora.gguf
+                    scp vortex-lora.gguf root@YOUR_SERVER:/root/
                     """)
-                    h("Option B: Apple Silicon Mac with MLX")
+                    h("5. Install, compare, activate")
                     code("""
-                    pip install mlx-lm
-                    mlx_lm.lora --model cognitivecomputations/Dolphin3.0-Llama3.2-3B --train \\
-                      --data ./lumi-data --iters 600 --batch-size 2 --num-layers 8
-                    mlx_lm.fuse --model cognitivecomputations/Dolphin3.0-Llama3.2-3B --adapter-path adapters --save-path lumi-3b
-                    # convert to GGUF with llama.cpp convert_hf_to_gguf.py, then copy to /opt/dolphin/models/
+                    redxai-train install /root/vortex-lora.gguf   # becomes vortex-vN
+                    redxai-eval                                    # benchmark every version
+                    redxai-train activate vN                       # what model "vortex" uses
                     """)
-                    h("Option C: CPU-only on the VPS (small adapters only)")
-                    code("""
-                    systemctl stop dolphin-llm
-                    # use llama.cpp's finetune tool (build from source if it isn't in the release), e.g.
-                    # llama-finetune -m models/dolphin3-llama3.2-3b-q4km.gguf -f datasets/lumi.txt -t 6 -c 512
-                    # Expect hours for a few hundred samples. Load the adapter with --lora at serve time.
-                    systemctl start dolphin-llm
-                    """)
-                    Text("A new .gguf dropped into /opt/dolphin/models shows up automatically in Red-XAI Vortex's model picker after a service restart.").font(.caption)
                 }
                 Group {
-                    h("4. OmniRoute")
-                    Text("Add the VPS as an OpenAI-compatible provider in OmniRoute, so you can route between Dolphin, Lumi and other providers and log conversations for training data.")
-                    code("""
-                    Provider type : OpenAI-compatible
-                    Base URL      : http://127.0.0.1:8090/v1   (if OmniRoute runs on the VPS)
-                                    http://127.0.0.1:18090/v1  (if it runs on this Mac, tunnel up)
-                    API key       : contents of /etc/dolphin/api-keys
-                    Models        : dolphin3-llama3.1-8b-q8, dolphin3-llama3.2-3b-q4km (+ lumi-* when trained)
-                    """)
-                    Text("Keep OmniRoute bound to localhost or behind the tunnel; do not expose port 8090 publicly. Export OmniRoute's request logs as JSONL in the same {\"messages\":[…]} format to merge them with Red-XAI Vortex exports.")
+                    h("Optional: OmniRoute")
+                    Text("If you use OmniRoute, add the gateway as an OpenAI-compatible provider (base URL http://127.0.0.1:18091/v1 with the app's tunnel up, and a redx_ai_ key). Export its request logs as JSONL in the same {\"messages\":[…]} format to add them to Vortex's training data.")
                     TextField("OmniRoute URL (optional; use it as Server URL in Connection to chat through it)", text: $omniRouteURL)
                 }
             }.padding(20).textSelection(.enabled)

@@ -37,3 +37,12 @@ Limits: 200 GB total for models, 20 GB disk kept free, and RAM need must be ≤ 
 
 ## Logs
 `journalctl -u dolphin-llm -f` · `journalctl -u dolphin-gateway -f`
+
+## Owner bans
+
+```bash
+vortex-ban list    # banned IPs / device ids / attempt counters
+vortex-ban clear   # wipe bans (SSH only)
+```
+
+See [OWNER.md](OWNER.md).

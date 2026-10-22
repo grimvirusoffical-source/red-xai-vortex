@@ -11,9 +11,12 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 )
 
 const cryptoBackend = "stdlib"
+
+var errOwnerNeedsRSX = errors.New("owner password hashing requires the rsx build")
 
 func cbRandom(n int) ([]byte, error) { b := make([]byte, n); _, err := rand.Read(b); return b, err }
 func cbHMAC(key, msg []byte) [32]byte {
@@ -46,3 +49,10 @@ func cbOpen(key, nonce, aad, ct []byte) ([]byte, error) {
 }
 
 func cbSHA256(msg []byte) [32]byte { return sha256.Sum256(msg) }
+
+func cbHashPasswordPHC(pw []byte) (string, error) {
+	return "", errOwnerNeedsRSX
+}
+func cbVerifyPasswordPHC(pw []byte, phc string) (bool, error) {
+	return false, errOwnerNeedsRSX
+}

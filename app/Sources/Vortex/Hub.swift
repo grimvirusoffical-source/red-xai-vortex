@@ -14,11 +14,20 @@ enum Admin {
         var r = URLRequest(url: u); r.httpMethod = method; r.timeoutInterval = 120
         r.setValue("Bearer \(Keychain.get() ?? "")", forHTTPHeaderField: "Authorization")
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.setValue(DeviceID.value, forHTTPHeaderField: DeviceID.header)
         if let body { r.httpBody = try JSONSerialization.data(withJSONObject: body) }
         let (d, resp) = try await URLSession.shared.data(for: r)
         let j = (try? JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? [:]
         if let h = resp as? HTTPURLResponse, h.statusCode >= 300 {
-            let m = ((j["error"] as? [String: Any])?["message"] as? String) ?? "HTTP \(h.statusCode)"
+            if h.statusCode == 403, (j["wipe"] as? Bool == true) || (j["banned"] as? Bool == true) ||
+                ((j["error"] as? [String: Any])?["message"] as? String)?.contains("banned") == true {
+                await MainActor.run { OwnerWipe.run() }
+            }
+            // unlock failures include remaining in the JSON body
+            if path.hasSuffix("/owner/unlock"), j["ok"] != nil { return j }
+            let m = ((j["error"] as? [String: Any])?["message"] as? String)
+                ?? (j["remaining"] != nil ? "Wrong password. \(j["remaining"] ?? "") tries left." : nil)
+                ?? "HTTP \(h.statusCode)"
             throw NSError(domain: "Vortex", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: m])
         }
         if let e = j["error"] as? String { throw NSError(domain: "Vortex", code: 1, userInfo: [NSLocalizedDescriptionKey: e]) }
@@ -186,7 +195,9 @@ struct HubView: View {
                 ServersView().tabItem { Label("Servers", systemImage: "server.rack") }.tag("servers")
                 ProvidersView().tabItem { Label("Providers", systemImage: "cloud") }.tag("providers")
                 KeysView().tabItem { Label("API Keys", systemImage: "key") }.tag("keys")
+                OwnerPanelView().tabItem { Label("Owner", systemImage: "lock.shield") }.tag("owner")
                 DocsView().tabItem { Label("Use in Other Apps", systemImage: "app.connected.to.app.below.fill") }.tag("docs")
+                IntegrationsView().tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }.tag("integrations")
                 HelpView().tabItem { Label("Help", systemImage: "questionmark.circle") }.tag("help")
             }
             if !hub.error.isEmpty {

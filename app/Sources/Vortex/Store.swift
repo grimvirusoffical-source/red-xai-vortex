@@ -143,7 +143,7 @@ final class ChatStore: ObservableObject {
     }
     /// OpenAI/ShareGPT-style chat JSONL: one {"messages":[...]} object per conversation.
     func exportTraining(systemPrompt: String, onlyCurrent: Bool) {
-        let p = NSSavePanel(); p.nameFieldStringValue = "lumi-train.jsonl"
+        let p = NSSavePanel(); p.nameFieldStringValue = "vortex-train.jsonl"
         guard p.runModal() == .OK, let u = p.url else { return }
         let src = onlyCurrent ? (current.map { [$0] } ?? []) : chats
         var lines: [String] = []

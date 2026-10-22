@@ -3,7 +3,7 @@ set -e
 SIGN_ID="${SIGN_ID:--}"   # export SIGN_ID="Developer ID Application: Your Name (TEAMID)" to sign for distribution
 [ -f .sign-id ] && SIGN_ID="$(cat .sign-id)"   # local, git-ignored
 cd "$(dirname "$0")"
-swift build -c release 2>&1 | tail -20
+set -o pipefail; swift build -c release
 APP="build/Red-XAI Vortex.app"
 rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/Vortex "$APP/Contents/MacOS/Vortex"
@@ -36,8 +36,8 @@ cat > "$APP/Contents/Info.plist" <<P
 <key>CFBundleExecutable</key><string>Vortex</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>2.1</string>
-<key>CFBundleVersion</key><string>7</string>
+<key>CFBundleShortVersionString</key><string>2.2</string>
+<key>CFBundleVersion</key><string>9</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>

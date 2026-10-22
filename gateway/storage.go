@@ -272,6 +272,9 @@ func storageAdmin(w http.ResponseWriter, r *http.Request, p string, in map[strin
 	if !strings.HasPrefix(p, "/admin/storage") {
 		return false
 	}
+	if r.Method != "GET" && !requireOwner(w, r) {
+		return true
+	}
 	switch {
 	case p == "/admin/storage" && r.Method == "GET":
 		c := stLoad()

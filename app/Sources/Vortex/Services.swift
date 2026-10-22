@@ -33,6 +33,8 @@ final class TunnelManager: ObservableObject {
         p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         var args = ["-N", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=30", "-o", "BatchMode=yes",
                     "-L", "127.0.0.1:\(local):127.0.0.1:\(remote)"]
+        // public (keyed) API too, so tools on this Mac (Integrations) can use http://127.0.0.1:\(local - 1)/v1
+        if remote == 8092 { args += ["-L", "127.0.0.1:\(local - 1):127.0.0.1:8091"] }
         let kp = (keyPath as NSString).expandingTildeInPath
         if !kp.isEmpty && FileManager.default.fileExists(atPath: kp) { args += ["-i", kp] }
         args.append(host)

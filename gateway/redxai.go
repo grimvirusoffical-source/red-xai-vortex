@@ -583,6 +583,10 @@ func redxaiAdmin(w http.ResponseWriter, r *http.Request, p string, in map[string
 		return false
 	}
 	sub := strings.TrimPrefix(p, "/admin/redxai/")
+	// Mutations (learn toggle, crawl, export, …) need Owner Panel unlock
+	if r.Method != "GET" && sub != "stats" && !requireOwner(w, r) {
+		return true
+	}
 	switch {
 	case sub == "config" && r.Method == "GET":
 		json.NewEncoder(w).Encode(rxConfig())
@@ -643,7 +647,20 @@ func redxaiAdmin(w http.ResponseWriter, r *http.Request, p string, in map[string
 		for _, d := range ds {
 			msgs, _ := d["messages"].([]any)
 			reply, _ := d["response"].(string)
-			if d["kind"] == "distill" {
+			var rejected string
+			if d["kind"] == "distill" && d["preferred"] == true {
+				// judge/refiner-chosen merge answer: preferred sample; a member answer becomes "rejected" for preference tuning
+				if mem, ok := d["members"].([]any); ok {
+					for _, x := range mem {
+						if mm, ok := x.(map[string]any); ok && fmt.Sprint(mm["response"]) != reply && fmt.Sprint(mm["response"]) != "" {
+							rejected = fmt.Sprint(mm["response"])
+							break
+						}
+					}
+				}
+			} else if d["kind"] == "distill" && d["preferred"] == false {
+				continue // merge member candidates are only used as "rejected" alternatives
+			} else if d["kind"] == "distill" {
 				if sc, ok := scores[fmt.Sprint(d["id"])]; !ok || sc < rxConfig().LearnMinScore {
 					continue
 				}
@@ -657,7 +674,11 @@ func redxaiAdmin(w http.ResponseWriter, r *http.Request, p string, in map[string
 			}
 			all := append([]any{map[string]any{"role": "system", "content": rxConfig().Persona}}, msgs...)
 			all = append(all, map[string]any{"role": "assistant", "content": reply})
-			b, _ := json.Marshal(map[string]any{"messages": all})
+			row := map[string]any{"messages": all}
+			if rejected != "" {
+				row["rejected"] = rejected
+			}
+			b, _ := json.Marshal(row)
 			f.Write(append(b, '\n'))
 			n++
 		}

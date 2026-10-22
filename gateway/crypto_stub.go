@@ -18,3 +18,6 @@ func cbHMAC(key, msg []byte) [32]byte                   { panic(errNoCrypto) }
 func cbSeal(key, nonce, aad, pt []byte) ([]byte, error) { return nil, errNoCrypto }
 func cbOpen(key, nonce, aad, ct []byte) ([]byte, error) { return nil, errNoCrypto }
 func cbSHA256(msg []byte) [32]byte                      { panic(errNoCrypto) }
+
+func cbHashPasswordPHC(pw []byte) (string, error) { return "", errNoCrypto }
+func cbVerifyPasswordPHC(pw []byte, phc string) (bool, error) { return false, errNoCrypto }

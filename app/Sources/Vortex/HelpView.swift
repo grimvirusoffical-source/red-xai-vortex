@@ -3,8 +3,8 @@ import SwiftUI
 /// In-app Help: the same plain-language guides as the repo's docs/, bundled in Resources/Help.
 enum HelpDocs {
     static let order: [(String, String)] = [
-        ("USER-GUIDE", "Complete guide"), ("MERGES", "Merging models"), ("CONNECT", "Connect other apps"),
-        ("VORTEX", "Vortex learning model"), ("POOLING", "Servers, pooling & nodes"), ("PERMISSIONS", "Owner vs user"),
+        ("USER-GUIDE", "Complete guide"), ("MERGES", "Merging models"), ("INTEGRATIONS", "Integrations (Connect buttons)"), ("CONNECT", "Connect other apps"),
+        ("VORTEX", "Vortex learning model"), ("POOLING", "Servers, pooling & nodes"), ("PERMISSIONS", "Owner vs user"), ("OWNER", "Owner Panel & bans"),
         ("PROVIDERS", "Outside providers"), ("MODEL-BROWSER", "Model browser"), ("STORAGE", "Storage overflow"),
         ("PC-CONTROL", "PC control (design)"), ("API", "API reference"), ("PUBLIC-ACCESS", "Public access"),
         ("TROUBLESHOOTING", "Troubleshooting"), ("FAQ", "FAQ")]

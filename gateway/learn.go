@@ -164,3 +164,44 @@ func distillStats() map[string]any {
 	}
 	return map[string]any{"learning_on": rxConfig().Learn, "captured": tot, "scored": scored, "best": best, "min_score": min, "teachers": teachers, "at": time.Now().Unix()}
 }
+
+func mergeHasVortex(mg *Merge) bool {
+	for _, m := range append(append([]string{}, mg.Models...), mg.Judge) {
+		if m == "vortex" || isRedXAI(m) || strings.HasPrefix(m, "vortex-v") {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeCapture: the merge's final (judge/refiner) answer is the preferred sample; when the
+// merge contains Vortex, each member's answer is also kept as a candidate, linked by group id.
+func mergeCapture(mg *Merge, body map[string]any, final string, steps []step) {
+	if !mergeHasVortex(mg) {
+		distillCapture(mergePref+mg.Name, body, final)
+		return
+	}
+	msgs, _ := body["messages"].([]any)
+	if len(msgs) == 0 || strings.TrimSpace(final) == "" {
+		return
+	}
+	sm := scrubAny(msgs)
+	mb, _ := json.Marshal(sm)
+	group := rxID(string(mb) + "\x00merge:" + mg.Name + fmt.Sprint(time.Now().UnixNano()))
+	var members []map[string]any
+	for _, s := range steps {
+		if s.Role == "panel" || s.Role == "draft" || s.Role == "routed" || s.Role == "fallback" {
+			members = append(members, map[string]any{"model": s.Model, "role": s.Role, "response": scrubPII(strings.TrimSpace(thinkRe.ReplaceAllString(s.Out, "")))})
+		}
+	}
+	pref := scrubPII(strings.TrimSpace(thinkRe.ReplaceAllString(final, "")))
+	rec := map[string]any{"kind": "distill", "teacher": mergePref + mg.Name, "mode": mg.Mode, "preferred": true, "group": group,
+		"messages": sm, "response": pref, "members": members}
+	rec["id"] = rxID(string(mb) + "\x00" + pref)
+	go appendDataset(rec)
+	for _, m := range members {
+		r := map[string]any{"kind": "distill", "teacher": m["model"], "role": m["role"], "preferred": false, "group": group, "messages": sm, "response": m["response"]}
+		r["id"] = rxID(string(mb) + "\x00" + fmt.Sprint(m["response"]))
+		go appendDataset(r)
+	}
+}

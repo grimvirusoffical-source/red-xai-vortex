@@ -1,5 +1,7 @@
 # Red-XAI Vortex
 
+![Red-XAI Vortex](docs/icon.png)
+
 Run open models on your own server, chat with them from a native Mac app, and plug them into
 any app that speaks the **OpenAI** or **Ollama** API, using your own API keys.
 
@@ -65,7 +67,7 @@ Create a key under **Library, Merges & Keys → API Keys**, then point any OpenA
 - **[Complete guide (start here)](docs/USER-GUIDE.md)** · [Troubleshooting](docs/TROUBLESHOOTING.md) · [FAQ](docs/FAQ.md)
 - [Merging models (with diagrams)](docs/MERGES.md)
 - [Servers, failover, pooling and nodes](docs/POOLING.md)
-- [Owner vs user permissions](docs/PERMISSIONS.md)
+- [Owner vs user permissions](docs/PERMISSIONS.md · [Owner Panel](docs/OWNER.md) · [Integrations](docs/INTEGRATIONS.md))
 - [API reference (OpenAI + Ollama + admin)](docs/API.md)
 - [Outside providers](docs/PROVIDERS.md)
 - [Gateway build & crypto backends](docs/GATEWAY.md)

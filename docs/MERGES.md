@@ -84,3 +84,6 @@ curl 127.0.0.1:18092/admin/merges -H "Authorization: Bearer $ADMIN_KEY" \
 ```
 Outside-provider models (`ext-…`) can be drafters, panel members or judges. Merges are limited to 3 models.
 All times above were measured on a 16-vCPU / 32 GB CPU server with no GPU.
+
+## Training from merges
+When a merge includes **vortex**, the gateway stores the judge-chosen answer as a preferred distill sample and the other members as non-preferred under the same consent rules. Preferred rows export with a rejected alternative for DPO-style training.

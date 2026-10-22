@@ -55,3 +55,6 @@ Each key has its own requests per minute (default 60), and the HTTP status is 42
 | POST | `/admin/redxai/crawl`, `/admin/redxai/eval`, `/admin/redxai/export` | |
 | DELETE | `/admin/redxai/kb?source=<src or prefix*>` | forget knowledge |
 The admin port also serves `/v1/*` and `/api/*` for the app.
+
+## Protocol shims
+Besides OpenAI `/v1/chat/completions`, the gateway speaks Anthropic `/v1/messages`, OpenAI `/v1/responses` (Codex), and Gemini `/v1beta/models/{m}:generateContent` (and stream / countTokens). All route through the same merge / Vortex / learning path.

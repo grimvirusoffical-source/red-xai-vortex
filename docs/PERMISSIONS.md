@@ -17,3 +17,6 @@ How it's enforced:
 - Keys are stored as HMAC fingerprints, and the plaintext is shown once.
 - Each key can be limited to models and requests per minute, and revoked instantly.
 - Training data is only collected with training mode **and** consent on, PII is scrubbed twice (app and server), and it's sealed at rest.
+
+## Owner Panel
+See [OWNER.md](OWNER.md): owner password (rsx Argon2id on the server), 3-strike device/IP ban, and `vortex-ban` SSH recovery.

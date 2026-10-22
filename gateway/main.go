@@ -127,6 +127,7 @@ func load() {
 	}
 	loadProviders()
 	rxInit()
+	loadOwner()
 	if b, err := os.ReadFile(filepath.Join(dir, "merges.json")); err == nil {
 		must(json.Unmarshal(b, &merges))
 	} else {
@@ -154,6 +155,12 @@ func auth(r *http.Request) *Key {
 	k := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
 	if k == "" {
 		k = r.Header.Get("x-api-key")
+	}
+	if k == "" {
+		k = r.Header.Get("x-goog-api-key")
+	}
+	if k == "" && strings.HasPrefix(r.URL.Path, "/v1beta/") {
+		k = r.URL.Query().Get("key")
 	}
 	if !(strings.HasPrefix(k, "redx_ai_") || strings.HasPrefix(k, "redx_xai_")) || len(k) > 128 {
 		return nil
@@ -329,6 +336,10 @@ func chatOnce(model string, msgs []msg, extra map[string]any) (string, int64, er
 	body["model"] = model
 	body["messages"] = msgs
 	body["stream"] = false
+	if model == "vortex" || strings.HasPrefix(model, "vortex-v") {
+		model = rxModel + strings.TrimPrefix(model, "vortex")
+		body["model"] = model
+	}
 	model = applyAlias(body)
 	if isRedXAI(model) {
 		model, _ = rxPrepare(body)
@@ -422,6 +433,7 @@ type step struct {
 	Model string  `json:"model"`
 	Role  string  `json:"role"`
 	Secs  float64 `json:"seconds"`
+	Out   string  `json:"-"`
 }
 
 func runMerge(m *Merge, msgs []msg, extra map[string]any) (string, []step, int64, error) {
@@ -431,7 +443,7 @@ func runMerge(m *Merge, msgs []msg, extra map[string]any) (string, []step, int64
 		t := time.Now()
 		out, n, err := chatOnce(model, ms, extra)
 		tok += n
-		steps = append(steps, step{model, role, time.Since(t).Seconds()})
+		steps = append(steps, step{model, role, time.Since(t).Seconds(), out})
 		return out, err
 	}
 	last := ""
@@ -553,6 +565,14 @@ func handleV1(w http.ResponseWriter, r *http.Request, k *Key) {
 	}
 	if path == "/v1/models" && r.Method == "GET" {
 		handleModels(w, k)
+		return
+	}
+	if r.Method == "POST" && (path == "/v1/messages" || path == "/v1/messages/count_tokens") {
+		handleMessages(w, r, k)
+		return
+	}
+	if r.Method == "POST" && path == "/v1/responses" {
+		handleResponses(w, r, k)
 		return
 	}
 	if r.Method != "POST" || (path != "/v1/chat/completions" && path != "/v1/completions" && path != "/v1/embeddings") {
@@ -759,7 +779,7 @@ func serveMerge(w http.ResponseWriter, r *http.Request, k *Key, mg *Merge, body 
 	k.Tokens += tok
 	mu.Unlock()
 	if learnWanted(r, "/v1/chat/completions") {
-		distillCapture(mergePref+mg.Name, body, out)
+		mergeCapture(mg, body, out, steps)
 	}
 	id := "chatcmpl-merge-" + randB62(12)
 	meta := map[string]any{"merge": mg.Name, "mode": mg.Mode, "models_used": len(steps), "steps": steps, "seconds": time.Since(t0).Seconds()}
@@ -791,6 +811,9 @@ func publicHandler(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok\n"))
 		return
 	}
+	if refuseIfBanned(w, r) {
+		return
+	}
 	k := auth(r)
 	if k == nil {
 		errJSON(w, 401, "invalid or missing API key")
@@ -803,6 +826,10 @@ func publicHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		handleOllama(w, r, k)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/v1beta/") {
+		handleGemini(w, r, k)
 		return
 	}
 	handleV1(w, r, k)
@@ -821,6 +848,13 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := r.URL.Path
+	if strings.HasPrefix(p, "/admin/owner/") {
+		if handleOwnerAdmin(w, r, p) {
+			return
+		}
+	} else if refuseIfBanned(w, r) {
+		return
+	}
 	if strings.HasPrefix(p, "/api/") {
 		handleOllama(w, r, k)
 		return
@@ -858,6 +892,9 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		sort.Slice(out, func(i, j int) bool { return out[i]["created"].(int64) > out[j]["created"].(int64) })
 		json.NewEncoder(w).Encode(map[string]any{"keys": out})
 	case p == "/admin/keys" && r.Method == "POST":
+		if !requireOwner(w, r) {
+			return
+		}
 		name := strings.TrimSpace(str("name"))
 		if name == "" || len(name) > 64 {
 			errJSON(w, 400, "name required")
@@ -897,6 +934,9 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		mu.Unlock()
 		json.NewEncoder(w).Encode(map[string]any{"id": nk.ID, "key": plain, "note": "shown once; store it now"})
 	case strings.HasPrefix(p, "/admin/keys/") && (r.Method == "DELETE" || r.Method == "POST"):
+		if !requireOwner(w, r) {
+			return
+		}
 		id := strings.TrimPrefix(strings.TrimSuffix(p, "/revoke"), "/admin/keys/")
 		mu.Lock()
 		found := false
@@ -923,6 +963,9 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		b, _ := dm("jobs")
 		w.Write(b)
 	case p == "/admin/models/pull" && r.Method == "POST":
+		if !requireOwner(w, r) {
+			return
+		}
 		id := str("id")
 		if !regexp.MustCompile(`^[a-z0-9._-]{1,64}$`).MatchString(id) {
 			errJSON(w, 400, "bad id")
@@ -938,6 +981,9 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		go func() { cmd.Wait(); log.Printf("pull %s: %s", id, strings.TrimSpace(eb.String())) }()
 		w.Write([]byte(`{"ok":true,"started":true}`))
 	case strings.HasPrefix(p, "/admin/models/") && r.Method == "DELETE":
+		if !requireOwner(w, r) {
+			return
+		}
 		id := strings.TrimPrefix(p, "/admin/models/")
 		if !regexp.MustCompile(`^[a-z0-9._-]{1,64}$`).MatchString(id) {
 			errJSON(w, 400, "bad id")
@@ -1043,6 +1089,26 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "vortex-ban" {
+		os.Exit(runVortexBanCLI(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "set-owner-password" {
+		os.MkdirAll(dir, 0700)
+		pw := os.Getenv("VORTEX_OWNER_PASSWORD")
+		if len(os.Args) > 2 {
+			pw = os.Args[2]
+		}
+		if pw == "" {
+			fmt.Fprintln(os.Stderr, "set VORTEX_OWNER_PASSWORD or pass the password as argv[2]")
+			os.Exit(2)
+		}
+		if err := setOwnerPassword(pw); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("owner password hash stored")
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "init-admin" {
 		os.MkdirAll(dir, 0700)
 		load()

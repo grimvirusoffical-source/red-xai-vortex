@@ -10,6 +10,7 @@ extension Admin {
         var r = URLRequest(url: u); r.httpMethod = method; r.timeoutInterval = 120
         r.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.setValue(DeviceID.value, forHTTPHeaderField: DeviceID.header)
         if let body { r.httpBody = try JSONSerialization.data(withJSONObject: body) }
         var lastErr: Error = URLError(.cannotConnectToHost)
         for _ in 0..<5 {   // tunnel may still be coming up
@@ -17,6 +18,9 @@ extension Admin {
                 let (d, resp) = try await URLSession.shared.data(for: r)
                 let j = (try? JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? [:]
                 if let h = resp as? HTTPURLResponse, h.statusCode >= 300 {
+                    if h.statusCode == 403, (j["banned"] as? Bool == true) || ((j["error"] as? [String: Any])?["message"] as? String)?.contains("banned") == true {
+                        await MainActor.run { OwnerWipe.run() }
+                    }
                     throw NSError(domain: "Vortex", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: ((j["error"] as? [String: Any])?["message"] as? String) ?? "HTTP \(h.statusCode)"])
                 }
                 return j
