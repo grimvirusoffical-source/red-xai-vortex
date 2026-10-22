@@ -5,6 +5,7 @@ struct Message: Identifiable, Codable, Equatable {
     var role: String   // system | user | assistant
     var content: String
     var date = Date()
+    var rating: Int? = nil
 }
 
 struct Chat: Identifiable, Codable, Equatable {

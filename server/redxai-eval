@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""redxai-eval: fixed benchmark for Red-XAI versions. Scores = share of expected keywords found; also latency.
+Results appended to /opt/dolphin/redxai/eval.json (history kept)."""
+import json, time, urllib.request, os, re, glob
+KEY=open('/root/dolphino-admin.key').read().strip(); OUT='/opt/dolphin/redxai/eval.json'
+Q=[("What is 17 * 23?",["391"]),("Name the capital of Australia.",["canberra"]),
+   ("Write a Python function is_even(n) that returns True for even numbers.",["def","% 2","return"]),
+   ("Explain in one sentence why the sky is blue.",["scatter"]),
+   ("If all bloops are razzies and all razzies are lazzies, are all bloops lazzies? Answer yes or no.",["yes"]),
+   ("Translate 'good morning' to Spanish.",["buenos"]),("What does HTTP status 404 mean?",["not found"]),
+   ("Convert 100 degrees Celsius to Fahrenheit.",["212"]),
+   ("Who are you?",["red-xai"]),("Give a SQL query selecting all rows from a table named users.",["select","from users"])]
+def ask(model,q):
+    t=time.time()
+    req=urllib.request.Request('http://127.0.0.1:8092/v1/chat/completions',data=json.dumps({'model':model,'max_tokens':400,'temperature':0,'messages':[{'role':'user','content':q}]}).encode(),headers={'Authorization':'Bearer '+KEY,'Content-Type':'application/json'})
+    d=json.load(urllib.request.urlopen(req,timeout=900)); return d['choices'][0]['message']['content'],time.time()-t
+models=['red-xai']+['red-xai-'+os.path.basename(d) for d in sorted(glob.glob('/opt/dolphin/redxai/adapters/v*')) if glob.glob(d+'/*.gguf')]
+hist=json.load(open(OUT)).get('history',[]) if os.path.exists(OUT) else []
+run={'ts':int(time.time()),'results':{}}
+for m in models:
+    tot=0; lat=[]; items=[]
+    for q,kw in Q:
+        try: a,s=ask(m,q)
+        except Exception as e: a,s=f'ERROR {e}',0
+        hit=sum(1 for k in kw if k in a.lower())/len(kw); tot+=hit; lat.append(s); items.append({'q':q,'score':round(hit,2),'seconds':round(s,1),'answer':a[:400]})
+    run['results'][m]={'score':round(100*tot/len(Q),1),'avg_seconds':round(sum(lat)/len(lat),1),'items':items}
+hist.append({'ts':run['ts'],'scores':{m:r['score'] for m,r in run['results'].items()}})
+json.dump({'latest':run,'history':hist[-50:]},open(OUT,'w'),indent=1)
+print(json.dumps({m:(r['score'],r['avg_seconds']) for m,r in run['results'].items()}))

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# redxai-train: Red-XAI learning pipeline (LoRA adapters, versioned v1, v2, …)
+#   redxai-train export                 -> plaintext training JSONL from the sealed dataset (root-only file)
+#   redxai-train gpu-help               -> how to train the adapter on a rented GPU (recommended)
+#   redxai-train cpu <jsonl>            -> small CPU LoRA on the 3B Dolphin via llama.cpp llama-finetune, if built (slow)
+#   redxai-train install <adapter.gguf> -> becomes the next version (vN), loads in the router as red-xai-vN
+#   redxai-train activate vN|base       -> what model "red-xai" uses
+set -euo pipefail
+A=/opt/dolphin/redxai/adapters; KEY=$(cat /root/dolphino-admin.key); G=http://127.0.0.1:8092
+case "${1:-}" in
+ export) curl -s -XPOST -H "Authorization: Bearer $KEY" $G/admin/redxai/export; echo;;
+ gpu-help) cat <<'H'
+Rented GPU (e.g. 1x 24-48 GB card for 1-3 hours):
+  1. scp the export file from /opt/dolphin/redxai/export/ to the GPU box.
+  2. pip install unsloth   (or axolotl)
+  3. Train a LoRA (r=16, alpha=32, 2-3 epochs) on the SAME base as Red-XAI's config "base"
+     (Mixtral base: mistralai/Mixtral-8x7B-Instruct-v0.1 / Dolphin 2.7 weights; smaller: Llama-3.1-8B for dolphin3-llama3.1-8b).
+  4. Convert the adapter:  python llama.cpp/convert_lora_to_gguf.py --base <hf-base-dir> <lora-dir> --outfile red-xai-lora.gguf
+  5. scp red-xai-lora.gguf back, then:  redxai-train install red-xai-lora.gguf  &&  redxai-eval
+H
+;;
+ cpu) [ -x /opt/dolphin/bin/llama-finetune ] || { echo "llama-finetune not built; CPU LoRA is only practical for 1-3B models. Use gpu-help."; exit 2; }
+      echo "CPU fine-tuning of a 3B model takes hours per epoch on 16 vCPUs."; exit 2;;
+ install) f="${2:?adapter.gguf}"; n=$(ls -d $A/v* 2>/dev/null | wc -l); v="v$((n+1))"; mkdir -p $A/$v; cp "$f" $A/$v/adapter.gguf
+      date -Iseconds > $A/$v/created; chown -R dolphin:root $A
+      python3 - <<'P'
+import sys; sys.argv=['x','list']
+src=open('/usr/local/bin/dolphin-models').read().split("cmd=args[0]")[0]; exec(src); write_presets()
+P
+      systemctl restart dolphin-llm; echo "installed as red-xai-$v";;
+ activate) v="${2:?vN|base}"; [ "$v" = base ] && v=""
+      curl -s -H "Authorization: Bearer $KEY" $G/admin/redxai/config -d "{\"active_version\":\"$v\"}"; echo;;
+ *) sed -n 2,8p "$0";;
+esac

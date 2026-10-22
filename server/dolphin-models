@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""dolphin-models list|available|pull <id>|remove <id>|default [id]|jobs [--json]"""
+"""dolphin-models list|available|pull <id>|remove <id>|default [id]|jobs
+  ollama-library | ollama-tags <name> | ollama-pull <name[:tag]>
+  create <alias> -f <Modelfile> | aliases | alias-rm <alias>      [--json]"""
 import json, os, sys, shutil, subprocess, time, urllib.request, glob
 MD='/opt/dolphin/models'; PART='/opt/dolphin/cache/partial'; CAT='/etc/dolphin/catalog.json'
 PRESET='/etc/dolphin/presets.ini'; DEF='/etc/dolphin/default-model'; JOBS='/opt/dolphin/cache/jobs'
@@ -41,6 +43,14 @@ def write_presets():
     for m in installed():
         if m.get('category')=='embeddings':
             s+=[f'[{m["id"]}]',f'model = {MD}/{m["id"]}.gguf','embeddings = true','ctx-size = 2048','']
+    # Red-XAI versions: base model + LoRA adapter (adapters/vN/*.gguf)
+    try: base=json.load(open('/etc/dolphin/redxai/config.json')).get('base','dolphin2.7-mixtral-8x7b-iq4xs')
+    except Exception: base='dolphin2.7-mixtral-8x7b-iq4xs'
+    bp=path_of(base)
+    for d in sorted(glob.glob('/opt/dolphin/redxai/adapters/v*')):
+        ad=sorted(glob.glob(d+'/*.gguf'))
+        if ad and bp and os.path.isfile(bp):
+            s+=[f'[red-xai-{os.path.basename(d)}]',f'model = {bp}',f'lora = {ad[0]}','ctx-size = 8192','']
     open(PRESET,'w').write('\n'.join(s))
 def restart(): subprocess.run(['systemctl','restart','dolphin-llm'],check=False)
 def job_write(id,**kw):
@@ -109,4 +119,97 @@ elif cmd=='default':
 elif cmd=='jobs':
     js=[json.load(open(f)) for f in glob.glob(JOBS+'/*.json')] if os.path.isdir(JOBS) else []
     out({'jobs':js},'\n'.join(f"{j['id']}: {j.get('state')} {gb(j.get('done',0))}/{gb(j.get('total',0))} GB" for j in js))
+elif cmd=='ollama-library':
+    import re,html as H
+    cache='/opt/dolphin/cache/ollama-library.json'
+    if os.path.exists(cache) and time.time()-os.path.getmtime(cache)<86400 and '--refresh' not in sys.argv: lib=json.load(open(cache))
+    else:
+        page=urllib.request.urlopen(urllib.request.Request('https://ollama.com/library',headers={'User-Agent':'dolphino'}),timeout=30).read().decode()
+        lib=[]
+        for blk in re.split(r'<li\s+class="flex items-baseline',page)[1:]:
+            m=re.search(r'href="/library/([^"]+)"',blk)
+            if not m: continue
+            d=re.search(r'<p class="max-w-lg[^>]*>(.*?)</p>',blk,re.S)
+            caps=re.findall(r'text-indigo-600[^>]*>([^<]+)<',blk)
+            sizes=re.findall(r'text-blue-600[^>]*>([^<]+)<',blk)
+            pulls=re.search(r'x-test-pull-count>([^<]+)<',blk)
+            lib.append({'name':m.group(1),'about':H.unescape(re.sub(r'\s+',' ',d.group(1)).strip()) if d else '','capabilities':caps,'sizes':sizes,'pulls':pulls.group(1) if pulls else ''})
+        os.makedirs(os.path.dirname(cache),exist_ok=True); json.dump(lib,open(cache,'w'))
+    out({'library':lib},'\n'.join(f"{x['name']:28} {','.join(x['sizes']):30} {x['about'][:70]}" for x in lib))
+elif cmd=='ollama-tags':
+    import re
+    n=args[1]; page=urllib.request.urlopen(urllib.request.Request(f'https://ollama.com/library/{n}/tags',headers={'User-Agent':'dolphino'}),timeout=30).read().decode()
+    tags=sorted(set(re.findall(rf'href="/library/{re.escape(n)}:([^"]+)"',page)))
+    out({'name':n,'tags':tags},'\n'.join(tags))
+elif cmd=='ollama-pull':
+    ref=args[1]; name,_,tag=ref.partition(':'); tag=tag or 'latest'
+    ns,_,nm=name.rpartition('/'); ns=ns or 'library'
+    id=('ol-'+name.replace('/','-')+'-'+tag).lower().replace('_','-')
+    if path_of(id): out({'ok':True,'already':True,'id':id},'already installed'); sys.exit(0)
+    reg=f'https://registry.ollama.ai/v2/{ns}/{nm}'
+    man=json.load(urllib.request.urlopen(urllib.request.Request(f'{reg}/manifests/{tag}',headers={'Accept':'application/vnd.docker.distribution.manifest.v2+json'}),timeout=30))
+    L={l['mediaType'].split('.')[-1]:l for l in man['layers']}
+    if 'model' not in L: out({'error':'no GGUF model layer'},'no model layer'); sys.exit(2)
+    total=L['model']['size']+(L['projector']['size'] if 'projector' in L else 0)
+    fake={'bytes':total,'category':'general'}
+    if ram_need(fake)>RAM_CAP: out({'error':f'needs {gb(ram_need(fake))} GB RAM'},'too big'); sys.exit(3)
+    if used()+total>DISK_CAP or shutil.disk_usage('/').free-total<DISK_RESERVE: out({'error':'not enough disk'},'not enough disk'); sys.exit(4)
+    os.makedirs(PART,exist_ok=True); done=0; job_write(id,state='downloading',done=0,total=total,source='ollama:'+ref)
+    try:
+        files=[]
+        for kind in ['model','projector']:
+            if kind not in L: continue
+            dst=f'{PART}/{id}--{kind}.gguf'; files.append((kind,dst))
+            with urllib.request.urlopen(f"{reg}/blobs/{L[kind]['digest']}",timeout=60) as r, open(dst,'wb') as o:
+                last=0
+                while True:
+                    b=r.read(1<<20)
+                    if not b: break
+                    o.write(b); done+=len(b)
+                    if time.time()-last>1: job_write(id,done=done); last=time.time()
+        if len(files)>1:
+            d=f'{MD}/{id}'; os.makedirs(d,exist_ok=True)
+            os.replace(files[0][1],f'{d}/model.gguf'); os.replace(files[1][1],f'{d}/mmproj-model.gguf')
+        else: os.replace(files[0][1],f'{MD}/{id}.gguf')
+        subprocess.run(['chown','-R','dolphin:root',MD]); write_presets(); restart(); job_write(id,state='done',done=total)
+        out({'ok':True,'id':id},'installed '+id)
+    except Exception as e:
+        for f in glob.glob(f'{PART}/{id}--*'): os.remove(f)
+        job_write(id,state='error',error=str(e)); out({'error':str(e)},'failed: '+str(e)); sys.exit(5)
+elif cmd in ('create','aliases','alias-rm'):
+    AF='/etc/dolphin/aliases.json'
+    al=json.load(open(AF)) if os.path.exists(AF) else []
+    if cmd=='aliases': out({'aliases':al},'\n'.join(f"{a['name']} -> {a['from']}" for a in al)); sys.exit(0)
+    name=args[1]
+    al=[a for a in al if a['name']!=name]
+    if cmd=='create':
+        mf=open(args[args.index('-f')+1]).read(); a={'name':name,'from':'','system':'','params':{}}
+        import shlex
+        lines=mf.splitlines(); i=0
+        while i<len(lines):
+            l=lines[i].strip(); i+=1
+            if not l or l.startswith('#'): continue
+            k,_,v=l.partition(' '); k=k.upper(); v=v.strip()
+            if v.startswith('"""'):
+                v=v[3:]; buf=[]
+                while '"""' not in v and i<len(lines): buf.append(v); v=lines[i]; i+=1
+                buf.append(v.split('"""')[0]); v='\n'.join(buf).strip()
+            if k=='FROM':
+                if not path_of(v) and not v.startswith(('ext-','redx-merge-')) and v not in [x['name'] for x in al]:
+                    # treat as an Ollama reference and pull it
+                    r=subprocess.run([sys.argv[0],'ollama-pull',v,'--json'],capture_output=True,text=True)
+                    try: v=json.loads(r.stdout.strip().splitlines()[-1]).get('id',v)
+                    except Exception: pass
+                a['from']=v
+            elif k=='SYSTEM': a['system']=v.strip('"')
+            elif k=='PARAMETER':
+                pk,_,pv=v.partition(' ')
+                try: pv=json.loads(pv)
+                except Exception: pass
+                if pk=='stop': a['params'].setdefault('stop',[]).append(pv)
+                else: a['params'][pk]=pv
+        if not a['from']: out({'error':'Modelfile needs FROM'},'Modelfile needs FROM'); sys.exit(2)
+        al.append(a)
+    tmp=AF+'.t'; json.dump(al,open(tmp,'w'),indent=1); os.replace(tmp,AF)
+    out({'ok':True,'aliases':al},'ok')
 else: print(__doc__); sys.exit(1)

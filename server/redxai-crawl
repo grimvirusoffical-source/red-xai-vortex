@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""redxai-crawl: crawl admin-configured seed URLs into the Red-XAI knowledge store.
+Config: /etc/dolphin/redxai/crawl.json {"seeds":[...], "max_pages":200, "delay_seconds":2, "same_domain":true, "allow":[], "deny":[]}
+Respects robots.txt, rate-limits per host, dedupes URLs (content dedupe happens in the gateway)."""
+import json, time, re, sys, urllib.request, urllib.parse, urllib.robotparser, html, os
+from html.parser import HTMLParser
+CFG='/etc/dolphin/redxai/crawl.json'; STATE='/opt/dolphin/redxai/crawl-state.json'; UA='RedXAI-Crawler/1.0 (+respects robots.txt)'
+cfg=json.load(open(CFG)) if os.path.exists(CFG) else {}
+seeds=cfg.get('seeds',[]); maxp=int(cfg.get('max_pages',200)); delay=float(cfg.get('delay_seconds',2)); same=cfg.get('same_domain',True)
+allow=[re.compile(x) for x in cfg.get('allow',[])]; deny=[re.compile(x) for x in cfg.get('deny',[])]
+KEY=open('/root/dolphino-admin.key').read().strip()
+state=json.load(open(STATE)) if os.path.exists(STATE) else {'done':{}}
+class P(HTMLParser):
+    def __init__(s): super().__init__(); s.t=[]; s.links=[]; s.skip=0; s.title=''; s.in_title=False
+    def handle_starttag(s,tag,a):
+        if tag in('script','style','noscript','nav','footer','header','svg','form'): s.skip+=1
+        if tag=='a':
+            for k,v in a:
+                if k=='href' and v: s.links.append(v)
+        if tag=='title': s.in_title=True
+        if tag in('p','div','br','li','h1','h2','h3','h4','tr','section','article'): s.t.append('\n')
+    def handle_endtag(s,tag):
+        if tag in('script','style','noscript','nav','footer','header','svg','form') and s.skip: s.skip-=1
+        if tag=='title': s.in_title=False
+    def handle_data(s,d):
+        if s.in_title: s.title+=d
+        if not s.skip: s.t.append(d)
+robots={}; last={}
+def can(u):
+    p=urllib.parse.urlsplit(u); base=f'{p.scheme}://{p.netloc}'
+    if base not in robots:
+        rp=urllib.robotparser.RobotFileParser(); rp.set_url(base+'/robots.txt')
+        try: rp.read()
+        except Exception: rp=None
+        robots[base]=rp
+    rp=robots[base]
+    return True if rp is None else rp.can_fetch(UA,u)
+def ok(u,seedhosts):
+    p=urllib.parse.urlsplit(u)
+    if p.scheme not in('http','https'): return False
+    if same and p.netloc not in seedhosts: return False
+    if any(d.search(u) for d in deny): return False
+    if allow and not any(a.search(u) for a in allow): return False
+    return not re.search(r'\.(png|jpe?g|gif|svg|pdf|zip|gz|mp[34]|webp|ico|css|js|woff2?)(\?|$)',u,re.I)
+def ingest(docs):
+    req=urllib.request.Request('http://127.0.0.1:8092/v1/redxai/ingest',data=json.dumps({'documents':docs}).encode(),
+        headers={'Authorization':'Bearer '+KEY,'Content-Type':'application/json'})
+    return json.load(urllib.request.urlopen(req,timeout=600))
+seedhosts={urllib.parse.urlsplit(s).netloc for s in seeds}
+queue=list(seeds); seen=set(); pages=0; added=0; batch=[]
+while queue and pages<maxp:
+    u=urllib.parse.urldefrag(queue.pop(0))[0]
+    if u in seen: continue
+    seen.add(u)
+    if not ok(u,seedhosts) or not can(u): continue
+    host=urllib.parse.urlsplit(u).netloc; w=delay-(time.time()-last.get(host,0))
+    if w>0: time.sleep(w)
+    last[host]=time.time()
+    try:
+        r=urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':UA}),timeout=20)
+        if 'text/html' not in r.headers.get('Content-Type',''): continue
+        body=r.read(3_000_000).decode('utf-8','replace')
+    except Exception as e:
+        print('skip',u,e,file=sys.stderr); continue
+    p=P(); p.feed(body); pages+=1
+    text=html.unescape(re.sub(r'[ \t]+',' ',''.join(p.t))); text=re.sub(r'\n\s*\n+','\n\n',text).strip()
+    if len(text)>200: batch.append({'text':(p.title.strip()+'\n\n'+text)[:200000],'source':u}); state['done'][u]=int(time.time())
+    for l in p.links:
+        nu=urllib.parse.urljoin(u,l)
+        if nu not in seen: queue.append(nu)
+    if len(batch)>=10:
+        res=ingest(batch); added+=res.get('chunks_added',0); batch=[]
+if batch: res=ingest(batch); added+=res.get('chunks_added',0)
+json.dump(state,open(STATE,'w'))
+print(json.dumps({'pages':pages,'chunks_added':added}))

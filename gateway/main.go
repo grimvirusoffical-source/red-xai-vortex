@@ -40,6 +40,7 @@ type Key struct {
 	Models   []string `json:"models"` // empty = all
 	RPM      int      `json:"rpm"`
 	Admin    bool     `json:"admin,omitempty"`
+	Scopes   []string `json:"scopes,omitempty"`
 	Created  int64    `json:"created"`
 	LastUsed int64    `json:"last_used"`
 	Revoked  int64    `json:"revoked,omitempty"`
@@ -125,6 +126,7 @@ func load() {
 		must(json.Unmarshal(b, &keys))
 	}
 	loadProviders()
+	rxInit()
 	if b, err := os.ReadFile(filepath.Join(dir, "merges.json")); err == nil {
 		must(json.Unmarshal(b, &merges))
 	} else {
@@ -153,7 +155,7 @@ func auth(r *http.Request) *Key {
 	if k == "" {
 		k = r.Header.Get("x-api-key")
 	}
-	if !strings.HasPrefix(k, "redx_ai_") || len(k) > 128 {
+	if !(strings.HasPrefix(k, "redx_ai_") || strings.HasPrefix(k, "redx_xai_")) || len(k) > 128 {
 		return nil
 	}
 	hk := hashKey(k)
@@ -328,6 +330,9 @@ func chatOnce(model string, msgs []msg, extra map[string]any) (string, int64, er
 	body["messages"] = msgs
 	body["stream"] = false
 	model = applyAlias(body)
+	if isRedXAI(model) {
+		model, _ = rxPrepare(body)
+	}
 	if isReasoner(model) {
 		if v, _ := body["max_tokens"].(float64); v < 2048 {
 			body["max_tokens"] = 2048 // thinking models need room to think before answering
@@ -510,6 +515,16 @@ func handleModels(w http.ResponseWriter, k *Key) {
 			data = append(data, map[string]any{"id": m.ID, "object": "model", "owned_by": "redx", "created": 0})
 		}
 	}
+	for _, id := range append([]string{rxModel}, func() (o []string) {
+		for _, v := range rxVersions() {
+			o = append(o, rxModel+"-"+v)
+		}
+		return
+	}()...) {
+		if modelOK(k, id) {
+			data = append(data, map[string]any{"id": id, "object": "model", "owned_by": "red-xai", "created": 0})
+		}
+	}
 	for _, e := range extModelsList() {
 		if modelOK(k, e["id"].(string)) {
 			data = append(data, e)
@@ -528,6 +543,14 @@ func handleModels(w http.ResponseWriter, k *Key) {
 
 func handleV1(w http.ResponseWriter, r *http.Request, k *Key) {
 	path := r.URL.Path
+	if strings.HasPrefix(path, "/v1/redxai/") {
+		handleRedXAI(w, r, k)
+		return
+	}
+	if strings.HasPrefix(path, "/v1/images/") || strings.HasPrefix(path, "/v1/audio/") {
+		handleMedia(w, r, k)
+		return
+	}
 	if path == "/v1/models" && r.Method == "GET" {
 		handleModels(w, k)
 		return
@@ -574,6 +597,23 @@ func handleV1(w http.ResponseWriter, r *http.Request, k *Key) {
 	}
 	if _, ok := body["max_tokens"]; !ok && path != "/v1/embeddings" {
 		body["max_tokens"] = maxTokens
+	}
+	scope := "chat"
+	if path == "/v1/embeddings" {
+		scope = "embeddings"
+	}
+	if !hasScope(k, scope) {
+		errJSON(w, 403, "key lacks scope "+scope)
+		return
+	}
+	var rxMeta map[string]any
+	if isRedXAI(model) {
+		if path != "/v1/chat/completions" {
+			errJSON(w, 400, "red-xai supports chat completions")
+			return
+		}
+		model, rxMeta = rxPrepare(body)
+		w.Header().Set("X-RedXAI-Route", fmt.Sprint(rxMeta["capability"], " ", rxMeta["routed_to"], " kb=", rxMeta["knowledge_used"]))
 	}
 	if mg := findMerge(model); mg != nil {
 		if path != "/v1/chat/completions" {
@@ -780,7 +820,7 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&in)
 	}
 	str := func(f string) string { s, _ := in[f].(string); return s }
-	if providerAdmin(w, r, p, in) {
+	if providerAdmin(w, r, p, in) || redxaiAdmin(w, r, p, in) {
 		return
 	}
 	switch {
@@ -791,7 +831,7 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 			if x.Admin {
 				continue
 			}
-			out = append(out, map[string]any{"id": x.ID, "name": x.Name, "prefix": x.Prefix, "models": x.Models, "rpm": x.RPM,
+			out = append(out, map[string]any{"id": x.ID, "name": x.Name, "prefix": x.Prefix, "models": x.Models, "rpm": x.RPM, "scopes": x.Scopes,
 				"created": x.Created, "last_used": x.LastUsed, "revoked": x.Revoked, "requests": x.Requests, "tokens": x.Tokens})
 		}
 		mu.Unlock()
@@ -813,8 +853,24 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		if v, ok := in["rpm"].(float64); ok && v >= 1 && v <= 10000 {
 			rpm = int(v)
 		}
-		plain := "redx_ai_" + randB62(40)
-		nk := &Key{ID: "key_" + randB62(10), Name: name, Prefix: plain[:14] + "…", Hash: hashKey(plain), Models: models, RPM: rpm, Created: time.Now().Unix()}
+		prefix := "redx_ai_"
+		var scopes []string
+		if kind, _ := in["kind"].(string); kind == "xai" {
+			prefix = "redx_xai_"
+			valid := map[string]bool{"chat": true, "image": true, "audio": true, "embeddings": true, "train:submit": true}
+			if a, ok := in["scopes"].([]any); ok {
+				for _, v := range a {
+					if s := fmt.Sprint(v); valid[s] {
+						scopes = append(scopes, s)
+					}
+				}
+			}
+			if len(scopes) == 0 {
+				scopes = []string{"chat"}
+			}
+		}
+		plain := prefix + randB62(40)
+		nk := &Key{ID: "key_" + randB62(10), Name: name, Prefix: plain[:len(prefix)+6] + "…", Hash: hashKey(plain), Models: models, RPM: rpm, Created: time.Now().Unix(), Scopes: scopes}
 		mu.Lock()
 		keys = append(keys, nk)
 		saveKeys()
@@ -926,8 +982,8 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(in)
 		json.Unmarshal(b, &m)
 		if !regexp.MustCompile(`^[a-z0-9-]{1,32}$`).MatchString(m.Name) || len(m.Models) == 0 ||
-			(m.Mode != "router" && m.Mode != "draft_refine" && m.Mode != "panel_judge") || len(m.Models) > 4 {
-			errJSON(w, 400, "need name [a-z0-9-], mode router|draft_refine|panel_judge, 1-4 models")
+			(m.Mode != "router" && m.Mode != "draft_refine" && m.Mode != "panel_judge") || len(m.Models) > 3 {
+			errJSON(w, 400, "need name [a-z0-9-], mode router|draft_refine|panel_judge, 1-3 models")
 			return
 		}
 		if m.Mode == "draft_refine" && len(m.Models) != 2 {

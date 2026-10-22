@@ -19,6 +19,11 @@ iconutil -c icns $IS -o "$APP/Contents/Resources/AppIcon.icns"
 W=~/Projects/redx-node/llama.cpp/build/bin/ggml-rpc-server
 if [ -x "$W" ]; then cp "$W" "$APP/Contents/Resources/ggml-rpc-server"
   codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP/Contents/Resources/ggml-rpc-server" 2>&1 | tail -1; fi
+# server installer for one-click Servers > Install
+for s in server/install.sh ../server/install.sh; do [ -f "$s" ] && cp "$s" "$APP/Contents/Resources/install.sh" && break; done
+# local mode runtime (Metal); signed without hardened runtime so it can load Homebrew's OpenSSL
+L=~/Projects/redx-node/llama.cpp/build/bin/llama-server
+if [ -x "$L" ]; then cp "$L" "$APP/Contents/Resources/llama-server"; codesign --force --timestamp --sign "$SIGN_ID" "$APP/Contents/Resources/llama-server" 2>&1 | tail -1; fi
 cat > "$APP/Contents/Info.plist" <<P
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -29,8 +34,8 @@ cat > "$APP/Contents/Info.plist" <<P
 <key>CFBundleExecutable</key><string>Dolphino</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.3</string>
-<key>CFBundleVersion</key><string>4</string>
+<key>CFBundleShortVersionString</key><string>1.4</string>
+<key>CFBundleVersion</key><string>5</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>

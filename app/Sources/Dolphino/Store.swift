@@ -68,7 +68,13 @@ final class ChatStore: ObservableObject {
         }
         task = Task { [weak self] in
             do {
-                let tps = try await API.stream(params, messages: hist) { tok in
+                var p = params
+                if p.model.hasPrefix("local:") {
+                    let id = String(p.model.dropFirst(6))
+                    await MainActor.run { self?.status = "Starting \(id) on this Mac…" }
+                    p.baseURL = try await LocalRuntime.shared.ensure(id); p.apiKey = ""; p.model = id
+                }
+                let onTok: (String) -> Void = { tok in
                     if whole { buffer.append(tok); return }
                     Task { @MainActor in
                         guard let self, let j = self.idx(chatID), !self.chats[j].messages.isEmpty else { return }
@@ -76,6 +82,21 @@ final class ChatStore: ObservableObject {
                         self.status = "Streaming…"
                     }
                 }
+                let tps: Double?
+                do { tps = try await API.stream(p, messages: hist, onToken: onTok) }
+                catch let e as URLError where !params.model.hasPrefix("local:") && (UserDefaults.standard.object(forKey: "autoFailover") as? Bool ?? true) {
+                    await MainActor.run { self?.status = "Server unreachable, failing over…" }
+                    if let s = await ServerStore.shared.failover() {
+                        p.baseURL = s.baseURL; p.apiKey = ServerStore.shared.key(for: s)
+                        await MainActor.run { self?.status = "Switched to \(s.name)" }
+                        tps = try await API.stream(p, messages: hist, onToken: onTok)
+                    } else if let lm = await MainActor.run(body: { LocalRuntime.shared.models.first(where: { !$0.contains("embed") }) }) {
+                        await MainActor.run { self?.status = "No server reachable, using \(lm) on this Mac" }
+                        p.baseURL = try await LocalRuntime.shared.ensure(lm); p.apiKey = ""; p.model = lm
+                        tps = try await API.stream(p, messages: hist, onToken: onTok)
+                    } else { throw e }
+                }
+                if p.apiKey.isEmpty { await MainActor.run { LocalRuntime.shared.touch() } }
                 await MainActor.run {
                     if whole, let self, let j = self.idx(chatID), !self.chats[j].messages.isEmpty {
                         self.chats[j].messages[self.chats[j].messages.count - 1].content = buffer.text

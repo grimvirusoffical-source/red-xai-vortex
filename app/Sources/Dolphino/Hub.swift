@@ -150,9 +150,11 @@ final class HubStore: ObservableObject {
                       requests: ($0["requests"] as? Int) ?? 0, tokens: ($0["tokens"] as? Int) ?? 0)
         }
     }
-    func createKey(name: String, models: [String], rpm: Int) async -> String? {
+    func createKey(name: String, models: [String], rpm: Int, xaiScopes: [String]? = nil) async -> String? {
         do {
-            let r = try await Admin.call("POST", "/admin/keys", ["name": name, "models": models, "rpm": rpm])
+            var b: [String: Any] = ["name": name, "models": models, "rpm": rpm]
+            if let s = xaiScopes { b["kind"] = "xai"; b["scopes"] = s }
+            let r = try await Admin.call("POST", "/admin/keys", b)
             try await loadKeys(); error = ""
             return r["key"] as? String
         } catch { self.error = error.localizedDescription; return nil }
@@ -180,6 +182,8 @@ struct HubView: View {
             TabView(selection: $tab) {
                 LibraryView().tabItem { Label("Library", systemImage: "books.vertical") }.tag("library")
                 MergesView().tabItem { Label("Merges", systemImage: "arrow.triangle.merge") }.tag("merges")
+                RedXAIView().tabItem { Label("Red-XAI", systemImage: "sparkles") }.tag("redxai")
+                ServersView().tabItem { Label("Servers", systemImage: "server.rack") }.tag("servers")
                 ProvidersView().tabItem { Label("Providers", systemImage: "cloud") }.tag("providers")
                 KeysView().tabItem { Label("API Keys", systemImage: "key") }.tag("keys")
                 DocsView().tabItem { Label("Use in Other Apps", systemImage: "app.connected.to.app.below.fill") }.tag("docs")
@@ -213,6 +217,7 @@ struct LibraryView: View {
                 Spacer()
                 ProgressView(value: min(hub.modelsBytes, hub.capBytes), total: hub.capBytes).frame(width: 160)
                 Text("Models \(gbString(hub.modelsBytes)) of \(gbString(hub.capBytes)) · disk free \(gbString(hub.diskFree))").font(.caption).foregroundStyle(.secondary)
+                Button { ModelBrowserServer.shared.open() } label: { Label("Browse Models", systemImage: "safari") }
                 Button { hub.refreshAll() } label: { Image(systemName: "arrow.clockwise") }
             }.padding([.horizontal, .top])
             List {
@@ -263,70 +268,67 @@ struct LibraryView: View {
 
 struct MergesView: View {
     @EnvironmentObject var hub: HubStore
-    @Local var editing: MergeDef?
     @StateObject var ps = ProviderStore.shared
-    var installed: [String] { hub.catalog.filter { $0.installed && $0.category != "embeddings" }.map(\.id) + ps.extModelIDs }
-    static let modes = [("draft_refine", "Draft + Refine", "A fast model drafts, a bigger model improves it."),
-                        ("panel_judge", "Panel + Judge", "2–3 models answer, a judge picks or combines the best."),
-                        ("router", "Router", "Auto-picks one model per message: code → coder, reasoning → reasoner, else general.")]
-    var body: some View {
-        VStack(alignment: .leading) {
-            HStack {
-                Text("Merges let several models work on one reply. Each shows up as a model named redx-merge-<name> in the chat picker and the API.").font(.callout).foregroundStyle(.secondary)
-                Spacer()
-                Button { editing = MergeDef(name: "", mode: "draft_refine", models: [], judge: "", note: "") } label: { Label("New Merge", systemImage: "plus") }
-            }.padding([.horizontal, .top])
-            List(hub.merges) { m in
-                HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("redx-merge-\(m.name)").font(.headline.monospaced())
-                        Text(Self.modes.first { $0.0 == m.mode }?.1 ?? m.mode).font(.caption.bold())
-                        Text(m.models.joined(separator: " → ") + (m.judge.isEmpty ? "" : "  ⚖︎ judge: \(m.judge)")).font(.caption).foregroundStyle(.secondary)
-                        if !m.note.isEmpty { Text(m.note).font(.caption2).foregroundStyle(.secondary) }
-                    }
-                    Spacer()
-                    Button("Use in Chat") { UserDefaults.standard.set("redx-merge-\(m.name)", forKey: "model") }
-                    Button("Edit") { editing = m }
-                    Button(role: .destructive) { hub.deleteMerge(m.name) } label: { Image(systemName: "trash") }
-                }.padding(.vertical, 4)
-            }
-        }
-        .task { await ps.load() }
-        .sheet(item: $editing) { m in MergeEditor(merge: m, installed: installed) { hub.saveMerge($0); editing = nil } cancel: { editing = nil } }
+    @Local var picked: [String] = []
+    @Local var mode = "panel_judge"
+    @Local var judge = ""
+    @Local var name = ""
+    @Local var filter = ""
+    var all: [(String, String)] {
+        hub.catalog.filter { $0.installed && $0.category != "embeddings" }.map { ($0.id, "Server · \($0.category)") } +
+        ps.providers.flatMap { p in p.models.map { ($0.id, "Provider · \(p.name) · \($0.name)") } }
     }
-}
-
-struct MergeEditor: View {
-    @Local var merge: MergeDef
-    var installed: [String]
-    var save: (MergeDef) -> Void
-    var cancel: () -> Void
-    var maxModels: Int { merge.mode == "draft_refine" ? 2 : merge.mode == "panel_judge" ? 3 : 4 }
+    static let modes = [("draft_refine", "Draft + Refine", "Model #1 drafts fast, model #2 improves it. Pick exactly 2."),
+                        ("panel_judge", "Panel + Judge", "2–3 models answer, the judge picks or combines the best."),
+                        ("router", "Router", "Auto-picks one per message: code → coder, reasoning → reasoner, else general.")]
     var valid: Bool {
-        merge.name.range(of: "^[a-z0-9-]{1,32}$", options: .regularExpression) != nil && !merge.models.isEmpty &&
-        (merge.mode != "draft_refine" || merge.models.count == 2) && (merge.mode != "panel_judge" || (merge.models.count >= 2 && !merge.judge.isEmpty))
+        name.range(of: "^[a-z0-9-]{1,32}$", options: .regularExpression) != nil && !picked.isEmpty && picked.count <= 3 &&
+        (mode != "draft_refine" || picked.count == 2) && (mode != "panel_judge" || (picked.count >= 2 && !judge.isEmpty))
     }
     var body: some View {
-        Form {
-            TextField("Name (a-z, 0-9, -)", text: $merge.name)
-            Picker("Mode", selection: $merge.mode) { ForEach(MergesView.modes, id: \.0) { Text($0.1).tag($0.0) } }
-            Text(MergesView.modes.first { $0.0 == merge.mode }?.2 ?? "").font(.caption).foregroundStyle(.secondary)
-            Section(merge.mode == "draft_refine" ? "Pick drafter first, then refiner (in order)" : "Models (up to \(maxModels))") {
-                ForEach(installed, id: \.self) { id in
-                    Toggle(isOn: Binding(get: { merge.models.contains(id) }, set: { on in
-                        if on { if merge.models.count < maxModels { merge.models.append(id) } } else { merge.models.removeAll { $0 == id } }
-                    })) {
-                        HStack { Text(id); if let i = merge.models.firstIndex(of: id) { Text("#\(i + 1)").font(.caption).foregroundStyle(.secondary) } }
+        HSplitView {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("1. Tick up to 3 models").font(.headline)
+                TextField("Filter", text: $filter)
+                List(all.filter { filter.isEmpty || $0.0.localizedCaseInsensitiveContains(filter) }, id: \.0) { m in
+                    Toggle(isOn: Binding(get: { picked.contains(m.0) }, set: { on in
+                        if on { if picked.count < 3 { picked.append(m.0) } } else { picked.removeAll { $0 == m.0 } } })) {
+                        VStack(alignment: .leading) {
+                            HStack { Text(m.0); if let i = picked.firstIndex(of: m.0) { Text("#\(i + 1)").font(.caption.bold()).foregroundStyle(.secondary) } }
+                            Text(m.1).font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }.disabled(!picked.contains(m.0) && picked.count >= 3)
+                }
+                Text("2. Mode and judge").font(.headline)
+                Picker("Mode", selection: $mode) { ForEach(Self.modes, id: \.0) { Text($0.1).tag($0.0) } }.pickerStyle(.segmented)
+                Text(Self.modes.first { $0.0 == mode }?.2 ?? "").font(.caption).foregroundStyle(.secondary)
+                if mode == "panel_judge" {
+                    Picker("Judge", selection: $judge) { Text("Choose…").tag(""); ForEach(all, id: \.0) { Text($0.0).tag($0.0) } }
+                }
+                HStack {
+                    TextField("Name (a-z, 0-9, -)", text: $name)
+                    Button { hub.saveMerge(MergeDef(name: name, mode: mode, models: picked, judge: mode == "panel_judge" ? judge : "", note: ""))
+                        picked = []; name = ""; judge = "" } label: { Label("Merge", systemImage: "arrow.triangle.merge") }
+                        .buttonStyle(.borderedProminent).disabled(!valid)
+                }
+                Text("Steps run one after another so they fit in RAM; time ≈ the sum of each model's reply.").font(.caption2).foregroundStyle(.secondary)
+            }.padding().frame(minWidth: 380)
+            VStack(alignment: .leading) {
+                Text("Merged models").font(.headline).padding([.top, .horizontal])
+                List(hub.merges) { m in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("redx-merge-\(m.name)").font(.body.monospaced())
+                            Text((Self.modes.first { $0.0 == m.mode }?.1 ?? m.mode) + " · " + m.models.joined(separator: ", ") + (m.judge.isEmpty ? "" : " · judge \(m.judge)")).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Use") { UserDefaults.standard.set("redx-merge-\(m.name)", forKey: "model") }
+                        Button(role: .destructive) { hub.deleteMerge(m.name) } label: { Label("Remove", systemImage: "trash") }
                     }
                 }
-            }
-            if merge.mode == "panel_judge" {
-                Picker("Judge", selection: $merge.judge) { Text("Choose…").tag(""); ForEach(installed, id: \.self) { Text($0).tag($0) } }
-            }
-            TextField("Note (optional)", text: $merge.note)
-            Text("Steps run one after another so they fit in the server's RAM. Expect roughly the sum of each model's time.").font(.caption2).foregroundStyle(.secondary)
-            HStack { Spacer(); Button("Cancel", action: cancel); Button("Save") { save(merge) }.keyboardShortcut(.defaultAction).disabled(!valid) }
-        }.formStyle(.grouped).frame(width: 520, height: 600)
+            }.frame(minWidth: 320)
+        }
+        .task { await ps.load() }
     }
 }
 
@@ -337,6 +339,8 @@ struct KeysView: View {
     @Local var restrict = false
     @Local var allowed: Set<String> = []
     @Local var shownKey: String?
+    @Local var xai = false
+    @Local var scopes: Set<String> = ["chat"]
     @Local var confirmRevoke: APIKeyRow?
     @StateObject var ps = ProviderStore.shared
     var modelIDs: [String] { hub.catalog.filter(\.installed).map(\.id) + ps.extModelIDs + hub.merges.map { "redx-merge-\($0.name)" } }
@@ -348,8 +352,14 @@ struct KeysView: View {
                         TextField("App name (e.g. OmniRoute, VS Code)", text: $newName)
                         Stepper("\(rpm) requests/min", value: $rpm, in: 1...1000, step: 10).frame(width: 200)
                         Button("Create Key") {
-                            Task { shownKey = await hub.createKey(name: newName, models: restrict ? Array(allowed) : [], rpm: rpm); newName = "" }
+                            Task { shownKey = await hub.createKey(name: newName, models: restrict ? Array(allowed) : [], rpm: rpm, xaiScopes: xai ? Array(scopes) : nil); newName = "" }
                         }.disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty || (restrict && allowed.isEmpty))
+                    }
+                    Toggle("Red-XAI key (redx_xai_…) with scopes", isOn: $xai)
+                    if xai {
+                        HStack { ForEach(["chat", "image", "audio", "embeddings", "train:submit"], id: \.self) { s in
+                            Toggle(s, isOn: Binding(get: { scopes.contains(s) }, set: { if $0 { scopes.insert(s) } else { scopes.remove(s) } })).toggleStyle(.button).controlSize(.small)
+                        } }
                     }
                     Toggle("Only allow specific models", isOn: $restrict)
                     if restrict {

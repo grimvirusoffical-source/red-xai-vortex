@@ -133,7 +133,7 @@ struct ChatView: View {
         .toolbar {
             ToolbarItemGroup {
                 Picker("Model", selection: $model) {
-                    ForEach(Array(Set(store.availableModels + [model])).sorted(), id: \.self) { Text($0).tag($0) }
+                    ForEach(Array(Set(store.availableModels + LocalRuntime.shared.models.map { "local:\($0)" } + [model])).sorted(), id: \.self) { Text($0).tag($0) }
                 }.frame(width: 240)
                 Button { store.regenerate(systemPrompt: systemPrompt, contextTokens: contextTokens, params: params) } label: {
                     Image(systemName: "arrow.clockwise") }.help("Regenerate last reply").disabled(store.streaming)
@@ -202,6 +202,7 @@ struct BubbleView: View {
                     Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(message.content, forType: .string) }
                 }
                 if showTimestamps { Text(message.date, style: .time).font(.caption2).foregroundStyle(.secondary) }
+                FeedbackBar(message: message)
             }
             if !isUser { Spacer(minLength: 60) }
         }
@@ -234,5 +235,8 @@ struct TypingIndicator: View {
 
 struct OpenHubToolbar: View {
     @Environment(\.openWindow) var openWindow
-    var body: some View { Button { openWindow(id: "hub") } label: { Image(systemName: "books.vertical") }.help("Model Library, Merges, Providers & API Keys") }
+    var body: some View {
+        Button { ModelBrowserServer.shared.open() } label: { Image(systemName: "safari") }.help("Browse Models (opens in your browser)")
+        Button { openWindow(id: "hub") } label: { Image(systemName: "books.vertical") }.help("Model Library, Merges, Servers, Providers & API Keys")
+    }
 }

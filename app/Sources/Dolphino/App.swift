@@ -13,7 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Process.launchedProcess(launchPath: "/usr/bin/pkill", arguments: ["-f", "Dolphino.app/Contents/Resources/ggml-rpc-server"])
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ n: Notification) { MainActor.assumeIsolated { NodeManager.shared.shutdown() } }
+    func applicationWillTerminate(_ n: Notification) { MainActor.assumeIsolated {
+        NodeManager.shared.shutdown(); LocalRuntime.shared.stop(); ServerStore.shared.stopAll(); ModelBrowserServer.shared.stop()
+        // make sure no SSH tunnel or local model outlives the app
+        let k = Process(); k.executableURL = URL(fileURLWithPath: "/usr/bin/pkill"); k.arguments = ["-P", "\(ProcessInfo.processInfo.processIdentifier)"]; try? k.run(); k.waitUntilExit() } }
 }
 
 @main
@@ -38,7 +41,7 @@ struct DolphinoApp: App {
             }
         }
         Window("Library, Merges & Keys", id: "hub") { HubView() }
-            .commands { CommandMenu("Models") { OpenHubButton() } }
+            .commands { CommandMenu("Models") { OpenHubButton(); Button("Browse Models in Browser…") { ModelBrowserServer.shared.open() }.keyboardShortcut("b", modifiers: [.command, .shift]) } }
         Settings {
             SettingsView().environmentObject(store).environmentObject(tunnel)
                 .preferredColorScheme(theme == "dark" ? .dark : theme == "light" ? .light : nil)

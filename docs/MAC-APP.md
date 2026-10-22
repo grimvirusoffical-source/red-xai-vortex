@@ -22,4 +22,11 @@ cp -R build/Dolphino.app /Applications/
 - **API Keys**: create (shown once), list with usage, and revoke.
 - **Use in Other Apps**: copy-paste setups for OmniRoute, Continue, Cline and Python.
 
+- **Red-XAI**: training mode (off by default), teach it, the crawler, versions and the benchmark.
+- **Servers**: add a VPS (user@host + SSH key) and click **Install / Update** to run `server/install.sh` over SSH. The admin key is saved to the Keychain automatically. **Use** switches servers. With failover on, a chat that can't reach its server retries on the next one that answers, then on a local model.
+
+## Local mode
+Models downloaded to **This Mac** (from the model browser) appear as `local:<id>` in the chat model picker. Dolphino starts the
+bundled `llama-server` (Metal) only when you chat with one, stops it after 5 idle minutes, and kills it (and every SSH tunnel) on quit.
+
 Settings → Chat: "Show replies only when finished" (on by default). Merges show "Thinking with N models…" while they work.
