@@ -89,6 +89,7 @@ struct ChatView: View {
     @Local var attachError = ""
     @Local var dropTarget = false
     @StateObject var skills = SkillStore.shared
+    @Local var voiceCall = false
 
     var params: ChatParams {
         ChatParams(baseURL: serverURL, apiKey: Keychain.get() ?? "", model: model, temperature: temperature, topP: topP,
@@ -141,6 +142,7 @@ struct ChatView: View {
                 Text(sendOnEnter ? "Enter to send · Shift+Enter for newline" : "⌘Enter to send").font(.caption2).foregroundStyle(.tertiary)
             }.padding(.horizontal, 12).padding(.bottom, 6)
         }
+        .sheet(isPresented: $voiceCall) { VoiceCallView { t in input = t; send() }.environmentObject(store) }
         .overlay { if dropTarget { RoundedRectangle(cornerRadius: 12).stroke(Color.accent(accent), lineWidth: 3).padding(4).allowsHitTesting(false) } }
         .onDrop(of: [.fileURL], isTargeted: $dropTarget) { providers in
             for p in providers {
@@ -161,6 +163,7 @@ struct ChatView: View {
                 Toggle(isOn: Binding(get: { ToolRegistry.chatToolsOn }, set: { ToolRegistry.chatToolsOn = $0; store.objectWillChange.send() })) {
                     Image(systemName: "wrench.and.screwdriver")
                 }.toggleStyle(.button).help("Let the model call tools (plugins, MCP, PC control)")
+                Button { voiceCall = true } label: { Image(systemName: "phone.fill") }.help("Voice call (whisper.cpp + Piper on this Mac)")
                 Button { store.regenerate(systemPrompt: systemPrompt, contextTokens: contextTokens, params: params) } label: {
                     Image(systemName: "arrow.clockwise") }.help("Regenerate last reply").disabled(store.streaming)
                 OpenHubToolbar()

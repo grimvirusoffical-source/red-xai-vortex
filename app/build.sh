@@ -37,12 +37,22 @@ cat > "$APP/Contents/Info.plist" <<P
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>2.2</string>
-<key>CFBundleVersion</key><string>15</string>
+<key>CFBundleVersion</key><string>18</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+<key>NSMicrophoneUsageDescription</key><string>Voice calls: your speech is transcribed on this Mac by whisper.cpp.</string>
+<key>NSAppleEventsUsageDescription</key><string>PC control (off by default): open and control apps when you allow it.</string>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>
 P
-codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP" 2>&1 || codesign --force --sign - "$APP"
+cat > build/vortex.entitlements <<EOT
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>com.apple.security.device.audio-input</key><true/>
+<key>com.apple.security.automation.apple-events</key><true/>
+</dict></plist>
+EOT
+codesign --force --options runtime --timestamp --entitlements build/vortex.entitlements --sign "$SIGN_ID" "$APP" 2>&1 || codesign --force --sign - "$APP"
 codesign -dv "$APP" 2>&1 | grep -E "Authority|Signature" | head -3
