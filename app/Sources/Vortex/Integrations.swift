@@ -98,6 +98,10 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
     @Published var message = ""
     @Published var cardError: [String: String] = [:]
     @Published var cardOK: [String: String] = [:]
+    /// Tool presence detected off the main render path (never Process in a View body).
+    @Published var installedTools: [String: Bool] = [:]
+    @Published var toolPaths: [String: String] = [:]
+    @Published var toolsScanned = false
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     var localBase: String { "http://127.0.0.1:\(Defaults.sshLocalPort - 1)" }
     var publicBase: String { (UserDefaults.standard.string(forKey: "publicBaseURL") ?? "").replacingOccurrences(of: "/v1", with: "") }
@@ -312,8 +316,8 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
         do {
             switch i.id {
             case "codex":
-                let bin = codexBinary()
-                guard let bin else { throw NSError(domain: "Vortex", code: 4, userInfo: [NSLocalizedDescriptionKey: "Codex CLI not found. Use Install, then Test again."]) }
+                if !toolsScanned { refreshInstalledTools() }
+                guard let bin = codexBinary() else { throw NSError(domain: "Vortex", code: 4, userInfo: [NSLocalizedDescriptionKey: "Codex CLI not found. Use Install, then Test again."]) }
                 let out = try await runProcess(bin, ["exec", "-p", "vortex", "--skip-git-repo-check", "Reply with exactly: VORTEX_OK"], env: ["VORTEX_API_KEY": key], timeout: 120)
                 if out.combined.contains("VORTEX_OK") || out.status == 0 && !out.stdout.isEmpty {
                     cardOK[i.id] = "Test OK — Codex replied via \(b)."
@@ -321,9 +325,10 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
                     throw NSError(domain: "Vortex", code: 5, userInfo: [NSLocalizedDescriptionKey: "Codex exit \(out.status): \(String(out.combined.suffix(400)))"])
                 }
             case "claude-code":
-                let bin = which("claude") ?? (home + "/.local/bin/claude")
+                if !toolsScanned { refreshInstalledTools() }
+                let bin = toolPaths["claude-code"] ?? (home + "/.local/bin/claude")
                 guard FileManager.default.isExecutableFile(atPath: bin) else {
-                    throw NSError(domain: "Vortex", code: 4, userInfo: [NSLocalizedDescriptionKey: "Claude Code not found at \(bin). Use Install."])
+                    throw NSError(domain: "Vortex", code: 4, userInfo: [NSLocalizedDescriptionKey: "Claude Code not found. Use Install."])
                 }
                 // Prefer a direct Anthropic-messages probe (same wire as Claude Code) so we don't need an interactive TTY
                 let reply = try await httpProbeAnthropic(base: b, key: key, model: st.model)
@@ -353,6 +358,7 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
         do {
             let out = try await runProcess("/bin/zsh", ["-lc", cmd], env: [:], timeout: 600)
             if out.status == 0 {
+                refreshInstalledTools()
                 cardOK[i.id] = "Installed. \(String(out.stdout.suffix(200)))"
                 message = "\(i.name): installed."
             } else {
@@ -365,18 +371,65 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
     }
 
     func toolInstalled(_ id: String) -> Bool {
-        switch id {
-        case "codex": return codexBinary() != nil
-        case "claude-code":
-            let p = which("claude") ?? (home + "/.local/bin/claude")
-            return FileManager.default.isExecutableFile(atPath: p)
-        case "opencode": return which("opencode") != nil
-        case "gemini-cli": return which("gemini") != nil
-        case "grok-cli": return which("grok") != nil || FileManager.default.fileExists(atPath: home + "/.grok/user-settings.json")
-        case "aider": return which("aider") != nil
-        default: return true // guided / N/A
-        }
+        // Safe for View bodies: only reads cached @Published state.
+        installedTools[id] ?? false
     }
+
+    /// Scan known bin dirs with FileManager only (no Process / which). Call from .task / button, never from body.
+    func refreshInstalledTools() {
+        let home = self.home
+        let fm = FileManager.default
+        var pathEnv = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+            .split(separator: ":").map(String.init)
+        let dirs = [
+            home + "/.local/bin",
+            home + "/.npm-global/bin",
+            home + "/.bun/bin",
+            home + "/.cargo/bin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            home + "/Library/Application Support/Claude/claude",
+        ] + pathEnv
+        func findExec(_ names: [String], extra: [String] = []) -> String? {
+            for p in extra + names.flatMap({ n in dirs.map { $0 + "/" + n } }) {
+                var isDir: ObjCBool = false
+                if fm.fileExists(atPath: p, isDirectory: &isDir), !isDir.boolValue, fm.isExecutableFile(atPath: p) {
+                    return p
+                }
+            }
+            return nil
+        }
+        let codex = findExec(["codex"], extra: [
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+            home + "/.npm-global/bin/codex",
+        ])
+        let claude = findExec(["claude"], extra: [home + "/.local/bin/claude"])
+        let opencode = findExec(["opencode"])
+        let gemini = findExec(["gemini"])
+        let grok = findExec(["grok"])
+        let aider = findExec(["aider"])
+        var paths: [String: String] = [:]
+        var inst: [String: Bool] = [:]
+        if let c = codex { paths["codex"] = c; inst["codex"] = true } else { inst["codex"] = false }
+        if let c = claude { paths["claude-code"] = c; inst["claude-code"] = true } else { inst["claude-code"] = false }
+        if let c = opencode { paths["opencode"] = c; inst["opencode"] = true } else { inst["opencode"] = false }
+        if let c = gemini { paths["gemini-cli"] = c; inst["gemini-cli"] = true } else { inst["gemini-cli"] = false }
+        if let c = grok { paths["grok-cli"] = c; inst["grok-cli"] = true }
+        else { inst["grok-cli"] = fm.fileExists(atPath: home + "/.grok/user-settings.json") }
+        if let c = aider { paths["aider"] = c; inst["aider"] = true } else { inst["aider"] = false }
+        // Guided tools: treat as "installed" so we don't show Install
+        for id in ["cursor", "cline", "roo", "kilo", "copilot", "zed", "jetbrains", "goose",
+                   "openwebui", "librechat", "anythingllm", "msty", "jan", "boltai", "chatbox",
+                   "obsidian", "lmstudio", "n8n", "flowise", "chatgpt-actions", "continue", "raycast"] {
+            inst[id] = true
+        }
+        self.toolPaths = paths
+        self.installedTools = inst
+        self.toolsScanned = true
+    }
+
+    func codexBinary() -> String? { toolPaths["codex"] }
 
     static func installCommand(_ id: String) -> String? {
         switch id {
@@ -388,24 +441,6 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
         case "grok-cli": return "npm install -g @vibe-tools/grok-cli || npm install -g grok-cli"
         default: return nil
         }
-    }
-
-    func codexBinary() -> String? {
-        let candidates = [
-            which("codex"),
-            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
-            home + "/.npm-global/bin/codex",
-            "/usr/local/bin/codex",
-            home + "/.local/bin/codex"
-        ].compactMap { $0 }
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
-    }
-    func which(_ name: String) -> String? {
-        let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/which"); p.arguments = [name]
-        let o = Pipe(); p.standardOutput = o; p.standardError = Pipe()
-        try? p.run(); p.waitUntilExit()
-        let s = String(data: o.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return s.isEmpty ? nil : s
     }
 
     struct ProcOut { var status: Int32; var stdout: String; var stderr: String; var combined: String { stdout + stderr } }
@@ -504,6 +539,9 @@ struct IntegrationsView: View {
             }.padding(20)
         }
         .task {
+            await Task.detached(priority: .utility) {
+                await MainActor.run { store.refreshInstalledTools() }
+            }.value
             // Prefer public API via tunnel 18091 so the model list works even before owner unlock
             if let u = URL(string: store.localBase + "/v1/models"),
                var req = Optional(URLRequest(url: u)) {

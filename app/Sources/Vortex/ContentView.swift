@@ -43,11 +43,11 @@ struct ContentView: View {
             .safeAreaInset(edge: .bottom) {
                 HStack {
                     Circle().fill(tunnel.running ? .green : (useTunnel ? .orange : .gray)).frame(width: 8, height: 8)
-                    Text(useTunnel ? (tunnel.running ? "Tunnel up" : "Tunnel down") : "Direct").font(.caption)
+                    Text(useTunnel ? (tunnel.running ? (tunnel.external ? "Tunnel up (shared)" : "Tunnel up") : "Tunnel down") : "Direct").font(.caption)
                     Spacer()
                     if useTunnel {
-                        Button(tunnel.running ? "Stop" : "Connect") {
-                            tunnel.running ? tunnel.stop() : tunnel.start(host: sshHost, local: sshLocalPort, remote: sshRemotePort, keyPath: sshKey)
+                        Button(tunnel.running ? (tunnel.external ? "Connected" : "Stop") : "Connect") {
+                            (tunnel.running && !tunnel.external) ? tunnel.stop() : tunnel.start(host: sshHost, local: sshLocalPort, remote: sshRemotePort, keyPath: sshKey)
                         }.controlSize(.small)
                     }
                 }.padding(8)

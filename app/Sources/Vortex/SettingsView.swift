@@ -25,7 +25,8 @@ struct ConnectionSettings: View {
     @AppStorage("sshLocalPort") var sshLocalPort = Defaults.sshLocalPort
     @AppStorage("sshRemotePort") var sshRemotePort = Defaults.sshRemotePort
     @Local var key = ""
-    @Local var keySaved = Keychain.get() != nil
+    @Local var keySaved = false
+    // keySaved filled in .onAppear — never Keychain in property initializers used by View body
     @Local var test = ""
     var body: some View {
         Form {
@@ -41,6 +42,7 @@ struct ConnectionSettings: View {
                     Text(test).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
             }
+            .onAppear { keySaved = Keychain.get() != nil }
             Section("Secure SSH tunnel") {
                 Toggle("Open SSH tunnel automatically on launch", isOn: $useTunnel)
                 TextField("SSH host", text: $sshHost)
@@ -51,10 +53,10 @@ struct ConnectionSettings: View {
                 }
                 HStack {
                     Circle().fill(tunnel.running ? .green : .orange).frame(width: 8, height: 8)
-                    Text(tunnel.running ? "Connected" : "Not connected")
+                    Text(tunnel.running ? (tunnel.external ? "Connected (reusing existing tunnel)" : "Connected") : "Not connected")
                     Spacer()
-                    Button(tunnel.running ? "Disconnect" : "Connect") {
-                        tunnel.running ? tunnel.stop() : tunnel.start(host: sshHost, local: sshLocalPort, remote: sshRemotePort, keyPath: sshKey)
+                    Button(tunnel.running ? (tunnel.external ? "Recheck" : "Disconnect") : "Connect") {
+                        (tunnel.running && !tunnel.external) ? tunnel.stop() : tunnel.start(host: sshHost, local: sshLocalPort, remote: sshRemotePort, keyPath: sshKey)
                     }
                 }
                 if !tunnel.lastError.isEmpty { Text(tunnel.lastError).font(.caption).foregroundStyle(.red) }
