@@ -63,6 +63,12 @@ sed -i "s/-t 16/-t $THREADS/; s/MemoryMax=29G/MemoryMax=${MEM}G/" /etc/systemd/s
 chown -R dolphin:root /opt/dolphin
 systemctl daemon-reload
 systemctl enable --now dolphin-llm dolphin-gateway
+# SSH-only owner ban recovery
+cat > /usr/local/bin/vortex-ban <<'"'"'B'"'"'
+#!/bin/sh
+exec /usr/local/bin/dolphin-gateway vortex-ban "$@"
+B
+chmod 0755 /usr/local/bin/vortex-ban
 
 if [ -n "$STARTER" ] && [ -z "$(ls /opt/dolphin/models 2>/dev/null)" ]; then
   log "Downloading starter model $STARTER"; dolphin-models pull "$STARTER" || true
