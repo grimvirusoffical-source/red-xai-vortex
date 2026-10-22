@@ -19,19 +19,21 @@ enum IntegrationCatalog {
         .init(id: "codex", name: "OpenAI Codex CLI", category: "Coding agents", wire: "OpenAI Responses", mode: .auto,
               how: "~/.codex/vortex.config.toml (Codex 0.163+ profile file): model_provider + [model_providers.vortex] with wire_api=\"responses\". Run: codex --profile vortex"),
         .init(id: "claude-code", name: "Claude Code", category: "Coding agents", wire: "Anthropic Messages", mode: .auto,
-              how: "~/.claude/settings.json → env: ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL (gateway /v1/messages shim)"),
+              how: "Adds ~/.claude/vortex-settings.json + a `claude-vortex` command (~/.local/bin). Your normal `claude` and its models are untouched. Run: claude-vortex"),
         .init(id: "gemini-cli", name: "Gemini CLI", category: "Coding agents", wire: "Gemini API", mode: .auto,
-              how: "~/.gemini/.env: GOOGLE_GEMINI_BASE_URL + GEMINI_API_KEY + GEMINI_MODEL (gateway /v1beta Gemini shim). Run: gemini"),
+              how: "Adds a `gemini-vortex` command (~/.local/bin) that points Gemini CLI at the gateway's /v1beta shim. Your normal `gemini` setup is untouched."),
         .init(id: "opencode", name: "OpenCode", category: "Coding agents", wire: "OpenAI Chat", mode: .auto,
-              how: "~/.config/opencode/opencode.json → provider \"vortex\" (@ai-sdk/openai-compatible, baseURL, apiKey {env:VORTEX_API_KEY})"),
+              how: "~/.config/opencode/opencode.json → adds provider \"vortex\" next to your existing providers (default model is not changed). Pick vortex/<model> in /models."),
         .init(id: "grok-cli", name: "Grok CLI (open-source)", category: "Coding agents", wire: "OpenAI Chat", mode: .auto,
-              how: "~/.grok/user-settings.json → baseURL, apiKey, defaultModel"),
+              how: "Adds a `grok-vortex` command (~/.local/bin) using --base-url/--api-key. Your Grok CLI settings are untouched."),
         .init(id: "aider", name: "Aider", category: "Coding agents", wire: "OpenAI Chat", mode: .auto,
-              how: "~/.aider.conf.yml → openai-api-base, openai-api-key, model openai/<model> (only if you have no aider config yet)"),
+              how: "Adds an `aider-vortex` command (~/.local/bin). Your ~/.aider.conf.yml is untouched."),
         .init(id: "continue", name: "VS Code / JetBrains: Continue", category: "Editors", wire: "OpenAI Chat", mode: .auto,
-              how: "~/.continue/config.yaml → model with provider openai + apiBase (only if you have no Continue config yet)"),
+              how: "~/.continue/config.yaml → appends a Vortex model to your models list (existing models kept). VS Code is relaunched."),
         .init(id: "raycast", name: "Raycast AI", category: "Desktop chat", wire: "OpenAI Chat", mode: .auto,
-              how: "~/.config/raycast/ai/providers.yaml (Custom Providers) (only if you have no providers.yaml yet)"),
+              how: "~/.config/raycast/ai/providers.yaml → appends a Vortex provider (existing providers kept). Raycast is relaunched."),
+        .init(id: "zed", name: "Zed", category: "Editors", wire: "OpenAI Chat", mode: .auto,
+              how: "~/.config/zed/settings.json → adds language_models.openai_compatible.Vortex (existing providers kept); key via VORTEX_API_KEY. Zed is relaunched."),
         // ---- guided (key copied to clipboard + exact steps) ----
         .init(id: "cursor", name: "Cursor", category: "Editors", wire: "OpenAI Chat", mode: .guided,
               how: "Settings → Models → OpenAI API Key + Override OpenAI Base URL",
@@ -45,8 +47,6 @@ enum IntegrationCatalog {
         .init(id: "copilot", name: "GitHub Copilot (VS Code BYOK)", category: "Editors", wire: "OpenAI Chat", mode: .guided,
               how: "Chat → Manage Models → OpenAI Compatible (custom endpoint)",
               steps: "VS Code → Copilot Chat → model picker → Manage Models… → OpenAI Compatible → URL {BASE}/chat/completions, key: paste, model {MODEL}. (Copilot's Ollama option can't send an API key, so use OpenAI Compatible.)"),
-        .init(id: "zed", name: "Zed", category: "Editors", wire: "OpenAI Chat", mode: .guided, how: "settings.json → language_models.openai_compatible",
-              steps: "Zed settings.json: \"language_models\": { \"openai_compatible\": { \"Vortex\": { \"api_url\": \"{BASE}\", \"available_models\": [{ \"name\": \"{MODEL}\", \"max_tokens\": 32768 }] } } }. Then Agent panel → Configure → Vortex → paste the key."),
         .init(id: "jetbrains", name: "JetBrains AI Assistant", category: "Editors", wire: "OpenAI Chat", mode: .guided, how: "Settings → AI Assistant → Models → Third-party providers → OpenAI-compatible",
               steps: "Settings → Tools → AI Assistant → Models → Third-party AI providers → OpenAI-compatible: URL {BASE}, API key: paste, model {MODEL}. (Its Ollama/LM Studio options send no key, so use OpenAI-compatible.)"),
         .init(id: "goose", name: "Goose", category: "Coding agents", wire: "OpenAI Chat", mode: .guided, how: "goose configure → OpenAI (OPENAI_HOST)",
@@ -69,6 +69,9 @@ enum IntegrationCatalog {
               steps: "Copilot settings → Model → Add Custom Model: provider 3rd party (openai-format), Base URL {BASE}, key: paste, name {MODEL}. Turn on CORS if requests fail."),
         .init(id: "lmstudio", name: "Apps built for LM Studio", category: "Chat apps", wire: "OpenAI Chat", mode: .guided, how: "Same OpenAI-compatible base URL",
               steps: "LM Studio itself serves models and can't use a remote endpoint. Apps that talk to LM Studio's API (http://localhost:1234/v1) can point at {BASE} with the key instead."),
+        .init(id: "omniroute", name: "OmniRoute", category: "Automation", wire: "OpenAI Chat", mode: .guided,
+              how: "OmniRoute dashboard → Providers → Add OpenAI-compatible (stored in OmniRoute's own database; no config file to write)",
+              steps: "OmniRoute (http://127.0.0.1:20128) → Providers → Add → OpenAI Compatible (Chat). Name: Red-XAI · Prefix: redxai · Base URL: {BASE} · Chat path: leave empty (/chat/completions) · Models path: /models · API key: paste (on your clipboard) · Default model: {MODEL} (a model id, NOT /models) · turn OFF Proxy egress for this provider (it's local). Save → Test → Sync models. Use as redxai/{MODEL}."),
         .init(id: "n8n", name: "n8n", category: "Automation", wire: "OpenAI Chat", mode: .guided, how: "OpenAI credential → Base URL",
               steps: "Credentials → OpenAI: API Key: paste, Base URL {BASE}. Use the OpenAI Chat Model node with model {MODEL}.", publicOnly: true),
         .init(id: "flowise", name: "Flowise", category: "Automation", wire: "OpenAI Chat", mode: .guided, how: "ChatOpenAI Custom node → Base Path",
@@ -152,6 +155,69 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
         }
     }
 
+    // ---------- target apps ----------
+    /// Desktop apps that read the config we write; relaunched after Connect so they pick it up.
+    static let bundleIDs: [String: [String]] = [
+        "codex": ["com.openai.codex", "com.openai.chat"],
+        "continue": ["com.microsoft.VSCode"], "cline": ["com.microsoft.VSCode"], "roo": ["com.microsoft.VSCode"],
+        "kilo": ["com.microsoft.VSCode"], "copilot": ["com.microsoft.VSCode"],
+        "cursor": ["com.todesktop.230313mzl4w4u92"], "zed": ["dev.zed.Zed"], "raycast": ["com.raycast.macos"],
+        "jan": ["jan.ai.app"], "lmstudio": ["ai.elementlabs.lmstudio"], "msty": ["app.msty.app"],
+        "anythingllm": ["com.anythingllm"], "boltai": ["co.podzim.BoltGPT"], "chatbox": ["xyz.chatboxapp.app"],
+        "obsidian-copilot": ["md.obsidian"], "jetbrains": [],
+    ]
+    static let webApps: [String: String] = ["omniroute": "http://127.0.0.1:20128", "openwebui": "http://127.0.0.1:8080", "n8n": "http://127.0.0.1:5678", "flowise": "http://127.0.0.1:3000"]
+    func appURL(_ id: String) -> URL? {
+        for b in Self.bundleIDs[id] ?? [] { if let u = NSWorkspace.shared.urlForApplication(withBundleIdentifier: b) { return u } }
+        return nil
+    }
+    func appInstalled(_ id: String) -> Bool { appURL(id) != nil }
+    /// Quit (if running) and relaunch the target app so it reloads the config. Returns a status line.
+    func relaunch(_ id: String, name: String) async -> String {
+        guard let url = appURL(id) else {
+            if let w = Self.webApps[id], let u = URL(string: w) { NSWorkspace.shared.open(u); return "Opened \(w)." }
+            return ""
+        }
+        let bids = Self.bundleIDs[id] ?? []
+        let running = NSWorkspace.shared.runningApplications.filter { bids.contains($0.bundleIdentifier ?? "") }
+        for a in running { a.terminate() }
+        for _ in 0..<40 where running.contains(where: { !$0.isTerminated }) { try? await Task.sleep(nanoseconds: 250_000_000) }
+        let cfg = NSWorkspace.OpenConfiguration(); cfg.activates = true
+        _ = try? await NSWorkspace.shared.openApplication(at: url, configuration: cfg)
+        return running.isEmpty ? "Opened \(url.deletingPathExtension().lastPathComponent)." : "Relaunched \(url.deletingPathExtension().lastPathComponent)."
+    }
+    /// For GUI apps: make VORTEX_API_KEY visible to apps launched from Finder/Dock.
+    func setLaunchEnv(_ name: String, _ value: String?) {
+        let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        p.arguments = value.map { ["setenv", name, $0] } ?? ["unsetenv", name]
+        try? p.run()   // fire and forget; never waitUntilExit on the main actor
+    }
+    /// ~/.local/bin/<name> launcher (mode 700) that sources the env file and execs the real tool.
+    func writeLauncher(_ name: String, _ body: String, id: String, files: inout [FileBackup]) throws -> String {
+        let p = home + "/.local/bin/" + name
+        try backup(id, p, into: &files)
+        try write(p, "#!/bin/zsh\n# Red-XAI Vortex launcher (Integrations). Removed on Disconnect.\n[ -f \"$HOME/.config/red-xai-vortex/env\" ] && . \"$HOME/.config/red-xai-vortex/env\"\n" + body + "\n")
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: p)
+        return p
+    }
+    /// Insert YAML list item text right after a top-level `<key>:` line (append the key if missing).
+    func yamlAppend(_ y: String, key: String, item: String) -> String {
+        var lines = y.components(separatedBy: "\n")
+        if let i = lines.firstIndex(where: { $0.hasPrefix(key + ":") }) {
+            if lines[i].trimmingCharacters(in: .whitespaces).hasSuffix("[]") { lines[i] = key + ":" }
+            // match the indentation of the existing list items so the YAML stays valid
+            var indent = "  "
+            if let n = lines[(i + 1)...].first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty && !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }),
+               n.trimmingCharacters(in: .whitespaces).hasPrefix("-") {
+                indent = String(n.prefix { $0 == " " })
+            }
+            let items = item.components(separatedBy: "\n").filter { !$0.isEmpty }.map { $0.hasPrefix("  ") ? indent + $0.dropFirst(2) : $0 }
+            lines.insert(contentsOf: items, at: i + 1)
+            return lines.joined(separator: "\n")
+        }
+        return y + (y.hasSuffix("\n") || y.isEmpty ? "" : "\n") + key + ":\n" + item
+    }
+
     // ---------- connect ----------
     func connect(_ i: Integration, model: String) async {
         message = ""; cardError[i.id] = nil; cardOK[i.id] = nil
@@ -192,25 +258,17 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
                 try write(p, body)
                 try setEnv("VORTEX_API_KEY", key, files: &files, id: i.id); env.append("VORTEX_API_KEY")
             case "claude-code":
-                let p = home + "/.claude/settings.json"
-                var o = readJSON(p) ?? [:]
-                if readJSON(p) == nil && FileManager.default.fileExists(atPath: p) {
-                    throw NSError(domain: "Vortex", code: 2, userInfo: [NSLocalizedDescriptionKey: "~/.claude/settings.json isn't plain JSON; not changing it"])
-                }
+                // Alongside, not instead: a separate settings file + claude-vortex launcher. ~/.claude/settings.json untouched.
+                let p = home + "/.claude/vortex-settings.json"
                 try backup(i.id, p, into: &files)
-                var e = o["env"] as? [String: Any] ?? [:]
-                e["ANTHROPIC_BASE_URL"] = b
-                e["ANTHROPIC_AUTH_TOKEN"] = key
-                e["ANTHROPIC_MODEL"] = model
-                e["ANTHROPIC_SMALL_FAST_MODEL"] = model
-                o["env"] = e
-                try writeJSON(p, o)
+                try writeJSON(p, ["env": ["ANTHROPIC_BASE_URL": b, "ANTHROPIC_AUTH_TOKEN": key, "ANTHROPIC_MODEL": model,
+                                          "ANTHROPIC_SMALL_FAST_MODEL": model, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"]])
+                let bin = toolPaths["claude-code"] ?? (home + "/.local/bin/claude")
+                _ = try writeLauncher("claude-vortex", "exec \"\(bin)\" --settings \"$HOME/.claude/vortex-settings.json\" \"$@\"", id: i.id, files: &files)
             case "gemini-cli":
-                let p = home + "/.gemini/.env"
-                try backup(i.id, p, into: &files)
-                var lines = ((try? String(contentsOfFile: p, encoding: .utf8)) ?? "").components(separatedBy: "\n").filter { l in !l.isEmpty && !["GOOGLE_GEMINI_BASE_URL=", "GEMINI_API_KEY=", "GEMINI_MODEL="].contains { l.hasPrefix($0) } }
-                lines += ["GOOGLE_GEMINI_BASE_URL=\(b)", "GEMINI_API_KEY=\(key)", "GEMINI_MODEL=\(model)"]
-                try write(p, lines.joined(separator: "\n") + "\n", secret: true)
+                try setEnv("VORTEX_API_KEY", key, files: &files, id: i.id); env.append("VORTEX_API_KEY")
+                let bin = toolPaths["gemini-cli"] ?? "gemini"
+                _ = try writeLauncher("gemini-vortex", "export GOOGLE_GEMINI_BASE_URL='\(b)' GEMINI_API_KEY=\"$VORTEX_API_KEY\" GEMINI_MODEL='\(model)'\nexec \"\(bin)\" -m '\(model)' \"$@\"", id: i.id, files: &files)
             case "opencode":
                 let p = home + "/.config/opencode/opencode.json"
                 var o: [String: Any]
@@ -232,45 +290,58 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
                     "models": [model: ["name": model]]
                 ]
                 o["provider"] = prov
-                o["model"] = "vortex/\(model)"
+                if o["model"] == nil { o["model"] = "vortex/\(model)" }   // never replace the user's default
                 try writeJSON(p, o)
                 try setEnv("VORTEX_API_KEY", key, files: &files, id: i.id); env.append("VORTEX_API_KEY")
             case "grok-cli":
-                let p = home + "/.grok/user-settings.json"
-                var o: [String: Any]
+                try setEnv("VORTEX_API_KEY", key, files: &files, id: i.id); env.append("VORTEX_API_KEY")
+                let bin = toolPaths["grok-cli"] ?? "grok"
+                _ = try writeLauncher("grok-vortex", "exec \"\(bin)\" --base-url '\(b)/v1' --api-key \"$VORTEX_API_KEY\" --model '\(model)' \"$@\"", id: i.id, files: &files)
+            case "aider":
+                try setEnv("VORTEX_API_KEY", key, files: &files, id: i.id); env.append("VORTEX_API_KEY")
+                let bin = toolPaths["aider"] ?? "aider"
+                _ = try writeLauncher("aider-vortex", "exec \"\(bin)\" --openai-api-base '\(b)/v1' --openai-api-key \"$VORTEX_API_KEY\" --model 'openai/\(model)' \"$@\"", id: i.id, files: &files)
+            case "continue":
+                let p = home + "/.continue/config.yaml"
+                try backup(i.id, p, into: &files)
+                var y = (try? String(contentsOfFile: p, encoding: .utf8)) ?? "name: Local Config\nversion: 1.0.0\nschema: v1\n"
+                y = Self.stripItem(y)
+                let item = "  # red-xai-vortex begin\n  - name: Vortex · \(model)\n    provider: openai\n    model: \(model)\n    apiBase: \(b)/v1\n    apiKey: \(key)\n    roles: [chat, edit, apply]\n  # red-xai-vortex end\n"
+                try write(p, yamlAppend(y, key: "models", item: item), secret: true)
+            case "raycast":
+                let p = home + "/.config/raycast/ai/providers.yaml"
+                try backup(i.id, p, into: &files)
+                var y = (try? String(contentsOfFile: p, encoding: .utf8)) ?? ""
+                y = Self.stripItem(y)
+                let item = "  # red-xai-vortex begin\n  - id: vortex\n    name: Red-XAI Vortex\n    base_url: \(b)/v1\n    api_keys:\n      vortex: \(key)\n    models:\n      - id: \(model)\n        name: \(model)\n        provider: vortex\n        context: 32768\n  # red-xai-vortex end\n"
+                try write(p, yamlAppend(y, key: "providers", item: item), secret: true)
+            case "zed":
+                let p = home + "/.config/zed/settings.json"
+                var o: [String: Any] = [:]
                 if FileManager.default.fileExists(atPath: p) {
-                    guard let parsed = readJSON(p) else { throw NSError(domain: "Vortex", code: 2, userInfo: [NSLocalizedDescriptionKey: "user-settings.json isn't plain JSON"]) }
-                    o = parsed; try backup(i.id, p, into: &files)
-                } else {
-                    o = [:]; try backup(i.id, p, into: &files)
-                }
-                o["apiKey"] = key; o["baseURL"] = "\(b)/v1"; o["defaultModel"] = model
-                var ms = o["models"] as? [String] ?? []; if !ms.contains(model) { ms.insert(model, at: 0) }; o["models"] = ms
-                try writeJSON(p, o)
-            case "aider", "continue", "raycast":
-                let p = home + (i.id == "aider" ? "/.aider.conf.yml" : i.id == "continue" ? "/.continue/config.yaml" : "/.config/raycast/ai/providers.yaml")
-                if FileManager.default.fileExists(atPath: p) {
-                    NSPasteboard.general.clearContents(); NSPasteboard.general.setString(key, forType: .string)
-                    files = []
-                    message = "\(i.name): you already have \(p.replacingOccurrences(of: home, with: "~")), so it wasn't changed. The key is on your clipboard; add the snippet from Help → Integrations."
-                } else {
-                    try backup(i.id, p, into: &files)
-                    let y: String
-                    switch i.id {
-                    case "aider": y = "openai-api-base: \(b)/v1\nopenai-api-key: \(key)\nmodel: openai/\(model)\n"
-                    case "continue": y = "name: Red-XAI Vortex\nversion: 1.0.0\nschema: v1\nmodels:\n  - name: Vortex · \(model)\n    provider: openai\n    model: \(model)\n    apiBase: \(b)/v1\n    apiKey: \(key)\n    roles: [chat, edit, apply]\n"
-                    default: y = "providers:\n  - id: vortex\n    name: Red-XAI Vortex\n    base_url: \(b)/v1\n    api_keys:\n      vortex: \(key)\n    models:\n      - id: \(model)\n        name: \(model)\n        provider: vortex\n        context: 32768\n        abilities:\n          temperature:\n            supported: true\n          system_message:\n            supported: true\n          tools:\n            supported: true\n"
+                    guard let parsed = readJSON(p) else {
+                        throw NSError(domain: "Vortex", code: 2, userInfo: [NSLocalizedDescriptionKey: "Zed's settings.json has comments, so it wasn't changed (backed up nothing). Add the Vortex block from Help → Integrations by hand."])
                     }
-                    try write(p, y, secret: true)
+                    o = parsed
                 }
-            default: // guided
+                try backup(i.id, p, into: &files)
+                var lm = o["language_models"] as? [String: Any] ?? [:]
+                var oc = lm["openai_compatible"] as? [String: Any] ?? [:]
+                oc["Vortex"] = ["api_url": "\(b)/v1", "available_models": [["name": model, "display_name": "Vortex · \(model)", "max_tokens": 32768]]]
+                lm["openai_compatible"] = oc; o["language_models"] = lm
+                try writeJSON(p, o)
+                try setEnv("VORTEX_API_KEY", key, files: &files, id: i.id); env.append("VORTEX_API_KEY")
+                setLaunchEnv("VORTEX_API_KEY", key)
+            default: // guided: app keeps its config in its own database/UI
                 NSPasteboard.general.clearContents(); NSPasteboard.general.setString(key, forType: .string)
-                message = "\(i.name): a dedicated key is on your clipboard (it's also in your Keychain). Follow the steps on the card."
+                message = "\(i.name): a dedicated key is on your clipboard (it's also in your Keychain). Follow the steps on the card, then press Test."
             }
+            if i.id == "codex" { setLaunchEnv("VORTEX_API_KEY", key) }
             state[i.id] = IntegrationState(model: model, keyID: kid, at: Date(), files: files, envVars: env); save()
-            let ok = "\(i.name) connected to \(model) via \(b)."
+            let rl = await relaunch(i.id, name: i.name)
+            let ok = "\(i.name) connected to \(model) via \(b). \(rl)"
             cardOK[i.id] = ok
-            if message.isEmpty { message = ok + " Disconnect restores the backup and revokes the key." }
+            if message.isEmpty { message = ok + " Your existing models are kept. Disconnect restores the backup and revokes the key." }
         } catch {
             var msg = error.localizedDescription
             if msg.contains("owner unlock") {
@@ -297,6 +368,7 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
         }
         var files = st.files
         for v in st.envVars where !state.contains(where: { $0.key != i.id && $0.value.envVars.contains(v) }) { try? setEnv(v, nil, files: &files, id: i.id) }
+        if !state.contains(where: { $0.key != i.id && $0.value.envVars.contains("VORTEX_API_KEY") }) { setLaunchEnv("VORTEX_API_KEY", nil) }
         _ = try? await Admin.call("DELETE", "/admin/keys/\(st.keyID)")
         Keychain.set("", account: "integration-\(i.id)")
         state[i.id] = nil; save()
@@ -304,47 +376,67 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
         cardOK[i.id] = message
     }
 
-    /// Run a one-shot probe through the tool's own CLI (or a direct HTTP check for guided).
+    /// Test = a real chat call through the endpoint + key the tool is configured with (read back from its config),
+    /// or through the tool's own CLI where it has a non-interactive mode.
     func test(_ i: Integration) async {
-        cardError[i.id] = nil; cardOK[i.id] = nil; message = ""
+        cardError[i.id] = nil; cardOK[i.id] = "Testing…"; message = ""
         guard let st = state[i.id], let key = Keychain.get(account: "integration-\(i.id)"), !key.isEmpty else {
-            cardError[i.id] = "Not connected (no key in Keychain)."
+            cardOK[i.id] = nil
+            cardError[i.id] = "Not connected (no key in Keychain). Press Connect first."
             message = "\(i.name): \(cardError[i.id]!)"
             return
         }
+        if !toolsScanned { refreshInstalledTools() }
         let b = base(i)
+        let t0 = Date()
+        func secs() -> String { String(format: "%.1fs", Date().timeIntervalSince(t0)) }
         do {
+            var result = ""
             switch i.id {
             case "codex":
-                if !toolsScanned { refreshInstalledTools() }
                 guard let bin = codexBinary() else { throw NSError(domain: "Vortex", code: 4, userInfo: [NSLocalizedDescriptionKey: "Codex CLI not found. Use Install, then Test again."]) }
-                let out = try await runProcess(bin, ["exec", "-p", "vortex", "--skip-git-repo-check", "Reply with exactly: VORTEX_OK"], env: ["VORTEX_API_KEY": key], timeout: 120)
-                if out.combined.contains("VORTEX_OK") || out.status == 0 && !out.stdout.isEmpty {
-                    cardOK[i.id] = "Test OK — Codex replied via \(b)."
-                } else {
+                // --ignore-user-config skips your MCP servers/skills so the probe is fast; the vortex profile is still layered on.
+                let out = try await runProcess(bin, ["exec", "--ignore-user-config", "-p", "vortex", "--skip-git-repo-check", "-c", "model_reasoning_effort=\"low\"",
+                                                     "Reply with exactly: VORTEX_OK"], env: ["VORTEX_API_KEY": key], timeout: 300)
+                guard out.combined.contains("VORTEX_OK") else {
                     throw NSError(domain: "Vortex", code: 5, userInfo: [NSLocalizedDescriptionKey: "Codex exit \(out.status): \(String(out.combined.suffix(400)))"])
                 }
+                result = "codex exec -p vortex → VORTEX_OK"
             case "claude-code":
-                if !toolsScanned { refreshInstalledTools() }
-                let bin = toolPaths["claude-code"] ?? (home + "/.local/bin/claude")
-                guard FileManager.default.isExecutableFile(atPath: bin) else {
-                    throw NSError(domain: "Vortex", code: 4, userInfo: [NSLocalizedDescriptionKey: "Claude Code not found. Use Install."])
-                }
-                // Prefer a direct Anthropic-messages probe (same wire as Claude Code) so we don't need an interactive TTY
-                let reply = try await httpProbeAnthropic(base: b, key: key, model: st.model)
-                cardOK[i.id] = "Test OK — /v1/messages: \(reply)"
+                let launcher = home + "/.local/bin/claude-vortex"
+                if FileManager.default.isExecutableFile(atPath: launcher) {
+                    let out = try await runProcess(launcher, ["-p", "Reply with exactly: VORTEX_OK"], env: [:], timeout: 300)
+                    if out.combined.contains("VORTEX_OK") { result = "claude-vortex -p → VORTEX_OK" }
+                    else { result = "claude-vortex didn't answer (\(out.status)); /v1/messages: " + (try await httpProbeAnthropic(base: b, key: key, model: st.model)) }
+                } else { result = "/v1/messages: " + (try await httpProbeAnthropic(base: b, key: key, model: st.model)) }
             case "opencode":
-                // Direct OpenAI chat probe matching OpenCode's openai-compatible provider
-                let reply = try await httpProbeChat(base: b + "/v1", key: key, model: st.model)
-                cardOK[i.id] = "Test OK — chat completions: \(reply)"
+                let o = readJSON(home + "/.config/opencode/opencode.json") ?? [:]
+                let opts = ((o["provider"] as? [String: Any])?["vortex"] as? [String: Any])?["options"] as? [String: Any]
+                let cfgBase = opts?["baseURL"] as? String ?? b + "/v1"
+                result = "opencode.json provider vortex (\(cfgBase)): " + (try await httpProbeChat(base: cfgBase, key: key, model: st.model))
+            case "zed":
+                let o = readJSON(home + "/.config/zed/settings.json") ?? [:]
+                let v = ((o["language_models"] as? [String: Any])?["openai_compatible"] as? [String: Any])?["Vortex"] as? [String: Any]
+                guard let u = v?["api_url"] as? String else { throw NSError(domain: "Vortex", code: 7, userInfo: [NSLocalizedDescriptionKey: "Vortex block missing from Zed settings.json"]) }
+                result = "Zed settings api_url \(u): " + (try await httpProbeChat(base: u, key: key, model: st.model))
+            case "continue", "raycast":
+                let p = home + (i.id == "continue" ? "/.continue/config.yaml" : "/.config/raycast/ai/providers.yaml")
+                let y = (try? String(contentsOfFile: p, encoding: .utf8)) ?? ""
+                let line = y.components(separatedBy: "\n").first { $0.contains("apiBase:") || $0.contains("base_url:") } ?? ""
+                let u = line.components(separatedBy: ": ").dropFirst().joined(separator: ": ").trimmingCharacters(in: .whitespaces)
+                guard !u.isEmpty else { throw NSError(domain: "Vortex", code: 7, userInfo: [NSLocalizedDescriptionKey: "Vortex entry missing from \(p)"]) }
+                result = "\((p as NSString).lastPathComponent) → \(u): " + (try await httpProbeChat(base: u, key: key, model: st.model))
+            case "gemini-cli", "grok-cli", "aider":
+                result = "\(i.id.replacingOccurrences(of: "-cli", with: ""))-vortex endpoint \(b): " + (try await httpProbeChat(base: b + "/v1", key: key, model: st.model))
             default:
-                let reply = try await httpProbeChat(base: b + "/v1", key: key, model: st.model)
-                cardOK[i.id] = "Test OK — \(reply)"
+                result = "\(b)/v1 with this app's key: " + (try await httpProbeChat(base: b + "/v1", key: key, model: st.model))
             }
+            cardOK[i.id] = "Test OK (\(secs())) — \(result)"
             message = "\(i.name): \(cardOK[i.id]!)"
         } catch {
-            cardError[i.id] = error.localizedDescription
-            message = "\(i.name) test failed: \(error.localizedDescription)"
+            cardOK[i.id] = nil
+            cardError[i.id] = "Test failed (\(secs())): \(error.localizedDescription)"
+            message = "\(i.name): \(cardError[i.id]!)"
         }
     }
 
@@ -468,7 +560,7 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
 
     func httpProbeChat(base: String, key: String, model: String) async throws -> String {
         guard let u = URL(string: base.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/chat/completions") else { throw URLError(.badURL) }
-        var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = 90
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = 300
         r.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.httpBody = try JSONSerialization.data(withJSONObject: [
@@ -487,7 +579,7 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
     }
     func httpProbeAnthropic(base: String, key: String, model: String) async throws -> String {
         guard let u = URL(string: base.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/v1/messages") else { throw URLError(.badURL) }
-        var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = 90
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = 300
         r.setValue(key, forHTTPHeaderField: "x-api-key")
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
@@ -507,6 +599,16 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
         return text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80).description
     }
 
+    /// Remove a previous "# red-xai-vortex begin … end" list item (re-Connect replaces it instead of duplicating).
+    static func stripItem(_ s: String) -> String {
+        var out: [String] = []; var skip = false
+        for l in s.components(separatedBy: "\n") {
+            if l.contains("# red-xai-vortex begin") { skip = true; continue }
+            if l.contains("# red-xai-vortex end") { skip = false; continue }
+            if !skip { out.append(l) }
+        }
+        return out.joined(separator: "\n")
+    }
     static func stripBlock(_ s: String) -> String {
         guard let a = s.range(of: "\n# >>> red-xai-vortex >>>"), let b = s.range(of: "# <<< red-xai-vortex <<<\n") else { return s }
         return String(s[..<a.lowerBound]) + String(s[b.upperBound...])
@@ -519,6 +621,7 @@ struct IntegrationsView: View {
     @Local var picks: [String: String] = [:]
     @Local var busy = ""
     @Local var confirmInstall: String?
+    @Local var confirmConnect: Integration?
     let cols = [GridItem(.adaptive(minimum: 300), spacing: 12)]
     var body: some View {
         ScrollView {
@@ -556,6 +659,22 @@ struct IntegrationsView: View {
                 models = d.compactMap { $0["id"] as? String }.filter { !$0.contains("embed") }
             }
         }
+        .confirmationDialog("Connect \(confirmConnect?.name ?? "app") to Red-XAI Vortex?", isPresented: Binding(get: { confirmConnect != nil }, set: { if !$0 { confirmConnect = nil } }), titleVisibility: .visible) {
+            Button("Connect") {
+                if let i = confirmConnect {
+                    let m = picks[i.id] ?? (models.contains("vortex") ? "vortex" : models.first ?? "")
+                    busy = i.id; Task { await store.connect(i, model: m); busy = "" }
+                }
+                confirmConnect = nil
+            }
+            Button("Cancel", role: .cancel) { confirmConnect = nil }
+        } message: {
+            if let i = confirmConnect {
+                Text(i.mode == .auto
+                     ? "Creates a dedicated revocable key and adds Vortex models next to the app's existing models (\(i.how)). The original config is backed up first\(IntegrationStore.bundleIDs[i.id]?.isEmpty == false ? ", then the app is quit and relaunched" : "")."
+                     : "Creates a dedicated revocable key, copies it to your clipboard and opens \(i.name). Then follow the steps on the card and press Test.")
+            }
+        }
         .confirmationDialog("Install \(confirmInstall.flatMap { id in IntegrationCatalog.all.first { $0.id == id }?.name } ?? "tool")?", isPresented: Binding(get: { confirmInstall != nil }, set: { if !$0 { confirmInstall = nil } })) {
             Button("Install") {
                 if let id = confirmInstall, let i = IntegrationCatalog.all.first(where: { $0.id == id }) {
@@ -589,10 +708,7 @@ struct IntegrationsView: View {
                         Picker("Model", selection: Binding(get: { picks[i.id] ?? (models.contains("vortex") ? "vortex" : models.first ?? "") }, set: { picks[i.id] = $0 })) {
                             ForEach(models, id: \.self) { Text($0).tag($0) }
                         }.labelsHidden()
-                        Button(busy == i.id ? "Connecting…" : "Connect") {
-                            let m = picks[i.id] ?? (models.contains("vortex") ? "vortex" : models.first ?? "")
-                            busy = i.id; Task { await store.connect(i, model: m); busy = "" }
-                        }.buttonStyle(.borderedProminent).disabled(models.isEmpty || !busy.isEmpty)
+                        Button(busy == i.id ? "Connecting…" : "Connect") { confirmConnect = i }.buttonStyle(.borderedProminent).disabled(models.isEmpty || !busy.isEmpty)
                         if !store.toolInstalled(i.id), IntegrationStore.installCommand(i.id) != nil {
                             Button("Install") { confirmInstall = i.id }.disabled(!busy.isEmpty)
                         }

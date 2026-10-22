@@ -164,6 +164,7 @@ struct OwnerPanelView: View {
                     Section("API keys") {
                         Button("Open API Keys") { UserDefaults.standard.set("keys", forKey: "hubTab") }
                     }
+                    AccessControlSection()
                     Section("Bans") {
                         if let ips = bans["ips"] as? [String], let devs = bans["devices"] as? [String] {
                             Text("Banned IPs: \(ips.isEmpty ? "none" : ips.joined(separator: ", "))")

@@ -46,6 +46,13 @@ type Key struct {
 	Revoked  int64    `json:"revoked,omitempty"`
 	Requests int64    `json:"requests"`
 	Tokens   int64    `json:"tokens"`
+	// access controls (owner panel)
+	Expires     int64    `json:"expires,omitempty"`  // unix; 0 = never
+	Disabled    bool     `json:"disabled,omitempty"` // temporarily off (not revoked)
+	Role        string   `json:"role,omitempty"`     // owner|admin|user ("" = user, Admin=true = admin)
+	CanDownload bool     `json:"can_download,omitempty"`
+	IPAllow     []string `json:"ip_allow,omitempty"` // CIDR or IP; empty = any
+	IPDeny      []string `json:"ip_deny,omitempty"`
 }
 
 type Merge struct {
@@ -128,6 +135,7 @@ func load() {
 	loadProviders()
 	rxInit()
 	loadOwner()
+	loadACL()
 	if b, err := os.ReadFile(filepath.Join(dir, "merges.json")); err == nil {
 		must(json.Unmarshal(b, &merges))
 	} else {
@@ -170,6 +178,9 @@ func auth(r *http.Request) *Key {
 	defer mu.Unlock()
 	for _, x := range keys {
 		if x.Revoked == 0 && ctEq(x.Hash, hk) {
+			if x.Disabled || (x.Expires > 0 && time.Now().Unix() > x.Expires) {
+				return nil
+			}
 			return x
 		}
 	}
@@ -814,9 +825,20 @@ func publicHandler(w http.ResponseWriter, r *http.Request) {
 	if refuseIfBanned(w, r) {
 		return
 	}
+	if !ipAllowedGlobal(clientIP(r)) {
+		audit(r, nil, "deny_ip", 403)
+		errJSON(w, 403, "IP not allowed")
+		return
+	}
 	k := auth(r)
 	if k == nil {
+		audit(r, nil, "auth_fail", 401)
 		errJSON(w, 401, "invalid or missing API key")
+		return
+	}
+	if !keyIPAllowed(k, clientIP(r)) {
+		audit(r, k, "deny_key_ip", 403)
+		errJSON(w, 403, "IP not allowed for this key")
 		return
 	}
 	if !allow(k) {
@@ -842,12 +864,29 @@ func dm(args ...string) ([]byte, error) {
 }
 
 func adminHandler(w http.ResponseWriter, r *http.Request) {
+	if !ipAllowedGlobal(clientIP(r)) {
+		audit(r, nil, "deny_ip", 403)
+		errJSON(w, 403, "IP not allowed")
+		return
+	}
 	k := auth(r)
 	if k == nil || !k.Admin {
+		audit(r, nil, "admin_auth_fail", 401)
 		errJSON(w, 401, "admin key required")
 		return
 	}
+	if !keyIPAllowed(k, clientIP(r)) {
+		audit(r, k, "deny_key_ip", 403)
+		errJSON(w, 403, "IP not allowed for this key")
+		return
+	}
 	p := r.URL.Path
+	if r.Method != "GET" && !strings.HasPrefix(p, "/v1/") && !strings.HasPrefix(p, "/api/") {
+		defer audit(r, k, "admin", 0)
+	}
+	if accessAdmin(w, r, p, k) {
+		return
+	}
 	if strings.HasPrefix(p, "/admin/owner/") {
 		if handleOwnerAdmin(w, r, p) {
 			return
@@ -882,11 +921,12 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		var out []map[string]any
 		for _, x := range keys {
-			if x.Admin {
+			if strings.HasPrefix(x.ID, "admin_") {
 				continue
 			}
 			out = append(out, map[string]any{"id": x.ID, "name": x.Name, "prefix": x.Prefix, "models": x.Models, "rpm": x.RPM, "scopes": x.Scopes,
-				"created": x.Created, "last_used": x.LastUsed, "revoked": x.Revoked, "requests": x.Requests, "tokens": x.Tokens})
+				"created": x.Created, "last_used": x.LastUsed, "revoked": x.Revoked, "requests": x.Requests, "tokens": x.Tokens,
+				"expires": x.Expires, "disabled": x.Disabled, "role": roleOf(x), "can_download": x.CanDownload, "ip_allow": x.IPAllow, "ip_deny": x.IPDeny})
 		}
 		mu.Unlock()
 		sort.Slice(out, func(i, j int) bool { return out[i]["created"].(int64) > out[j]["created"].(int64) })
@@ -929,6 +969,7 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		plain := prefix + randB62(40)
 		nk := &Key{ID: "key_" + randB62(10), Name: name, Prefix: plain[:len(prefix)+6] + "…", Hash: hashKey(plain), Models: models, RPM: rpm, Created: time.Now().Unix(), Scopes: scopes}
+		applyKeyPatch(nk, in)
 		mu.Lock()
 		keys = append(keys, nk)
 		saveKeys()
@@ -952,7 +993,7 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		found := false
 		for _, x := range keys {
-			if x.ID == id && !x.Admin {
+			if x.ID == id && !strings.HasPrefix(x.ID, "admin_") {
 				x.Revoked = time.Now().Unix()
 				found = true
 			}
@@ -974,7 +1015,7 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		b, _ := dm("jobs")
 		w.Write(b)
 	case p == "/admin/models/pull" && r.Method == "POST":
-		if !requireOwner(w, r) {
+		if !k.CanDownload && !requireOwner(w, r) {
 			return
 		}
 		id := str("id")
@@ -1013,6 +1054,9 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		b, _ := dm("ollama-tags", r.URL.Query().Get("name"))
 		w.Write(b)
 	case p == "/admin/ollama/pull" && r.Method == "POST":
+		if !k.CanDownload && !requireOwner(w, r) {
+			return
+		}
 		ref := str("ref")
 		if !regexp.MustCompile(`^[a-z0-9._/-]{1,80}(:[a-zA-Z0-9._-]{1,60})?$`).MatchString(ref) {
 			errJSON(w, 400, "bad model reference")

@@ -61,6 +61,8 @@ struct MergeDef: Identifiable, Hashable {
 struct APIKeyRow: Identifiable {
     var id: String; var name: String; var prefix: String; var models: [String]; var rpm: Int
     var created: Date; var lastUsed: Date?; var revoked: Bool; var requests: Int; var tokens: Int
+    var expires: Date? = nil; var disabled = false; var role = "user"; var canDownload = false
+    var ipAllow: [String] = []; var ipDeny: [String] = []
 }
 
 @MainActor
@@ -155,7 +157,29 @@ final class HubStore: ObservableObject {
                      judge: $0["judge"] as? String ?? "", note: $0["note"] as? String ?? "")
         }
     }
-    func saveMerge(_ m: MergeDef) { run { _ = try await Admin.call("POST", "/admin/merges", m.dict); try await self.loadMerges(); await ChatStoreRef.refresh() } }
+    @Published var mergeStatus = ""
+    func saveMerge(_ m: MergeDef) {
+        mergeStatus = "Saving redx-merge-\(m.name)…"
+        Task {
+            do {
+                _ = try await Admin.call("POST", "/admin/merges", m.dict)
+                try await self.loadMerges(); await ChatStoreRef.refresh()
+                mergeStatus = "Saved redx-merge-\(m.name). Press Test to check it answers."
+            } catch { mergeStatus = "Merge failed: \(error.localizedDescription)" }
+        }
+    }
+    func testMerge(_ name: String) {
+        mergeStatus = "Testing redx-merge-\(name)… (steps run one after another; can take a minute)"
+        Task {
+            do {
+                let j = try await Admin.call("POST", "/v1/chat/completions", ["model": "redx-merge-\(name)", "max_tokens": 60,
+                    "messages": [["role": "user", "content": "In one short sentence, say hello and name yourself."]]])
+                let txt = ((j["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any])?["content"] as? String ?? "(empty)"
+                let steps = ((j["redx"] as? [String: Any])?["steps"] as? [[String: Any]] ?? []).compactMap { $0["model"] as? String }.joined(separator: " → ")
+                mergeStatus = "redx-merge-\(name) answered: \(txt.trimmingCharacters(in: .whitespacesAndNewlines))  [\(steps)]"
+            } catch { mergeStatus = "Test failed: \(error.localizedDescription)" }
+        }
+    }
     func deleteMerge(_ n: String) { run { _ = try await Admin.call("DELETE", "/admin/merges/\(n)"); try await self.loadMerges(); await ChatStoreRef.refresh() } }
 
     func loadKeys() async throws {
@@ -166,17 +190,29 @@ final class HubStore: ObservableObject {
                       models: $0["models"] as? [String] ?? [], rpm: ($0["rpm"] as? Int) ?? 60,
                       created: Date(timeIntervalSince1970: ($0["created"] as? Double) ?? 0),
                       lastUsed: lu > 0 ? Date(timeIntervalSince1970: lu) : nil, revoked: (($0["revoked"] as? Double) ?? 0) > 0,
-                      requests: ($0["requests"] as? Int) ?? 0, tokens: ($0["tokens"] as? Int) ?? 0)
+                      requests: ($0["requests"] as? Int) ?? 0, tokens: ($0["tokens"] as? Int) ?? 0,
+                      expires: (($0["expires"] as? Double) ?? 0) > 0 ? Date(timeIntervalSince1970: ($0["expires"] as? Double) ?? 0) : nil,
+                      disabled: $0["disabled"] as? Bool ?? false, role: $0["role"] as? String ?? "user",
+                      canDownload: $0["can_download"] as? Bool ?? false,
+                      ipAllow: $0["ip_allow"] as? [String] ?? [], ipDeny: $0["ip_deny"] as? [String] ?? [])
         }
     }
-    func createKey(name: String, models: [String], rpm: Int, xaiScopes: [String]? = nil) async -> String? {
+    @Published var keyError = ""
+    func createKey(name: String, models: [String], rpm: Int, xaiScopes: [String]? = nil, extra: [String: Any] = [:]) async -> String? {
+        keyError = ""
         do {
             var b: [String: Any] = ["name": name, "models": models, "rpm": rpm]
+            for (k, v) in extra { b[k] = v }
             if let s = xaiScopes { b["kind"] = "xai"; b["scopes"] = s }
             let r = try await Admin.call("POST", "/admin/keys", b)
             try await loadKeys(); error = ""
-            return r["key"] as? String
-        } catch { self.error = error.localizedDescription; return nil }
+            guard let k = r["key"] as? String, !k.isEmpty else { keyError = "Server did not return a key."; return nil }
+            return k
+        } catch { keyError = error.localizedDescription; return nil }
+    }
+    func patchKey(_ id: String, _ body: [String: Any]) async {
+        do { _ = try await Admin.call("PATCH", "/admin/keys/\(id)", body); try await loadKeys(); keyError = "" }
+        catch { keyError = error.localizedDescription }
     }
     func revoke(_ id: String) { run { _ = try await Admin.call("DELETE", "/admin/keys/\(id)"); try await self.loadKeys() } }
 }
@@ -333,6 +369,8 @@ struct MergesView: View {
                         picked = []; name = ""; judge = "" } label: { Label("Merge", systemImage: "arrow.triangle.merge") }
                         .buttonStyle(.borderedProminent).disabled(!valid)
                 }
+                if !valid { Text(whyInvalid).font(.caption).foregroundStyle(.orange) }
+                if !hub.mergeStatus.isEmpty { Text(hub.mergeStatus).font(.caption).textSelection(.enabled).foregroundStyle(hub.mergeStatus.contains("fail") ? .red : .green) }
                 Text("Steps run one after another so they fit in RAM; time ≈ the sum of each model's reply.").font(.caption2).foregroundStyle(.secondary)
             }.padding().frame(minWidth: 380)
             VStack(alignment: .leading) {
@@ -344,13 +382,22 @@ struct MergesView: View {
                             Text((Self.modes.first { $0.0 == m.mode }?.1 ?? m.mode) + " · " + m.models.joined(separator: ", ") + (m.judge.isEmpty ? "" : " · judge \(m.judge)")).font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
+                        Button("Test") { hub.testMerge(m.name) }
                         Button("Use") { UserDefaults.standard.set("redx-merge-\(m.name)", forKey: "model") }
                         Button(role: .destructive) { hub.deleteMerge(m.name) } label: { Label("Remove", systemImage: "trash") }
                     }
                 }
             }.frame(minWidth: 320)
         }
-        .task { await ps.load() }
+        .task { await ps.load(); if hub.catalog.isEmpty { try? await hub.loadCatalog() }; try? await hub.loadMerges() }
+    }
+    var whyInvalid: String {
+        if picked.isEmpty { return "Tick 1–3 models." }
+        if mode == "draft_refine" && picked.count != 2 { return "Draft + Refine needs exactly 2 models." }
+        if mode == "panel_judge" && picked.count < 2 { return "Panel + Judge needs 2–3 models." }
+        if mode == "panel_judge" && judge.isEmpty { return "Choose a judge model." }
+        if name.range(of: "^[a-z0-9-]{1,32}$", options: .regularExpression) == nil { return "Name: lowercase letters, digits and - only (e.g. my-merge)." }
+        return ""
     }
 }
 
@@ -364,6 +411,11 @@ struct KeysView: View {
     @Local var xai = false
     @Local var scopes: Set<String> = ["chat"]
     @Local var confirmRevoke: APIKeyRow?
+    @Local var expiryDays = 0
+    @Local var canDownload = false
+    @Local var role = "user"
+    @Local var editing: APIKeyRow?
+    @StateObject var gate = OwnerGate.shared
     @StateObject var ps = ProviderStore.shared
     var modelIDs: [String] { hub.catalog.filter(\.installed).map(\.id) + ps.extModelIDs + hub.merges.map { "redx-merge-\($0.name)" } }
     var body: some View {
@@ -374,8 +426,21 @@ struct KeysView: View {
                         TextField("App name (e.g. OmniRoute, VS Code)", text: $newName)
                         Stepper("\(rpm) requests/min", value: $rpm, in: 1...1000, step: 10).frame(width: 200)
                         Button("Create Key") {
-                            Task { shownKey = await hub.createKey(name: newName, models: restrict ? Array(allowed) : [], rpm: rpm, xaiScopes: xai ? Array(scopes) : nil); newName = "" }
+                            Task {
+                                let k = await hub.createKey(name: newName, models: restrict ? Array(allowed) : [], rpm: rpm, xaiScopes: xai ? Array(scopes) : nil,
+                                                            extra: ["expires_days": expiryDays, "can_download": canDownload, "role": role])
+                                if let k { shownKey = k; newName = "" } else { await gate.refresh() }
+                            }
                         }.disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty || (restrict && allowed.isEmpty))
+                    }
+                    HStack {
+                        Picker("Expires", selection: $expiryDays) { Text("Never").tag(0); Text("1 day").tag(1); Text("7 days").tag(7); Text("30 days").tag(30); Text("90 days").tag(90); Text("1 year").tag(365) }.frame(width: 180)
+                        Picker("Role", selection: $role) { Text("User").tag("user"); Text("Admin").tag("admin") }.frame(width: 150)
+                        Toggle("Can download models", isOn: $canDownload)
+                    }
+                    if !hub.keyError.isEmpty {
+                        Text(hub.keyError).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                        if hub.keyError.contains("owner unlock") { OwnerUnlockInline { hub.keyError = "" } }
                     }
                     Toggle("Red-XAI key (redx_xai_…) with scopes", isOn: $xai)
                     if xai {
@@ -396,13 +461,20 @@ struct KeysView: View {
                 TableColumn("Key") { k in Text(k.prefix).font(.caption.monospaced()) }
                 TableColumn("Models") { k in Text(k.models.isEmpty ? "All" : k.models.joined(separator: ", ")).lineLimit(1) }
                 TableColumn("Limit") { k in Text("\(k.rpm)/min") }.width(70)
+                TableColumn("Role") { k in Text(k.role) }.width(55)
+                TableColumn("Status") { k in
+                    if k.revoked { Text("revoked").foregroundStyle(.secondary) }
+                    else if k.disabled { Text("disabled").foregroundStyle(.orange) }
+                    else if let e = k.expires { Text(e < Date() ? "expired" : "until \(e.formatted(date: .abbreviated, time: .omitted))").foregroundStyle(e < Date() ? .red : .primary) }
+                    else { Text("active").foregroundStyle(.green) }
+                }.width(110)
                 TableColumn("Usage") { k in Text("\(k.requests) req · \(k.tokens) tok") }
                 TableColumn("Created") { k in Text(k.created, style: .date) }
                 TableColumn("Last used") { k in if let d = k.lastUsed { Text(d, style: .relative) } else { Text("never").foregroundStyle(.secondary) } }
                 TableColumn("") { k in
                     if k.revoked { Text("Revoked").foregroundStyle(.secondary) }
-                    else { Button("Revoke", role: .destructive) { confirmRevoke = k }.controlSize(.small) }
-                }.width(80)
+                    else { HStack { Button("Edit") { editing = k }.controlSize(.small); Button("Revoke", role: .destructive) { confirmRevoke = k }.controlSize(.small) } }
+                }.width(130)
             }
         }
         .sheet(isPresented: Binding(get: { shownKey != nil }, set: { if !$0 { shownKey = nil } })) {
@@ -414,6 +486,8 @@ struct KeysView: View {
                 HStack { Button("Copy Key") { copyToClipboard(shownKey ?? "") }; Spacer(); Button("Done") { shownKey = nil }.keyboardShortcut(.defaultAction) }
             }.padding(20).frame(width: 560)
         }
+        .sheet(item: $editing) { k in KeyEditSheet(key: k, models: modelIDs) }
+        .task { try? await hub.loadKeys() }
         .confirmationDialog("Revoke \(confirmRevoke?.name ?? "")'s key?", isPresented: Binding(get: { confirmRevoke != nil }, set: { if !$0 { confirmRevoke = nil } })) {
             Button("Revoke", role: .destructive) { if let k = confirmRevoke { hub.revoke(k.id) }; confirmRevoke = nil }
         } message: { Text("Apps using it stop working immediately.") }
