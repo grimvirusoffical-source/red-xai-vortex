@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             UserDefaults.standard.set(true, forKey: "migratedGateway1")
         }
         Process.launchedProcess(launchPath: "/usr/bin/pkill", arguments: ["-f", "Vortex.app/Contents/Resources/ggml-rpc-server"])
+        MainActor.assumeIsolated { _ = PluginStore.shared; _ = SkillStore.shared }   // seed starter plugins/skills on first launch
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
     func applicationWillTerminate(_ n: Notification) { MainActor.assumeIsolated {

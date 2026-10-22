@@ -88,6 +88,7 @@ struct ChatView: View {
     @Local var pending: [Attachment] = []
     @Local var attachError = ""
     @Local var dropTarget = false
+    @StateObject var skills = SkillStore.shared
 
     var params: ChatParams {
         ChatParams(baseURL: serverURL, apiKey: Keychain.get() ?? "", model: model, temperature: temperature, topP: topP,
@@ -153,6 +154,13 @@ struct ChatView: View {
                 Picker("Model", selection: $model) {
                     ForEach(Array(Set(store.availableModels + LocalRuntime.shared.models.map { "local:\($0)" } + [model])).sorted(), id: \.self) { Text($0).tag($0) }
                 }.frame(width: 240)
+                Picker("Skill", selection: Binding(get: { skills.activeID }, set: { skills.setActive($0) })) {
+                    Text("No skill").tag("")
+                    ForEach(skills.skills) { Text($0.name).tag($0.id) }
+                }.frame(width: 170).help("Skill: reusable instructions + tools. Or type /skill-id")
+                Toggle(isOn: Binding(get: { ToolRegistry.chatToolsOn }, set: { ToolRegistry.chatToolsOn = $0; store.objectWillChange.send() })) {
+                    Image(systemName: "wrench.and.screwdriver")
+                }.toggleStyle(.button).help("Let the model call tools (plugins, MCP, PC control)")
                 Button { store.regenerate(systemPrompt: systemPrompt, contextTokens: contextTokens, params: params) } label: {
                     Image(systemName: "arrow.clockwise") }.help("Regenerate last reply").disabled(store.streaming)
                 OpenHubToolbar()
@@ -166,11 +174,15 @@ struct ChatView: View {
         if let m = try? await API.models(base: serverURL, key: Keychain.get() ?? ""), !m.isEmpty { store.availableModels = m }
     }
     func send() {
-        let t = input, a = pending; input = ""; pending = []; attachError = ""
+        var t = input; let a = pending; input = ""; pending = []; attachError = ""
+        skills.applySlash(&t)
+        if t.isEmpty && a.isEmpty { store.status = skills.active.map { "Skill on: \($0.name)" } ?? "Skill off"; return }
+        var p = params
+        if let s = skills.active, !s.model.isEmpty { p.model = s.model }
         if a.contains(where: { $0.kind == "image" }) && !(model.contains("vision") || model.contains("vl") || model.hasPrefix("ext:")) {
             store.status = "Tip: images need a vision model (e.g. gemma3-12b-vision)."
         }
-        store.send(t, attachments: a, systemPrompt: systemPrompt, contextTokens: contextTokens, params: params)
+        store.send(t, attachments: a, systemPrompt: skills.systemPrompt(base: systemPrompt), contextTokens: contextTokens, params: p)
     }
     func pickFiles() {
         let p = NSOpenPanel(); p.allowsMultipleSelection = true; p.canChooseDirectories = false
