@@ -64,11 +64,21 @@ enum Agent {
 
     struct Call { var id: String; var name: String; var args: [String: Any] }
 
-    static func parseFallback(_ content: String) -> Call? {
-        guard let a = content.range(of: "<tool_call>"), let b = content.range(of: "</tool_call>", range: a.upperBound..<content.endIndex) else { return nil }
-        let js = content[a.upperBound..<b.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let d = js.data(using: .utf8), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any], let n = o["name"] as? String else { return nil }
-        return Call(id: "fb_" + UUID().uuidString.prefix(8), name: n, args: o["arguments"] as? [String: Any] ?? [:])
+    static func parseFallback(_ content: String, names: Set<String>) -> Call? {
+        var js: Substring?
+        if let a = content.range(of: "<tool_call>") {
+            let end = content.range(of: "</tool_call>", range: a.upperBound..<content.endIndex)?.lowerBound ?? content.endIndex
+            js = content[a.upperBound..<end]
+        } else if let a = content.firstIndex(of: "{"), let b = content.lastIndex(of: "}"), a < b {
+            js = content[a...b]   // bare JSON (some models drop the tags or wrap it in ```json)
+        }
+        guard let j = js?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let o = try? JSONSerialization.jsonObject(with: Data(j.utf8)) as? [String: Any] else { return nil }
+        let fn = o["function"] as? [String: Any]
+        guard let n = (o["name"] ?? o["tool"] ?? fn?["name"]) as? String, names.contains(n) else { return nil }
+        var args = (o["arguments"] ?? o["parameters"] ?? fn?["arguments"]) as? [String: Any] ?? [:]
+        if args.isEmpty, let s = (o["arguments"] ?? fn?["arguments"]) as? String, let d = try? JSONSerialization.jsonObject(with: Data(s.utf8)) as? [String: Any] { args = d }
+        return Call(id: "fb_" + UUID().uuidString.prefix(8), name: n, args: args)
     }
 
     /// Runs the loop; returns final text plus a short step log. `onStep` reports progress.
@@ -81,12 +91,18 @@ enum Agent {
         } else { msgs.insert(["role": "system", "content": fb], at: 0) }
         let toolDefs: [[String: Any]] = tools.map { ["type": "function", "function": ["name": $0.name, "description": $0.description, "parameters": $0.schema]] }
         var log: [String] = []
+        var native = true
+        var retried = false
         for step in 0..<maxSteps {
             try Task.checkCancellation()
             onStep(step == 0 ? "Thinking (tools on)…" : "Thinking after \(log.count) tool call(s)…")
-            let j = try await complete(p, messages: msgs, tools: toolDefs)
+            let j = try await complete(p, messages: msgs, tools: native ? toolDefs : [])
             let msg = ((j["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any]) ?? [:]
             let content = (msg["content"] as? String) ?? ""
+            // Some models return nothing when given native tool definitions: retry once with the text protocol only.
+            if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (msg["tool_calls"] as? [Any] ?? []).isEmpty && !retried {
+                retried = true; native = false; continue
+            }
             var calls: [Call] = []
             if let tc = msg["tool_calls"] as? [[String: Any]], !tc.isEmpty {
                 for c in tc {
@@ -97,11 +113,12 @@ enum Agent {
                 }
                 var am = msg; am["content"] = content
                 msgs.append(am)
-            } else if let c = parseFallback(content) {
+            } else if let c = parseFallback(content, names: Set(tools.map(\.name))) {
                 calls = [c]
                 msgs.append(["role": "assistant", "content": content])
             } else {
-                return (content, log)
+                let clean = content.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("TOOL_RESULT") }
+                return (clean.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines), log)
             }
             for c in calls {
                 guard let t = tools.first(where: { $0.name == c.name }) else {

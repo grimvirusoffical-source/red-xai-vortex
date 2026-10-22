@@ -245,6 +245,7 @@ struct HubView: View {
                 DocsView().tabItem { Label("Use in Other Apps", systemImage: "app.connected.to.app.below.fill") }.tag("docs")
                 PluginsView().tabItem { Label("Plugins", systemImage: "puzzlepiece") }.tag("plugins")
                 SkillsView().tabItem { Label("Skills", systemImage: "wand.and.stars") }.tag("skills")
+                MCPView().tabItem { Label("MCP", systemImage: "server.rack") }.tag("mcp")
                 IntegrationsView().tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }.tag("integrations")
                 HelpView().tabItem { Label("Help", systemImage: "questionmark.circle") }.tag("help")
             }

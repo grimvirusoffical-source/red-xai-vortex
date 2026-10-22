@@ -11,11 +11,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             UserDefaults.standard.set(true, forKey: "migratedGateway1")
         }
         Process.launchedProcess(launchPath: "/usr/bin/pkill", arguments: ["-f", "Vortex.app/Contents/Resources/ggml-rpc-server"])
-        MainActor.assumeIsolated { _ = PluginStore.shared; _ = SkillStore.shared }   // seed starter plugins/skills on first launch
+        MainActor.assumeIsolated { _ = PluginStore.shared; _ = SkillStore.shared; Task { await MCPStore.shared.connectEnabled() } }   // seed starter plugins/skills on first launch
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
     func applicationWillTerminate(_ n: Notification) { MainActor.assumeIsolated {
-        NodeManager.shared.shutdown(); LocalRuntime.shared.stop(); ServerStore.shared.stopAll(); ModelBrowserServer.shared.stop()
+        NodeManager.shared.shutdown(); LocalRuntime.shared.stop(); MCPStore.shared.stopAll(); ServerStore.shared.stopAll(); ModelBrowserServer.shared.stop()
         // make sure no SSH tunnel or local model outlives the app
         let k = Process(); k.executableURL = URL(fileURLWithPath: "/usr/bin/pkill"); k.arguments = ["-P", "\(ProcessInfo.processInfo.processIdentifier)"]; try? k.run(); k.waitUntilExit() } }
 }
