@@ -21,6 +21,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 @main
 struct VortexApp: App {
+    init() {
+        // Chat must use the public gateway (18091), not the admin port (18092).
+        let u = UserDefaults.standard.string(forKey: "serverURL") ?? ""
+        if u.contains(":18092") {
+            UserDefaults.standard.set(u.replacingOccurrences(of: ":18092", with: ":18091"), forKey: "serverURL")
+        }
+        if UserDefaults.standard.string(forKey: "adminBaseURL") == nil {
+            UserDefaults.standard.set("http://127.0.0.1:18092", forKey: "adminBaseURL")
+        }
+        if (UserDefaults.standard.string(forKey: "serverURL") ?? "").isEmpty {
+            UserDefaults.standard.set(Defaults.serverURL, forKey: "serverURL")
+        }
+    }
+
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject var store = ChatStore()
     @StateObject var tunnel = TunnelManager()

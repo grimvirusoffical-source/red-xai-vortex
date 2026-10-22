@@ -10,7 +10,14 @@ struct ServerDef: Identifiable, Codable, Hashable {
     var localPort: Int
     var remotePort: Int = 8092
     var primary = false          // the original server: uses the "api-key" Keychain entry
+    /// Admin API (8092) through the SSH tunnel — Hub / Owner / keys / pulls.
     var baseURL: String { "http://127.0.0.1:\(localPort)/v1" }
+    var adminBase: String { "http://127.0.0.1:\(localPort)" }
+    /// Public keyed API (8091). When the tunnel maps admin on localPort, public is localPort-1 (18091).
+    var chatURL: String {
+        if remotePort == 8092 { return "http://127.0.0.1:\(localPort - 1)/v1" }
+        return baseURL
+    }
     var keychainAccount: String { primary ? "admin-primary" : "admin-\(id)" }
 }
 
@@ -72,15 +79,23 @@ final class ServerStore: ObservableObject {
     func activate(_ id: String) {
         guard let s = server(id) else { return }
         activeID = id; UserDefaults.standard.set(id, forKey: "activeServer")
-        UserDefaults.standard.set(s.baseURL, forKey: "serverURL")
-        Keychain.set(key(for: s))   // chat + hub use the "api-key" entry of the active server
+        // Chat always hits the public gateway port (18091). Admin stays on localPort (18092).
+        UserDefaults.standard.set(s.chatURL, forKey: "serverURL")
+        UserDefaults.standard.set(s.adminBase, forKey: "adminBaseURL")
+        let k = key(for: s)
+        if !k.isEmpty {
+            Keychain.set(k)  // chat api-key
+            Keychain.set(k, account: s.keychainAccount)
+            if s.primary { Keychain.set(k, account: "admin-primary") }
+        }
         ensureTunnel(s)
     }
 
     func ping(_ s: ServerDef) async -> Bool {
         ensureTunnel(s)
         for _ in 0..<6 {
-            if let u = URL(string: s.baseURL + "/models") {
+            // Prefer the public chat port — that is what the chat window needs.
+            if let u = URL(string: s.chatURL + "/models") {
                 var r = URLRequest(url: u); r.timeoutInterval = 4
                 r.setValue("Bearer \(key(for: s))", forHTTPHeaderField: "Authorization")
                 if let (_, resp) = try? await URLSession.shared.data(for: r), (resp as? HTTPURLResponse)?.statusCode == 200 { health[s.id] = true; return true }

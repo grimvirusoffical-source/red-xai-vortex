@@ -89,7 +89,7 @@ final class ChatStore: ObservableObject {
                 catch let e as URLError where !params.model.hasPrefix("local:") && (UserDefaults.standard.object(forKey: "autoFailover") as? Bool ?? true) {
                     await MainActor.run { self?.status = "Server unreachable, failing over…" }
                     if let s = await ServerStore.shared.failover() {
-                        p.baseURL = s.baseURL; p.apiKey = ServerStore.shared.key(for: s)
+                        p.baseURL = s.chatURL; p.apiKey = ServerStore.shared.key(for: s)
                         await MainActor.run { self?.status = "Switched to \(s.name)" }
                         tps = try await API.stream(p, messages: hist, onToken: onTok)
                     } else if let lm = await MainActor.run(body: { LocalRuntime.shared.models.first(where: { !$0.contains("embed") }) }) {

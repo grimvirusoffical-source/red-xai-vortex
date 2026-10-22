@@ -3,16 +3,26 @@ import AppKit
 
 // MARK: - Admin API (gateway admin port, reached through the SSH tunnel)
 enum Admin {
+    /// Gateway admin port (SSH localPort, usually 18092). Never the chat/public URL.
+    /// Written by ServerStore.activate into "adminBaseURL".
     static var base: String {
+        if let a = UserDefaults.standard.string(forKey: "adminBaseURL"), !a.isEmpty { return a }
         let s = UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL
         var b = s.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
         if b.hasSuffix("/v1") { b.removeLast(3) }
-        return b
+        if b.hasSuffix(":18091") { return String(b.dropLast(2) + "92") }
+        return b.isEmpty ? "http://127.0.0.1:18092" : b
+    }
+    static var adminKey: String {
+        if let k = Keychain.get(account: "admin-primary"), !k.isEmpty { return k }
+        if let id = UserDefaults.standard.string(forKey: "activeServer"),
+           let k = Keychain.get(account: "admin-" + id), !k.isEmpty { return k }
+        return Keychain.get() ?? ""
     }
     static func call(_ method: String, _ path: String, _ body: [String: Any]? = nil) async throws -> [String: Any] {
         guard let u = URL(string: base + path) else { throw URLError(.badURL) }
         var r = URLRequest(url: u); r.httpMethod = method; r.timeoutInterval = 120
-        r.setValue("Bearer \(Keychain.get() ?? "")", forHTTPHeaderField: "Authorization")
+        r.setValue("Bearer \(adminKey)", forHTTPHeaderField: "Authorization")
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.setValue(DeviceID.value, forHTTPHeaderField: DeviceID.header)
         if let body { r.httpBody = try JSONSerialization.data(withJSONObject: body) }

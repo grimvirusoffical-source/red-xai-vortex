@@ -24,7 +24,7 @@ struct Persona: Identifiable, Codable, Equatable, Hashable {
 }
 
 enum Defaults {
-    static let serverURL = "http://127.0.0.1:18092/v1"
+    static let serverURL = "http://127.0.0.1:18091/v1"  // public gateway (chat); admin is localPort 18092
     static let sshHost = "root@YOUR_SERVER"
     static let sshLocalPort = 18092
     static let sshRemotePort = 8092
