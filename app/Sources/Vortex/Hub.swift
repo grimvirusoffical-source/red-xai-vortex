@@ -243,6 +243,7 @@ struct HubView: View {
                 KeysView().tabItem { Label("API Keys", systemImage: "key") }.tag("keys")
                 OwnerPanelView().tabItem { Label("Owner", systemImage: "lock.shield") }.tag("owner")
                 DocsView().tabItem { Label("Use in Other Apps", systemImage: "app.connected.to.app.below.fill") }.tag("docs")
+                PluginsView().tabItem { Label("Plugins", systemImage: "puzzlepiece") }.tag("plugins")
                 IntegrationsView().tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }.tag("integrations")
                 HelpView().tabItem { Label("Help", systemImage: "questionmark.circle") }.tag("help")
             }

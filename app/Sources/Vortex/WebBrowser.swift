@@ -42,9 +42,9 @@ final class ModelBrowserServer {
     }()
     var url: URL? { port == 0 ? nil : URL(string: "http://127.0.0.1:\(port)/?t=\(token)") }
 
-    func open() {
+    func open(page: String? = nil) {
         start()
-        Task { for _ in 0..<20 { if let u = url { NSWorkspace.shared.open(u); return }; try? await Task.sleep(for: .milliseconds(100)) } }
+        Task { for _ in 0..<20 { if let u = url { NSWorkspace.shared.open(page.flatMap { URL(string: u.absoluteString + "&page=" + $0) } ?? u); return }; try? await Task.sleep(for: .milliseconds(100)) } }
     }
     func start() {
         guard listener == nil else { return }
@@ -87,6 +87,11 @@ final class ModelBrowserServer {
         readMore()
     }
 
+    private func pluginsJSON() -> [String: Any] {
+        let enc = JSONEncoder()
+        func arr(_ l: [PluginManifest]) -> [Any] { l.compactMap { (try? enc.encode($0)).flatMap { try? JSONSerialization.jsonObject(with: $0) } } }
+        return ["store": arr(PluginCatalog.starters), "installed": arr(PluginStore.shared.installed), "enabled": Array(PluginStore.shared.enabled)]
+    }
     private func json(_ o: Any, _ code: Int = 200) -> (Int, String, Data) {
         (code, "application/json", (try? JSONSerialization.data(withJSONObject: o)) ?? Data("{}".utf8))
     }
@@ -158,6 +163,15 @@ final class ModelBrowserServer {
                 let r = try await Admin.call(on: s, "DELETE", "/admin/models/\(id)")
                 Task { await ChatStoreRef.refresh() }
                 return json(r)
+            case ("GET", "/x/plugins"):
+                return json(pluginsJSON())
+            case ("POST", "/x/plugin-install"):
+                guard let id = inb["id"] as? String, let p = PluginCatalog.starters.first(where: { $0.id == id }) else { return json(["error": "unknown plugin"], 404) }
+                try PluginStore.shared.install(p); return json(pluginsJSON())
+            case ("POST", "/x/plugin-remove"):
+                PluginStore.shared.remove(inb["id"] as? String ?? ""); return json(pluginsJSON())
+            case ("POST", "/x/plugin-toggle"):
+                PluginStore.shared.setEnabled(inb["id"] as? String ?? "", inb["on"] as? Bool ?? false); return json(pluginsJSON())
             case ("GET", "/x/merges"):
                 guard let s = ss.active else { return json(["merges": []]) }
                 return json(try await Admin.call(on: s, "GET", "/admin/merges"))

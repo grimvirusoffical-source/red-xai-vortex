@@ -84,6 +84,19 @@ final class ChatStore: ObservableObject {
                         self.status = "Streaming…"
                     }
                 }
+                let tools = await MainActor.run { ToolRegistry.tools(for: params.model) }
+                if !tools.isEmpty {
+                    let (text, log) = try await Agent.run(p, history: hist, tools: tools) { st in Task { @MainActor in self?.status = st } }
+                    await MainActor.run {
+                        guard let self, let j = self.idx(chatID), !self.chats[j].messages.isEmpty else { return }
+                        let k = self.chats[j].messages.count - 1
+                        self.chats[j].messages[k].content = text.isEmpty ? "(no answer)" : text
+                        self.chats[j].messages[k].toolLog = log.isEmpty ? nil : log
+                        self.status = log.isEmpty ? "Done" : "Done · \(log.count) tool call(s)"
+                        self.streaming = false; self.save()
+                    }
+                    return
+                }
                 let tps: Double?
                 do { tps = try await API.stream(p, messages: hist, onToken: onTok) }
                 catch let e as URLError where !params.model.hasPrefix("local:") && (UserDefaults.standard.object(forKey: "autoFailover") as? Bool ?? true) {

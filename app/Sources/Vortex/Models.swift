@@ -7,6 +7,7 @@ struct Message: Identifiable, Codable, Equatable {
     var date = Date()
     var rating: Int? = nil
     var attachments: [Attachment]? = nil
+    var toolLog: [String]? = nil
 }
 
 struct Chat: Identifiable, Codable, Equatable {

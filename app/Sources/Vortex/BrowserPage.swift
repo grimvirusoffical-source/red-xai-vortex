@@ -25,7 +25,7 @@ progress{width:100%;height:8px;accent-color:var(--acc)}
 #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:9px 16px;border-radius:10px;display:none}
 </style></head><body>
 <header><h1>🐬 Models</h1>
-<div class="tabs"><button id="t-cur" class="on">Curated</button> <button id="t-ol">Ollama library</button> <button id="t-inst">Installed</button></div>
+<div class="tabs"><button id="t-cur" class="on">Curated</button> <button id="t-ol">Ollama library</button> <button id="t-inst">Installed</button> <button id="t-plug">Plugins</button></div>
 <input type="search" id="q" placeholder="Search models…">
 <label class="mut">Install on</label><select id="target"></select></header>
 <div class="chips" id="chips"></div>
@@ -34,11 +34,11 @@ progress{width:100%;height:8px;accent-color:var(--acc)}
 const T=new URLSearchParams(location.search).get('t');
 const api=(p,o={})=>fetch(p+(p.includes('?')?'&':'?')+'t='+T,{...o,headers:{'X-Token':T,'Content-Type':'application/json'}}).then(async r=>{const j=await r.json().catch(()=>({}));if(!r.ok||j.error)throw new Error(j.error?.message||j.error||r.status);return j});
 const gb=b=>(b/1e9).toFixed(1)+' GB', $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let tab='cur',cat='all',catalog=[],library=[],jobs={},installed=[],merges=[];
+let tab=new URLSearchParams(location.search).get('page')=='plugins'?'plug':'cur',plugins={store:[],installed:[],enabled:[]},cat='all',catalog=[],library=[],jobs={},installed=[],merges=[];
 const CATS=[['all','All'],['general','General'],['coding','Coding'],['reasoning','Reasoning'],['fast','Fast & small'],['vision','Vision'],['writing','Writing'],['multilingual','Multilingual'],['embeddings','Embeddings']];
 const OLCAT={coding:/code|coder|starcoder|devstral|codestral/i,reasoning:/r1|qwq|reason|think|phi4-reasoning|magistral/i,vision:/vision|vl|llava|moondream|minicpm-v|gemma3/i,embeddings:/embed|bge|minilm|snowflake|nomic/i,fast:/tiny|small|mini|smol|270m|1b|0\.5b/i,multilingual:/qwen|aya|mistral|glm/i};
 function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',3500)}
-function chips(){$('chips').innerHTML=tab=='inst'?'':CATS.map(([k,v])=>`<button class="${k==cat?'on':''}" data-c="${k}">${v}</button>`).join('');$('chips').querySelectorAll('button').forEach(b=>b.onclick=()=>{cat=b.dataset.c;chips();render()})}
+function chips(){$('chips').innerHTML=(tab=='inst'||tab=='plug')?'':CATS.map(([k,v])=>`<button class="${k==cat?'on':''}" data-c="${k}">${v}</button>`).join('');$('chips').querySelectorAll('button').forEach(b=>b.onclick=()=>{cat=b.dataset.c;chips();render()})}
 function estParams(s){const m=/([\d.]+)\s*([bm])/i.exec(s);if(!m)return null;return parseFloat(m[1])*(m[2].toLowerCase()=='m'?1e6:1e9)}
 function jobBar(id){const j=jobs[id];if(!j)return'';if(j.state=='downloading')return `<progress value="${j.done}" max="${j.total||1}"></progress><span class="mut">${Math.round(100*j.done/(j.total||1))}% · ${gb(j.done)} of ${gb(j.total)}</span>`;if(String(j.state).startsWith('error'))return `<span class="mut" style="color:#e55">${esc(j.state)}</span>`;return ''}
 function mergeSel(id){return merges.length?`<select data-merge="${esc(id)}"><option value="">Add to merge…</option>${merges.map(m=>`<option value="${esc(m.name)}">${esc(m.name)} (${esc(m.mode)})</option><option value="${esc(m.name)}|judge">${esc(m.name)} as judge</option>`).join('')}</select>`:''}
@@ -56,6 +56,13 @@ function render(){
   <div class="row">${m.capabilities.map(c=>`<span class="pill">${esc(c)}</span>`).join('')}${m.pulls?`<span class="pill">${esc(m.pulls)} pulls</span>`:''}</div>
   <div class="row">${m.sizes.map(s=>{const p=estParams(s);const b=p?p*0.6:0;return `<button class="btn sec" data-ol="${esc(m.name)}:${esc(s)}" title="~${b?gb(b):'?'} Q4 · RAM ~${b?gb(b*1.1+1.5e9):'?'} · ~${b?Math.max(1,Math.round(190e9/b)):'?'} tok/s on a 16-core server">${esc(s)}${b?' · '+gb(b):''}</button>`}).join('')||`<button class="btn sec" data-ol="${esc(m.name)}">latest</button>`}
   <button class="btn sec" data-tags="${esc(m.name)}">All tags…</button></div><div class="tagbox"></div>${jobBar('ol-'+m.name.replace('/','-')+'-latest')}</div>`).join('')||'<p class="mut">Loading Ollama library…</p>';
+ }else if(tab=='plug'){
+  const inst=new Set(plugins.installed.map(p=>p.id)),en=new Set(plugins.enabled);
+  const L=plugins.store.concat(plugins.installed.filter(p=>!plugins.store.some(s=>s.id==p.id))).filter(p=>!q||(p.name+p.description).toLowerCase().includes(q));
+  g.innerHTML=L.map(p=>`<div class="card"><h3>🧩 ${esc(p.name)} ${inst.has(p.id)?'<span class="pill ok">installed</span>':''} ${en.has(p.id)?'<span class="pill ok">on</span>':''}</h3>
+  <div class="mut">${esc(p.description)}</div><div class="row">${p.tools.map(t=>`<span class="pill">${esc(t.name)} · ${esc(t.kind)}</span>`).join('')}</div>
+  <div class="mut">v${esc(p.version)} · ${esc(p.author)}</div>
+  <div class="row">${inst.has(p.id)?`<button class="btn ${en.has(p.id)?'sec':''}" data-ptog="${esc(p.id)}" data-on="${en.has(p.id)?0:1}">${en.has(p.id)?'Disable':'Enable'}</button><button class="btn sec" data-prm="${esc(p.id)}">Remove</button>`:`<button class="btn" data-pin="${esc(p.id)}">Install</button>`}</div></div>`).join('')||'<p class="mut">No plugins.</p>';
  }else{
   g.innerHTML='';$('installed').innerHTML=`<table><tr><th>Model</th><th>Size</th><th></th></tr>${installed.filter(m=>!q||m.id.includes(q)).map(m=>`<tr><td>${esc(m.id)}${m.default?' <span class="pill ok">default</span>':''}${jobBar(m.id)}</td><td>${gb(m.bytes)}</td><td class="row"><button class="btn sec" data-rm="${esc(m.id)}">Remove</button>${mergeSel(m.id)}</td></tr>`).join('')}</table>
   ${Object.entries(jobs).filter(([,j])=>j.state=='downloading').map(([id])=>`<p>${esc(id)} ${jobBar(id)}</p>`).join('')}`;
@@ -67,6 +74,9 @@ function bind(){
  document.querySelectorAll('[data-ol]').forEach(b=>b.onclick=async()=>{const ref=b.dataset.ol;try{await api('/x/pull',{method:'POST',body:JSON.stringify({target:$('target').value,kind:'ollama',ref})});toast('Downloading '+ref)}catch(e){toast(e.message)}});
  document.querySelectorAll('[data-tags]').forEach(b=>b.onclick=async()=>{const box=b.closest('.card').querySelector('.tagbox');box.innerHTML='<span class="mut">Loading tags…</span>';try{const r=await api('/x/tags?name='+encodeURIComponent(b.dataset.tags));box.innerHTML=`<select>${r.tags.map(t=>`<option>${esc(t)}</option>`).join('')}</select> <button class="btn">Download tag</button>`;box.querySelector('button').onclick=async()=>{const ref=b.dataset.tags+':'+box.querySelector('select').value;try{await api('/x/pull',{method:'POST',body:JSON.stringify({target:$('target').value,kind:'ollama',ref})});toast('Downloading '+ref)}catch(e){toast(e.message)}}}catch(e){box.textContent=e.message}});
  document.querySelectorAll('[data-rm]').forEach(b=>b.onclick=async()=>{if(!confirm('Remove '+b.dataset.rm+' and free its disk space?'))return;try{const r=await api('/x/remove',{method:'POST',body:JSON.stringify({target:$('target').value,id:b.dataset.rm})});toast('Removed, freed '+gb(r.freed_bytes||0));load()}catch(e){toast(e.message)}});
+ document.querySelectorAll('[data-pin]').forEach(b=>b.onclick=async()=>{try{plugins=await api('/x/plugin-install',{method:'POST',body:JSON.stringify({id:b.dataset.pin})});toast('Installed');render()}catch(e){toast(e.message)}});
+ document.querySelectorAll('[data-prm]').forEach(b=>b.onclick=async()=>{if(!confirm('Remove plugin '+b.dataset.prm+'?'))return;try{plugins=await api('/x/plugin-remove',{method:'POST',body:JSON.stringify({id:b.dataset.prm})});render()}catch(e){toast(e.message)}});
+ document.querySelectorAll('[data-ptog]').forEach(b=>b.onclick=async()=>{try{plugins=await api('/x/plugin-toggle',{method:'POST',body:JSON.stringify({id:b.dataset.ptog,on:b.dataset.on=='1'})});render()}catch(e){toast(e.message)}});
  document.querySelectorAll('[data-merge]').forEach(s=>s.onchange=async()=>{if(!s.value)return;const [merge,as]=s.value.split('|');try{await api('/x/merge-add',{method:'POST',body:JSON.stringify({merge,model:s.dataset.merge,as})});toast('Added to '+merge)}catch(e){toast(e.message)}s.value=''});
 }
 async function load(){
@@ -74,13 +84,14 @@ async function load(){
  try{catalog=(await api('/x/catalog?target='+t)).catalog||[]}catch(e){toast(e.message)}
  try{const r=await api('/x/installed?target='+t);installed=r.installed||[]}catch(e){}
  try{merges=(await api('/x/merges')).merges||[]}catch(e){}
+ try{plugins=await api('/x/plugins')}catch(e){}
  render();
 }
 async function poll(){try{const r=await api('/x/jobs?target='+$('target').value);const was=Object.values(jobs).some(j=>j.state=='downloading');jobs={};(r.jobs||[]).forEach(j=>jobs[j.id]=j);const now=Object.values(jobs).some(j=>j.state=='downloading');if(was&&!now)load();else if(now)render()}catch(e){}setTimeout(poll,1500)}
 async function init(){
  const ts=(await api('/x/targets')).targets;$('target').innerHTML=ts.map(t=>`<option value="${esc(t.id)}" ${t.active?'selected':''}>${esc(t.name)}</option>`).join('');
  $('target').onchange=load;$('q').oninput=render;
- const tabs={cur:'t-cur',ol:'t-ol',inst:'t-inst'};Object.entries(tabs).forEach(([k,id])=>$(id).onclick=async()=>{tab=k;Object.values(tabs).forEach(x=>$(x).classList.toggle('on',x==id));chips();render();if(k=='ol'&&!library.length){try{library=(await api('/x/ollama')).library||[];render()}catch(e){toast(e.message)}}});
+ const tabs={cur:'t-cur',ol:'t-ol',inst:'t-inst',plug:'t-plug'};Object.values(tabs).forEach(x=>$(x).classList.toggle('on',x==tabs[tab]));Object.entries(tabs).forEach(([k,id])=>$(id).onclick=async()=>{tab=k;Object.values(tabs).forEach(x=>$(x).classList.toggle('on',x==id));chips();render();if(k=='ol'&&!library.length){try{library=(await api('/x/ollama')).library||[];render()}catch(e){toast(e.message)}}});
  chips();await load();poll();
 }
 init().catch(e=>document.body.innerHTML='<p style="padding:24px">'+esc(e.message)+'</p>');
