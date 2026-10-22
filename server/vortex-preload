@@ -34,8 +34,13 @@ def get(url, tries=6):
 def ingest(docs):
     b = json.dumps({"documents": docs, "scrub": False}).encode()
     req = urllib.request.Request(G + "/v1/redxai/ingest", data=b, headers={"Authorization": "Bearer " + KEY, "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=900) as r:
-        return json.loads(r.read())
+    for i in range(8):  # the model server restarts briefly when models are installed
+        try:
+            with urllib.request.urlopen(req, timeout=900) as r:
+                return json.loads(r.read())
+        except Exception as e:
+            print("  ingest retry:", e, flush=True); time.sleep(15 * (i + 1))
+    raise SystemExit("ingest failed repeatedly")
 
 def fmt(name, row):
     if name == "dolly":
