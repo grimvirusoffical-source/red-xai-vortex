@@ -24,7 +24,8 @@ any app that speaks the **OpenAI** or **Ollama** API, using your own API keys.
 | Local mode | llama.cpp with Metal on the Mac, started on demand and stopped when idle or on quit | ✅ |
 | **Vortex** (model `vortex`) | The learning model: memory (RAG), learns from the active model (distillation), training mode, crawler, preloaded open datasets, scoped keys, versioned LoRA adapters, benchmark | ✅ chat/memory/capture/scoring/keys/crawler · 🚧 LoRA training needs a GPU |
 | Overflow storage | Sealed training data moved to S3-compatible or WebDAV storage at 80% disk | ✅ S3 + WebDAV · ⛔ TeraBox (needs an approved Open Platform app) |
-| PC control | Opt-in local agent, off by default, confirms every action | 📋 planned |
+| PC control | vortex/red-xai only, per-type switches off by default, confirms destructive actions | ✅ build 20 |
+| Files, plugins, skills, MCP, voice, group chat | Chat features | ✅ builds 14–19 |
 | Vortex image / audio | stable-diffusion.cpp (SD-Turbo) and MusicGen-small on CPU | ✅ ~15 s per 512² image, ~18 s per 5 s clip on 16 vCPU |
 | Windows and Linux client apps | | 📋 planned. Use any OpenAI/Ollama client meanwhile |
 
@@ -74,7 +75,8 @@ Create a key under **Library, Merges & Keys → API Keys**, then point any OpenA
 - [Vortex, the learning model](docs/VORTEX.md)
 - [Connect apps (OpenAI, Ollama, GPT Actions)](docs/CONNECT.md) · [OpenAPI schema](docs/openapi-gpt-actions.yaml)
 - [Overflow storage](docs/STORAGE.md)
-- [PC control (planned)](docs/PC-CONTROL.md)
+- [PC control](docs/PC-CONTROL.md)
+- [Files, plugins, skills, MCP, voice, group chat](docs/CHAT-FEATURES.md)
 - [Model browser](docs/MODEL-BROWSER.md)
 - [Exposing the gateway publicly (Cloudflare Tunnel / reverse proxy)](docs/PUBLIC-ACCESS.md)
 

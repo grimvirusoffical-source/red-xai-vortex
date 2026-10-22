@@ -12,7 +12,8 @@ This guide explains everything in plain language. Shorter, more technical pages 
 7. [Outside providers](#7-outside-providers)
 8. [Vortex, the learning model](#8-vortex-the-learning-model)
 9. [Images and audio](#9-images-and-audio)
-10. [PC control (design only)](#10-pc-control-design-only)
+10. [PC control](#10-pc-control)
+    - [Files, plugins, skills, MCP, voice and group chat](#10a-files-plugins-skills-mcp-voice-and-group-chat)
 11. [Storage overflow](#11-storage-overflow)
 12. [Owner vs user permissions](#12-owner-vs-user-permissions)
 13. [Troubleshooting](TROUBLESHOOTING.md) and [FAQ](FAQ.md)
@@ -120,8 +121,11 @@ Vortex is your own assistant built on open models. Use the model name `vortex`.
 - While an image or song is being made, chat models are unloaded to free RAM, so the next chat takes a little longer to start.
 - **Licence warning:** the SD-Turbo and MusicGen weights are **non-commercial**. Swap them for openly licensed models for commercial work.
 
-## 10. PC control (design only)
-Not built yet. When it is, it will be a local helper on *your* computer: off by default, asking you before every action, limited to an allowlist, with a kill switch, and never controllable remotely without your local approval. See [PC-CONTROL.md](PC-CONTROL.md).
+## 10. PC control
+The vortex and red-xai models can act on your Mac. Each type of control has its own switch, and every switch is off until you turn it on. Destructive actions always ask first, and there is a floating indicator, a kill switch and an action log. See [PC-CONTROL.md](PC-CONTROL.md).
+
+## 10a. Files, plugins, skills, MCP, voice and group chat
+Attach files with **+**, give models tools with plugins (including a plugin maker) and MCP servers, save reusable instructions as skills, talk in voice calls, and have several models in one group chat. See [CHAT-FEATURES.md](CHAT-FEATURES.md).
 
 ## 11. Storage overflow
 When the server's disk reaches **80%**, old training files are encrypted on the server, uploaded to your storage, checked, and then deleted locally.

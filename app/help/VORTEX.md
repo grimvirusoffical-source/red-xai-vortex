@@ -15,7 +15,7 @@ It isn't trained from scratch. It's an honest stack:
 | **Real learning** | LoRA fine-tunes on the dataset produce versions `red-xai-v1`, `v2`, … with a built-in benchmark | needs a GPU to be practical |
 | **Image** | stable-diffusion.cpp + SD-Turbo, 512×512, 1–4 steps | CPU: slow (see below) |
 | **Music/sound** | MusicGen-small | CPU: slow |
-| **PC control** | Opt-in local agent on your own machine | 📋 planned (see [PC-CONTROL.md](PC-CONTROL.md)) |
+| **PC control** | Tools on your own Mac, opt-in per type | ✅ build 20 (see [PC-CONTROL.md](PC-CONTROL.md)) |
 
 ## Storage
 - Knowledge: `/opt/dolphin/redxai/kb/kb-*.rxkb`, sealed AEAD shards (text + vectors), with keys in `/etc/dolphin/gateway/` (mode 600).
