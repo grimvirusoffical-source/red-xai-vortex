@@ -119,6 +119,7 @@ struct ChatView: View {
                 }
             }
             Divider()
+            ActiveItemsBar()
             if !pending.isEmpty || !attachError.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     if !pending.isEmpty { AttachmentChips(items: pending) { a in pending.removeAll { $0.id == a.id } } }
@@ -126,8 +127,7 @@ struct ChatView: View {
                 }.padding(.horizontal, 10).padding(.top, 8)
             }
             HStack(alignment: .bottom, spacing: 8) {
-                Button { pickFiles() } label: { Image(systemName: "plus.circle.fill").font(.title) }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).help("Attach files: text, code, PDF, images")
+                ChatPlusMenu(upload: pickFiles) { tab in HubNav.open(tab) }
                 ComposeField(text: $input, sendOnEnter: sendOnEnter, fontSize: fontSize, onSend: send)
                     .frame(minHeight: 36, maxHeight: 140)
                 if store.streaming {
@@ -158,10 +158,6 @@ struct ChatView: View {
                 Picker("Model", selection: $model) {
                     ForEach(Array(Set(store.availableModels + LocalRuntime.shared.models.map { "local:\($0)" } + [model])).sorted(), id: \.self) { Text($0).tag($0) }
                 }.frame(width: 240)
-                Picker("Skill", selection: Binding(get: { skills.activeID }, set: { skills.setActive($0) })) {
-                    Text("No skill").tag("")
-                    ForEach(skills.skills) { Text($0.name).tag($0.id) }
-                }.frame(width: 170).help("Skill: reusable instructions + tools. Or type /skill-id")
                 Toggle(isOn: Binding(get: { ToolRegistry.chatToolsOn }, set: { ToolRegistry.chatToolsOn = $0; store.objectWillChange.send() })) {
                     Image(systemName: "wrench.and.screwdriver")
                 }.toggleStyle(.button).help("Let the model call tools (plugins, MCP, PC control)")
@@ -183,9 +179,9 @@ struct ChatView: View {
     func send() {
         var t = input; let a = pending; input = ""; pending = []; attachError = ""
         skills.applySlash(&t)
-        if t.isEmpty && a.isEmpty { store.status = skills.active.map { "Skill on: \($0.name)" } ?? "Skill off"; return }
+        if t.isEmpty && a.isEmpty { store.status = skills.always.isEmpty ? "No always-on skills" : "Always on: " + skills.always.map(\.name).joined(separator: ", "); return }
         var p = params
-        if let s = skills.active, !s.model.isEmpty { p.model = s.model }
+        if let m = skills.preferredModel { p.model = m }
         if a.contains(where: { $0.kind == "image" }) && !(model.contains("vision") || model.contains("vl") || model.hasPrefix("ext:")) {
             store.status = "Tip: images need a vision model (e.g. gemma3-12b-vision)."
         }
@@ -297,5 +293,6 @@ struct OpenHubToolbar: View {
     var body: some View {
         Button { ModelBrowserServer.shared.open() } label: { Image(systemName: "safari") }.help("Browse Models (opens in your browser)")
         Button { openWindow(id: "hub") } label: { Image(systemName: "books.vertical") }.help("Model Library, Merges, Servers, Providers & API Keys")
+            .onAppear { HubNav.opener = { openWindow(id: "hub") } }
     }
 }

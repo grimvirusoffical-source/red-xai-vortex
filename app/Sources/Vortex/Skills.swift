@@ -13,7 +13,7 @@ struct Skill: Codable, Identifiable, Hashable {
 @MainActor final class SkillStore: ObservableObject {
     static let shared = SkillStore()
     @Published var skills: [Skill] = []
-    @Published var activeID: String = UserDefaults.standard.string(forKey: "activeSkill") ?? ""
+    @Published var modes: [String: String] = UserDefaults.standard.dictionary(forKey: "skillModes") as? [String: String] ?? [:]
     var file: URL { ChatStore.dir.appendingPathComponent("skills.json") }
 
     static let starters: [Skill] = [
@@ -33,33 +33,66 @@ struct Skill: Codable, Identifiable, Hashable {
 
     init() {
         if let d = try? Data(contentsOf: file), let s = try? JSONDecoder().decode([Skill].self, from: d) { skills = s } else { skills = Self.starters; save() }
+        if let old = UserDefaults.standard.string(forKey: "activeSkill"), !old.isEmpty, modes.isEmpty { setMode(old, "always") } // migrate the old single pick
+        UserDefaults.standard.removeObject(forKey: "activeSkill")
     }
+    func mode(_ id: String) -> String { modes[id] ?? "off" }
+    func setMode(_ id: String, _ m: String) { modes[id] = m; UserDefaults.standard.set(modes, forKey: "skillModes") }
+    var always: [Skill] { skills.filter { mode($0.id) == "always" } }
+    var auto: [Skill] { skills.filter { mode($0.id) == "auto" } }
     func save() { let e = JSONEncoder(); e.outputFormatting = .prettyPrinted; try? e.encode(skills).write(to: file, options: .atomic) }
-    var active: Skill? { skills.first { $0.id == activeID } }
-    func setActive(_ id: String) { activeID = id; UserDefaults.standard.set(id, forKey: "activeSkill") }
+    /// Preferred model of the first always-on skill that names one.
+    var preferredModel: String? { always.first { !$0.model.isEmpty }?.model }
     func upsert(_ s: Skill) { if let i = skills.firstIndex(where: { $0.id == s.id }) { skills[i] = s } else { skills.append(s) }; save() }
-    func delete(_ id: String) { skills.removeAll { $0.id == id }; if activeID == id { setActive("") }; save() }
+    func delete(_ id: String) { skills.removeAll { $0.id == id }; modes[id] = nil; UserDefaults.standard.set(modes, forKey: "skillModes"); save() }
 
     /// "/skill-id rest of message" activates a skill for this chat and strips the prefix.
     func applySlash(_ text: inout String) {
         guard text.hasPrefix("/") else { return }
         let word = String(text.dropFirst().prefix { !$0.isWhitespace })
         if let s = skills.first(where: { $0.id == word || $0.name.lowercased() == word.lowercased() }) {
-            setActive(s.id); text = String(text.dropFirst(word.count + 1)).trimmingCharacters(in: .whitespaces)
-        } else if word == "noskill" { setActive(""); text = String(text.dropFirst(8)).trimmingCharacters(in: .whitespaces) }
+            setMode(s.id, "always"); text = String(text.dropFirst(word.count + 1)).trimmingCharacters(in: .whitespaces)
+        } else if word == "noskill" { for s in always { setMode(s.id, "off") }; text = String(text.dropFirst(8)).trimmingCharacters(in: .whitespaces) }
     }
+    /// Always-on skills add their instructions. Auto skills are listed so the model can switch one on itself
+    /// with activate_skill (or, with tools off, follow the matching one directly).
     func systemPrompt(base: String) -> String {
-        guard let s = active else { return base }
-        return (base.isEmpty ? "" : base + "\n\n") + "Skill: \(s.name)\n\(s.prompt)"
+        var parts: [String] = base.isEmpty ? [] : [base]
+        for s in always { parts.append("Skill: \(s.name)\n\(s.prompt)") }
+        if !auto.isEmpty {
+            if ToolRegistry.chatToolsOn {
+                parts.append("Optional skills. If the request fits one, first call activate_skill with its id, then follow the instructions it returns:\n" +
+                             auto.map { "- \($0.id): \($0.name). \($0.description)" }.joined(separator: "\n"))
+            } else {
+                parts.append("Optional skills. Follow one only if the request fits it:\n" + auto.map { "- \($0.name) (\($0.description)): \($0.prompt)" }.joined(separator: "\n"))
+            }
+        }
+        let ap = PluginStore.shared.alwaysOn
+        if ToolRegistry.chatToolsOn && !ap.isEmpty {
+            parts.append("Always-on plugins: use these tools whenever they can help: " + ap.flatMap { $0.tools.map(\.name) }.joined(separator: ", ") + ".")
+        }
+        return parts.joined(separator: "\n\n")
     }
-    /// Tools named by the active skill come from any installed plugin, even if that plugin is switched off.
+    /// Tools used by always-on and auto skills (from any installed plugin, even one switched off),
+    /// plus activate_skill when any skill is on Auto.
     func activeExtraTools(all: [ToolSpec]) -> [ToolSpec] {
-        guard let s = active, !s.tools.isEmpty else { return [] }
-        let have = Set(all.map(\.name))
-        let ps = PluginStore.shared
-        return ps.installed.flatMap { p in p.tools.filter { s.tools.contains($0.name) && !have.contains($0.name) }.map { t in
-            ToolSpec(name: t.name, description: t.description, schema: t.schema, source: "skill:\(s.id)") { args in try await PluginRunner.run(t, args) }
-        } }
+        var have = Set(all.map(\.name)), out: [ToolSpec] = []
+        for s in always + auto where !s.tools.isEmpty {
+            for p in PluginStore.shared.installed { for t in p.tools where s.tools.contains(t.name) && !have.contains(t.name) {
+                have.insert(t.name)
+                out.append(ToolSpec(name: t.name, description: t.description, schema: t.schema, source: "skill:\(s.id)") { args in try await PluginRunner.run(t, args) })
+            } }
+        }
+        let autos = auto
+        if !autos.isEmpty {
+            out.append(ToolSpec(name: "activate_skill", description: "Switch on one of the optional skills for this request and get its instructions. Ids: " + autos.map(\.id).joined(separator: ", "),
+                                schema: ["type": "object", "properties": ["id": ["type": "string", "description": "skill id"]], "required": ["id"]], source: "skill:auto") { args in
+                let id = (args["id"] as? String ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
+                guard let s = autos.first(where: { $0.id == id || $0.name.lowercased() == id.lowercased() }) else { return "error: no optional skill \(id). Options: " + autos.map(\.id).joined(separator: ", ") }
+                return "Skill \(s.name) is active. Follow these instructions now:\n\(s.prompt)" + (s.tools.isEmpty ? "" : "\nTools for it: " + s.tools.joined(separator: ", "))
+            })
+        }
+        return out
     }
 }
 
@@ -75,18 +108,18 @@ struct SkillsView: View {
                 Button("New Skill") { editing = Skill(id: "skill-\(Int(Date().timeIntervalSince1970))", name: "", description: "", prompt: "") }
                 Button("Restore starters") { for s in SkillStore.starters { ss.upsert(s) } }
             }
-            Text("A skill is a reusable recipe: instructions plus the tools it may use. Pick one in the chat toolbar, or start a message with /skill-id (e.g. /researcher …). /noskill turns it off.")
+            Text("A skill is a reusable recipe: instructions plus the tools it may use. Set each one in the chat's + menu or here: Always on (used in every chat), Auto (the model switches it on when it fits) or Off. Starting a message with /skill-id turns that skill Always on; /noskill turns Always-on skills off.")
                 .font(.callout).foregroundStyle(.secondary)
             List {
                 ForEach(ss.skills) { s in
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 2) {
-                            HStack { Text(s.name).bold(); Text("/\(s.id)").font(.caption.monospaced()).foregroundStyle(.secondary); if ss.activeID == s.id { Text("active").font(.caption.bold()).foregroundStyle(.green) } }
+                            HStack { Text(s.name).bold(); Text("/\(s.id)").font(.caption.monospaced()).foregroundStyle(.secondary);  }
                             Text(s.description).font(.caption).foregroundStyle(.secondary)
                             if !s.tools.isEmpty { Text("tools: " + s.tools.joined(separator: ", ")).font(.caption2.monospaced()).foregroundStyle(.secondary) }
                         }
                         Spacer()
-                        Button(ss.activeID == s.id ? "Deactivate" : "Use") { ss.setActive(ss.activeID == s.id ? "" : s.id) }
+                        ModePicker(mode: Binding(get: { ss.mode(s.id) }, set: { ss.setMode(s.id, $0) }))
                         Button("Edit") { editing = s }
                         Button(role: .destructive) { ss.delete(s.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
                     }.padding(.vertical, 3)

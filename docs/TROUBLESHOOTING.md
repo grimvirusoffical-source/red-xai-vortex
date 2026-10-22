@@ -30,3 +30,13 @@ df -h /                       # disk
 dolphin-pool status
 vortex-preload list
 ```
+
+## Merges, keys, Owner or Training say "Could not connect to the server"
+These screens use the admin port (18092) of the **active** server. Build 23 fixes server entries saved with no SSH user (`@host`) and local ports that overlapped. If the active server can't be reached at launch, the app switches back to the main server. If a second server never connects, run `ssh root@<that server>` once in Terminal to accept its host key. Then click **Check** in Hub → Servers.
+
+## Self-test
+Run every feature check from Terminal:
+```
+"/Applications/Red-XAI Vortex.app/Contents/MacOS/Vortex" --selftest /tmp/vortex-selftest.json
+```
+Add `--only plugins,skills` to run only some areas. The test restores the settings it changes. It also creates one temporary API key and revokes it.

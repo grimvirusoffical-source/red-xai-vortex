@@ -5,12 +5,22 @@ These arrived in app builds 14 to 19 (version 2.2).
 | Build | Feature | Where |
 |---|---|---|
 | 14 | File upload | **+** button or drag files onto the chat |
-| 15 | Plugins and the Plugin Store (with a plugin maker) | Hub → Plugins, or the Plugin Store tab in the model browser |
-| 16 | Skills | Skill picker in the chat toolbar, or type `/skill-id` |
+| 15 | Plugins and the Plugin Store (with a plugin maker) | **+** menu, Hub → Plugins, or the Plugin Store tab in the model browser |
+| 16 | Skills | **+** menu (Always on / Auto / Off), or type `/skill-id` |
 | 17 | MCP servers | Hub → MCP |
 | 18 | Voice calls | Phone button in the chat toolbar |
 | 19 | Group chat | People button in the chat toolbar |
 | 20 | PC control | Hub → PC Control (see [PC-CONTROL.md](PC-CONTROL.md)) |
+
+## The + menu (build 23): files, skills and plugins
+Click **+** next to the message box:
+- **Upload files…** attaches files. You can also drop them onto the chat.
+- **Skills** and **Plugins** list every installed item. Each one has a mode:
+  - **Always on**: used in every chat until you turn it off.
+  - **Auto**: the model decides. Auto plugins are offered as tools. Auto skills are listed for the model, which switches one on itself with `activate_skill` when your request fits.
+  - **Off**: not used.
+- Everything that is Always on or Auto shows as a chip above the message box. Click a chip to change its mode. A solid chip is Always on; a dashed chip is Auto.
+- **Manage skills…**, **Manage plugins…** and **Plugin Store…** open the full lists.
 
 ## File upload (build 14)
 - Click **+** next to the message box, or drop files onto the chat. Chips above the box show what is attached; click × to remove one.
@@ -19,7 +29,7 @@ These arrived in app builds 14 to 19 (version 2.2).
 
 ## Plugins and the Plugin Store (build 15)
 - Plugins give models **tools** to call. The 🔧 button in the chat toolbar switches tool use on or off for the chat.
-- Starters: Web Search, File Reader, Calculator, Weather, Date & Time and Wikipedia. Install, enable or remove them in **Hub → Plugins** or in the **Plugin Store** tab of the model browser.
+- Starters: Web Search, File Reader, Calculator, Weather, Date & Time and Wikipedia. Set each plugin to Always on, Auto or Off in the **+** menu or **Hub → Plugins**, and install or remove them there or in the **Plugin Store** tab of the model browser.
 - **Plugin maker:** in Hub → Plugins, describe the plugin you want (for example "Convert currencies using a free exchange-rate API") and click **Generate**. The `vortex` model writes a draft. Review it, click **Test first tool**, then **Install** or **Discard**. You can also use **Import plugin.json…**. Each tool is one of:
   - **HTTP**: a URL template whose `{arguments}` are filled in.
   - **JavaScript**: runs in a sandbox with no network or file access and a time limit.
@@ -28,7 +38,7 @@ These arrived in app builds 14 to 19 (version 2.2).
 ## Skills (build 16)
 - A skill is saved instructions plus a set of tools, and optionally a preferred model.
 - Starters: Researcher, Code Reviewer, Summarize a file, Math Tutor and Trip Weather.
-- Pick one in the chat toolbar, or type `/researcher` (any skill id) at the start of a message. Type `/noskill` or pick **No skill** to stop.
+- Set each skill to Always on, Auto or Off in the **+** menu or in Hub → Skills. Starting a message with `/researcher` (any skill id) turns that skill Always on; `/noskill` turns every Always-on skill off.
 - Create and edit skills in **Hub → Skills**.
 
 ## MCP servers (build 17)

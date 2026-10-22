@@ -91,7 +91,8 @@ enum PluginCatalog {
 @MainActor final class PluginStore: ObservableObject {
     static let shared = PluginStore()
     @Published var installed: [PluginManifest] = []
-    @Published var enabled: Set<String> = []
+    @Published var enabled: Set<String> = []          // mode != off
+    @Published var modes: [String: String] = [:]      // plugin id -> always | auto | off
     @Published var message = ""
     var dir: URL { let d = ChatStore.dir.appendingPathComponent("plugins", isDirectory: true); try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true); return d }
 
@@ -102,7 +103,9 @@ enum PluginCatalog {
             guard let data = try? Data(contentsOf: d.appendingPathComponent("plugin.json")) else { return nil }
             return try? JSONDecoder().decode(PluginManifest.self, from: data)
         }.sorted { $0.name < $1.name }
-        enabled = Set(UserDefaults.standard.stringArray(forKey: "pluginsEnabled") ?? [])
+        modes = UserDefaults.standard.dictionary(forKey: "pluginModes") as? [String: String] ?? [:]
+        if modes.isEmpty { for id in UserDefaults.standard.stringArray(forKey: "pluginsEnabled") ?? [] { modes[id] = "auto" } } // migrate old on/off
+        enabled = Set(modes.filter { $0.value != "off" }.keys)
         if UserDefaults.standard.object(forKey: "pluginsSeeded") == nil {   // first run: install the starters, enabled off
             UserDefaults.standard.set(true, forKey: "pluginsSeeded")
             for p in PluginCatalog.starters { try? install(p, enable: false) }
@@ -135,10 +138,13 @@ enum PluginCatalog {
         try? FileManager.default.removeItem(at: dir.appendingPathComponent(id))
         installed.removeAll { $0.id == id }; setEnabled(id, false); message = "Removed \(id)."
     }
-    func setEnabled(_ id: String, _ on: Bool) {
-        if on { enabled.insert(id) } else { enabled.remove(id) }
-        UserDefaults.standard.set(Array(enabled), forKey: "pluginsEnabled")
+    func setEnabled(_ id: String, _ on: Bool) { setMode(id, on ? (modes[id] == "always" ? "always" : "auto") : "off") }
+    func mode(_ id: String) -> String { modes[id] ?? "off" }
+    func setMode(_ id: String, _ m: String) {
+        modes[id] = m; enabled = Set(modes.filter { $0.value != "off" }.keys)
+        UserDefaults.standard.set(modes, forKey: "pluginModes"); UserDefaults.standard.set(Array(enabled), forKey: "pluginsEnabled")
     }
+    var alwaysOn: [PluginManifest] { installed.filter { mode($0.id) == "always" } }
     func importFile(_ url: URL) {
         do { let p = try JSONDecoder().decode(PluginManifest.self, from: Data(contentsOf: url)); try install(p) }
         catch { message = "Import failed: \(error.localizedDescription)" }
@@ -361,7 +367,7 @@ struct PluginsView: View {
                                 Text(p.tools.map { "\($0.name) (\($0.kind))" }.joined(separator: " · ")).font(.caption2.monospaced()).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Toggle("", isOn: Binding(get: { ps.enabled.contains(p.id) }, set: { ps.setEnabled(p.id, $0) })).toggleStyle(.switch).labelsHidden()
+                            ModePicker(mode: Binding(get: { ps.mode(p.id) }, set: { ps.setMode(p.id, $0) }))
                             Button(role: .destructive) { ps.remove(p.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
                         }.padding(.vertical, 4)
                         Divider()

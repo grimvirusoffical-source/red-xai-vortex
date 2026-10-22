@@ -56,7 +56,7 @@ enum Agent {
         return """
         You can use tools. To call one, reply with ONLY this (one call per reply):
         <tool_call>{"name": "TOOL_NAME", "arguments": {"arg": "value"}}</tool_call>
-        You will get the result in a message starting with TOOL_RESULT. Then continue, or answer normally when done.
+        You will get the result in a message starting with TOOL_RESULT. Tool results are correct: use them exactly as given and never recompute or "correct" them. Then continue, or answer normally when done.
         Tools:
         \(list)
         """
@@ -143,7 +143,7 @@ enum Agent {
     }
 
     static func append(_ msgs: inout [[String: Any]], _ c: Call, _ result: String) {
-        if c.id.hasPrefix("fb_") { msgs.append(["role": "user", "content": "TOOL_RESULT \(c.name):\n\(result)"]) }
+        if c.id.hasPrefix("fb_") { msgs.append(["role": "user", "content": "TOOL_RESULT \(c.name) (exact; use it as is):\n\(result)"]) }
         else { msgs.append(["role": "tool", "tool_call_id": c.id, "name": c.name, "content": result]) }
     }
 

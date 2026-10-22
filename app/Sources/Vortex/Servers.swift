@@ -58,8 +58,36 @@ final class ServerStore: ObservableObject {
             save()
         }
         if Keychain.get(account: "admin-primary") == nil, let k = Keychain.get() { Keychain.set(k, account: "admin-primary") }
+        repair()
         activeID = UserDefaults.standard.string(forKey: "activeServer") ?? servers[0].id
         if !servers.contains(where: { $0.id == activeID }) { activeID = servers[0].id }
+        // Never stay on a server whose SSH host is unusable; fall back to the primary.
+        if let a = active, !Self.validHost(a.sshHost), let p = servers.first(where: { $0.primary }) { activate(p.id) }
+    }
+    static func validHost(_ h: String) -> Bool { h.range(of: "^[A-Za-z0-9._-]+@[A-Za-z0-9.:-]+$", options: .regularExpression) != nil }
+    static func normalizeHost(_ h: String) -> String {
+        var s = h.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("@") { s = "root" + s } else if !s.contains("@") && !s.isEmpty { s = "root@" + s }
+        return s
+    }
+    /// Fix entries saved by older builds: "@host" with no user, and local ports whose chat port (local-1)
+    /// collided with another server's admin port.
+    private func repair() {
+        var changed = false, used = Set<Int>()
+        for i in servers.indices {
+            let h = Self.normalizeHost(servers[i].sshHost); if h != servers[i].sshHost { servers[i].sshHost = h; changed = true }
+            var p = servers[i].localPort
+            while used.contains(p) || used.contains(p - 1) { p += 2 }
+            if p != servers[i].localPort { servers[i].localPort = p; changed = true }
+            used.insert(p); used.insert(p - 1)
+        }
+        if changed { save() }
+    }
+    /// After launch: if the active server's tunnel can't come up but the primary answers, switch back.
+    func healthCheckActive() async {
+        guard let a = active, !a.primary, let p = servers.first(where: { $0.primary }) else { return }
+        if await ping(a) { return }
+        if await ping(p) { activate(p.id); await ChatStoreRef.refresh() }
     }
     func save() { if let d = try? JSONEncoder().encode(servers) { try? d.write(to: file, options: .atomic) } }
     var active: ServerDef? { servers.first { $0.id == activeID } }
@@ -113,8 +141,9 @@ final class ServerStore: ObservableObject {
     }
 
     func add(name: String, host: String, keyPath: String) {
-        let port = (servers.map(\.localPort).max() ?? 18092) + 1
-        servers.append(ServerDef(name: name, sshHost: host, keyPath: keyPath, localPort: port)); save()
+        let h = Self.normalizeHost(host); guard Self.validHost(h) else { return }
+        let port = (servers.map(\.localPort).max() ?? 18092) + 2      // each server uses a pair: admin = port, chat = port-1
+        servers.append(ServerDef(name: name.isEmpty ? h : name, sshHost: h, keyPath: keyPath, localPort: port)); save()
     }
     func remove(_ id: String) {
         guard let s = server(id), !s.primary else { return }
@@ -175,10 +204,10 @@ struct ServersView: View {
             GroupBox("Add a server (Ubuntu/Debian VPS with SSH key login)") {
                 HStack {
                     TextField("Name", text: $name).frame(width: 140)
-                    TextField("user@host", text: $host)
+                    TextField("user@host (root@ is assumed)", text: $host)
                     TextField("SSH key", text: $keyPath).frame(width: 170)
                     Button("Add") { ss.add(name: name.isEmpty ? host : name, host: host, keyPath: keyPath); name = ""; host = "" }
-                        .disabled(!host.contains("@"))
+                        .disabled(!ServerStore.validHost(ServerStore.normalizeHost(host)))
                 }.padding(4)
             }
             Toggle("Fail over automatically to another server (or this Mac) when the current one stops answering", isOn: $autoFailover)

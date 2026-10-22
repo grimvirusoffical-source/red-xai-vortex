@@ -10,10 +10,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for k in ["serverURL", "sshLocalPort", "sshRemotePort"] { UserDefaults.standard.removeObject(forKey: k) }
             UserDefaults.standard.set(true, forKey: "migratedGateway1")
         }
+        if SelfTest.arg != nil {   // headless end-to-end test, then quit (never touches the running app's node or chats)
+            MainActor.assumeIsolated { Task { await SelfTest.run(); exit(0) } }
+            return
+        }
         Process.launchedProcess(launchPath: "/usr/bin/pkill", arguments: ["-f", "Vortex.app/Contents/Resources/ggml-rpc-server"])
-        MainActor.assumeIsolated { _ = PluginStore.shared; _ = SkillStore.shared; Task { await MCPStore.shared.connectEnabled() } }   // seed starter plugins/skills on first launch
+        MainActor.assumeIsolated { _ = PluginStore.shared; _ = SkillStore.shared; Task { await MCPStore.shared.connectEnabled() }; Task { await ServerStore.shared.healthCheckActive() } }   // seed starter plugins/skills on first launch
     }
-    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
+    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { SelfTest.arg == nil }
     func applicationWillTerminate(_ n: Notification) { MainActor.assumeIsolated {
         NodeManager.shared.shutdown(); LocalRuntime.shared.stop(); MCPStore.shared.stopAll(); ServerStore.shared.stopAll(); ModelBrowserServer.shared.stop()
         // make sure no SSH tunnel or local model outlives the app
