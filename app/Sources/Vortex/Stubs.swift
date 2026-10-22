@@ -1,7 +1,0 @@
-import Foundation
-// Placeholders filled in by later builds (MCP, PC control, skills).
-@MainActor final class PCControl {
-    static let shared = PCControl()
-    func tools(for model: String) -> [ToolSpec] { [] }
-    nonisolated static func logAction(_ s: String) {}
-}

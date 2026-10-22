@@ -246,6 +246,7 @@ struct HubView: View {
                 PluginsView().tabItem { Label("Plugins", systemImage: "puzzlepiece") }.tag("plugins")
                 SkillsView().tabItem { Label("Skills", systemImage: "wand.and.stars") }.tag("skills")
                 MCPView().tabItem { Label("MCP", systemImage: "server.rack") }.tag("mcp")
+                PCControlView().tabItem { Label("PC Control", systemImage: "desktopcomputer") }.tag("pc")
                 IntegrationsView().tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }.tag("integrations")
                 HelpView().tabItem { Label("Help", systemImage: "questionmark.circle") }.tag("help")
             }
