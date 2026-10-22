@@ -6,6 +6,7 @@ struct Message: Identifiable, Codable, Equatable {
     var content: String
     var date = Date()
     var rating: Int? = nil
+    var attachments: [Attachment]? = nil
 }
 
 struct Chat: Identifiable, Codable, Equatable {

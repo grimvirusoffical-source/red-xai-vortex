@@ -38,10 +38,10 @@ final class ChatStore: ObservableObject {
 
     func stop() { task?.cancel(); task = nil; streaming = false }
 
-    func send(_ text: String, systemPrompt: String, contextTokens: Int, params: ChatParams) {
-        guard let i = idx(selection), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !streaming else { return }
-        chats[i].messages.append(Message(role: "user", content: text))
-        if chats[i].title == "New Chat" { chats[i].title = String(text.prefix(40)) }
+    func send(_ text: String, attachments: [Attachment] = [], systemPrompt: String, contextTokens: Int, params: ChatParams) {
+        guard let i = idx(selection), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty, !streaming else { return }
+        chats[i].messages.append(Message(role: "user", content: text, attachments: attachments.isEmpty ? nil : attachments))
+        if chats[i].title == "New Chat" { chats[i].title = String((text.isEmpty ? attachments.map(\.name).joined(separator: ", ") : text).prefix(40)) }
         generate(chatIndex: i, systemPrompt: systemPrompt, contextTokens: contextTokens, params: params)
     }
 
@@ -56,7 +56,7 @@ final class ChatStore: ObservableObject {
         // Trim history to fit the context budget (approx. 4 chars per token, leave room for the reply).
         var budget = max(512, (contextTokens - params.maxTokens)) * 4 - systemPrompt.count
         var hist: [Message] = []
-        for m in chats[i].messages.reversed() { budget -= m.content.count; if budget < 0 && !hist.isEmpty { break }; hist.insert(m, at: 0) }
+        for m in chats[i].messages.reversed() { budget -= m.promptChars; if budget < 0 && !hist.isEmpty { break }; hist.insert(m, at: 0) }
         if !systemPrompt.isEmpty { hist.insert(Message(role: "system", content: systemPrompt), at: 0) }
         chats[i].messages.append(Message(role: "assistant", content: ""))
         chats[i].updated = Date(); streaming = true; status = "Thinking…"

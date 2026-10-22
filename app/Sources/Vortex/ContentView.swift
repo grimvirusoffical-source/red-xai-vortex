@@ -85,6 +85,9 @@ struct ChatView: View {
     @AppStorage("fontSize") var fontSize = 14.0
     @AppStorage("accent") var accent = "red"
     @Local var input = ""
+    @Local var pending: [Attachment] = []
+    @Local var attachError = ""
+    @Local var dropTarget = false
 
     var params: ChatParams {
         ChatParams(baseURL: serverURL, apiKey: Keychain.get() ?? "", model: model, temperature: temperature, topP: topP,
@@ -113,14 +116,22 @@ struct ChatView: View {
                 }
             }
             Divider()
+            if !pending.isEmpty || !attachError.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    if !pending.isEmpty { AttachmentChips(items: pending) { a in pending.removeAll { $0.id == a.id } } }
+                    if !attachError.isEmpty { Text(attachError).font(.caption).foregroundStyle(.red) }
+                }.padding(.horizontal, 10).padding(.top, 8)
+            }
             HStack(alignment: .bottom, spacing: 8) {
+                Button { pickFiles() } label: { Image(systemName: "plus.circle.fill").font(.title) }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help("Attach files: text, code, PDF, images")
                 ComposeField(text: $input, sendOnEnter: sendOnEnter, fontSize: fontSize, onSend: send)
                     .frame(minHeight: 36, maxHeight: 140)
                 if store.streaming {
                     Button { store.stop() } label: { Image(systemName: "stop.circle.fill").font(.title) }.buttonStyle(.plain)
                 } else {
                     Button { send() } label: { Image(systemName: "arrow.up.circle.fill").font(.title) }
-                        .buttonStyle(.plain).foregroundStyle(Color.accent(accent)).disabled(input.isEmpty)
+                        .buttonStyle(.plain).foregroundStyle(Color.accent(accent)).disabled(input.isEmpty && pending.isEmpty)
                 }
             }.padding(10)
             HStack {
@@ -128,6 +139,13 @@ struct ChatView: View {
                 Spacer()
                 Text(sendOnEnter ? "Enter to send · Shift+Enter for newline" : "⌘Enter to send").font(.caption2).foregroundStyle(.tertiary)
             }.padding(.horizontal, 12).padding(.bottom, 6)
+        }
+        .overlay { if dropTarget { RoundedRectangle(cornerRadius: 12).stroke(Color.accent(accent), lineWidth: 3).padding(4).allowsHitTesting(false) } }
+        .onDrop(of: [.fileURL], isTargeted: $dropTarget) { providers in
+            for p in providers {
+                _ = p.loadObject(ofClass: URL.self) { u, _ in if let u { Task { @MainActor in await add([u]) } } }
+            }
+            return true
         }
         .navigationTitle(store.current?.title ?? "Red-XAI Vortex")
         .toolbar {
@@ -148,8 +166,23 @@ struct ChatView: View {
         if let m = try? await API.models(base: serverURL, key: Keychain.get() ?? ""), !m.isEmpty { store.availableModels = m }
     }
     func send() {
-        let t = input; input = ""
-        store.send(t, systemPrompt: systemPrompt, contextTokens: contextTokens, params: params)
+        let t = input, a = pending; input = ""; pending = []; attachError = ""
+        if a.contains(where: { $0.kind == "image" }) && !(model.contains("vision") || model.contains("vl") || model.hasPrefix("ext:")) {
+            store.status = "Tip: images need a vision model (e.g. gemma3-12b-vision)."
+        }
+        store.send(t, attachments: a, systemPrompt: systemPrompt, contextTokens: contextTokens, params: params)
+    }
+    func pickFiles() {
+        let p = NSOpenPanel(); p.allowsMultipleSelection = true; p.canChooseDirectories = false
+        p.message = "Attach text, code, PDF or image files as context"
+        p.begin { r in if r == .OK { let urls = p.urls; Task { @MainActor in await add(urls) } } }
+    }
+    @MainActor func add(_ urls: [URL]) async {
+        attachError = ""
+        for u in urls {
+            do { let a = try await AttachmentLoader.load(u); if !pending.contains(where: { $0.name == a.name && $0.bytes == a.bytes }) { pending.append(a) } }
+            catch { attachError = error.localizedDescription }
+        }
     }
 }
 
@@ -190,6 +223,7 @@ struct BubbleView: View {
         HStack(alignment: .top) {
             if isUser { Spacer(minLength: 60) } else { Text("🐬").font(.title2) }
             VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
+                if let a = message.attachments, !a.isEmpty { AttachmentChips(items: a) }
                 Group {
                     if message.content.isEmpty { TypingIndicator() } else { rendered }
                 }

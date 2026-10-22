@@ -145,7 +145,7 @@ enum API {
         // training mode: let Vortex learn from whatever model is active (server must have learning on)
         if UserDefaults.standard.bool(forKey: "trainingMode"), UserDefaults.standard.bool(forKey: "trainingConsent") { r.setValue("1", forHTTPHeaderField: "X-Vortex-Train") }
         var body: [String: Any] = ["model": p.model, "stream": true,
-            "messages": messages.map { ["role": $0.role, "content": $0.content] },
+            "messages": messages.map { ["role": $0.role, "content": $0.apiContent] as [String: Any] },
             "temperature": p.temperature, "top_p": p.topP, "top_k": p.topK,
             "repeat_penalty": p.repeatPenalty, "max_tokens": p.maxTokens, "timings_per_token": false]
         if p.seed >= 0 { body["seed"] = p.seed }
