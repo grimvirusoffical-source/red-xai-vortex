@@ -54,8 +54,8 @@ final class LocalRuntime: ObservableObject {
                     var r = URLRequest(url: u); r.httpMethod = "HEAD"
                     if let (_, resp) = try? await URLSession.shared.data(for: r), let h = resp as? HTTPURLResponse { total += Double(h.expectedContentLength) }
                 }
-                if total > 0 && total + 5e9 > freeDisk { throw NSError(domain: "Dolphino", code: 1, userInfo: [NSLocalizedDescriptionKey: "Not enough disk space on this Mac"]) }
-                if total * 1.1 > ram * 0.75 { throw NSError(domain: "Dolphino", code: 2, userInfo: [NSLocalizedDescriptionKey: "Too big for this Mac's memory"]) }
+                if total > 0 && total + 5e9 > freeDisk { throw NSError(domain: "Vortex", code: 1, userInfo: [NSLocalizedDescriptionKey: "Not enough disk space on this Mac"]) }
+                if total * 1.1 > ram * 0.75 { throw NSError(domain: "Vortex", code: 2, userInfo: [NSLocalizedDescriptionKey: "Too big for this Mac's memory"]) }
                 jobs[id] = (0, max(total, 1), "downloading")
                 var doneBefore = 0.0
                 let target = asDir ? Self.dir.appendingPathComponent(id) : Self.dir
@@ -128,7 +128,7 @@ final class LocalRuntime: ObservableObject {
         let base = "http://127.0.0.1:\(Self.port)/v1"
         if running == id, proc?.isRunning == true { return base }
         stop()
-        guard let bin = binary else { throw NSError(domain: "Dolphino", code: 3, userInfo: [NSLocalizedDescriptionKey: "llama-server not found (bundled or Homebrew)"]) }
+        guard let bin = binary else { throw NSError(domain: "Vortex", code: 3, userInfo: [NSLocalizedDescriptionKey: "llama-server not found (bundled or Homebrew)"]) }
         var args = ["--host", "127.0.0.1", "--port", "\(Self.port)", "-ngl", "99", "-c", "8192", "--jinja", "--alias", id]
         let f = Self.dir.appendingPathComponent(id + ".gguf"), d = Self.dir.appendingPathComponent(id)
         if FileManager.default.fileExists(atPath: f.path) { args += ["-m", f.path] }
@@ -144,7 +144,7 @@ final class LocalRuntime: ObservableObject {
         try p.run(); proc = p; running = id
         for _ in 0..<240 {
             if let (_, r) = try? await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(Self.port)/health")!), (r as? HTTPURLResponse)?.statusCode == 200 { break }
-            if !p.isRunning { running = nil; throw NSError(domain: "Dolphino", code: 4, userInfo: [NSLocalizedDescriptionKey: "Local model failed to start"]) }
+            if !p.isRunning { running = nil; throw NSError(domain: "Vortex", code: 4, userInfo: [NSLocalizedDescriptionKey: "Local model failed to start"]) }
             try await Task.sleep(for: .milliseconds(500))
         }
         idleTimer?.invalidate()

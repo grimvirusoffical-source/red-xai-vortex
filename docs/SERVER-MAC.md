@@ -11,4 +11,4 @@ llama-server --host 127.0.0.1 --port 8090 --models-dir /opt/dolphin/models --mod
 cd gateway && go build -tags stdcrypto -o dolphin-gateway . && ./dolphin-gateway init-admin ~/dolphino-admin.key && ./dolphin-gateway
 ```
 On macOS, `dolphin-models pull` tries to restart a systemd unit; restart `llama-server` yourself after pulling.
-Built-in **Local mode** in the Dolphino app (Metal, on demand) is in progress.
+Built-in **Local mode** in the Red-XAI Vortex app runs llama.cpp with Metal on demand.

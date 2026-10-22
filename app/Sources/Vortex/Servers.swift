@@ -187,7 +187,7 @@ struct ServersView: View {
                     }
                 }.padding(.vertical, 4)
             }
-            Text("Install / Update runs the bundled server installer over SSH: llama.cpp, the gateway and the model manager. Nothing is opened to the internet; Dolphino talks to each server through its own SSH tunnel.").font(.caption).foregroundStyle(.secondary)
+            Text("Install / Update runs the bundled server installer over SSH: llama.cpp, the gateway and the model manager. Nothing is opened to the internet; Red-XAI Vortex talks to each server through its own SSH tunnel.").font(.caption).foregroundStyle(.secondary)
         }
         .padding()
         .sheet(item: $keyEdit) { s in

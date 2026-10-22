@@ -100,7 +100,7 @@ struct ChatView: View {
                             if c.messages.isEmpty {
                                 VStack(spacing: 8) {
                                     Text("🐬").font(.system(size: 56))
-                                    Text("Dolphino").font(.largeTitle.bold())
+                                    Text("Red-XAI Vortex").font(.largeTitle.bold())
                                     Text("Model: \(model)").foregroundStyle(.secondary)
                                 }.frame(maxWidth: .infinity).padding(.top, 80)
                             }
@@ -129,7 +129,7 @@ struct ChatView: View {
                 Text(sendOnEnter ? "Enter to send · Shift+Enter for newline" : "⌘Enter to send").font(.caption2).foregroundStyle(.tertiary)
             }.padding(.horizontal, 12).padding(.bottom, 6)
         }
-        .navigationTitle(store.current?.title ?? "Dolphino")
+        .navigationTitle(store.current?.title ?? "Red-XAI Vortex")
         .toolbar {
             ToolbarItemGroup {
                 Picker("Model", selection: $model) {
@@ -217,7 +217,7 @@ struct BubbleView: View {
     }
 }
 
-/// Three pulsing dots shown while Dolphino writes a reply.
+/// Three pulsing dots shown while Vortex writes a reply.
 struct TypingIndicator: View {
     @Local var on = false
     var body: some View {
@@ -229,7 +229,7 @@ struct TypingIndicator: View {
         }
         .padding(.vertical, 4)
         .onAppear { on = true }
-        .accessibilityLabel("Dolphino is typing")
+        .accessibilityLabel("Vortex is typing")
     }
 }
 

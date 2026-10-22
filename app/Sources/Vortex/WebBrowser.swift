@@ -17,7 +17,7 @@ extension Admin {
                 let (d, resp) = try await URLSession.shared.data(for: r)
                 let j = (try? JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? [:]
                 if let h = resp as? HTTPURLResponse, h.statusCode >= 300 {
-                    throw NSError(domain: "Dolphino", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: ((j["error"] as? [String: Any])?["message"] as? String) ?? "HTTP \(h.statusCode)"])
+                    throw NSError(domain: "Vortex", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: ((j["error"] as? [String: Any])?["message"] as? String) ?? "HTTP \(h.statusCode)"])
                 }
                 return j
             } catch let e as URLError { lastErr = e; try? await Task.sleep(for: .milliseconds(800)) }
@@ -97,7 +97,7 @@ final class ModelBrowserServer {
         // Host check blocks DNS-rebinding; token blocks other local apps/sites.
         let host = head.split(separator: "\r\n").first { $0.lowercased().hasPrefix("host:") }.map { $0.dropFirst(5).trimmingCharacters(in: .whitespaces) } ?? ""
         guard host == "127.0.0.1:\(port)" || host == "localhost:\(port)" else { return json(["error": "forbidden"], 403) }
-        guard (q["t"] ?? hdrToken) == token else { return (403, "text/plain", Data("Forbidden: open the browser from Dolphino.".utf8)) }
+        guard (q["t"] ?? hdrToken) == token else { return (403, "text/plain", Data("Forbidden: open the browser from Red-XAI Vortex.".utf8)) }
         if path == "/" { return (200, "text/html; charset=utf-8", Data(BrowserPage.html.utf8)) }
         if method == "POST", hdrToken != token { return json(["error": "token header required"], 403) }
         let inb = (try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:]

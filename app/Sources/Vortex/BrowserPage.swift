@@ -1,6 +1,6 @@
 enum BrowserPage {
     static let html = #"""
-<!doctype html><html><head><meta charset="utf-8"><title>Dolphino · Models</title>
+<!doctype html><html><head><meta charset="utf-8"><title>Red-XAI Vortex · Models</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 :root{--bg:#0f1115;--card:#171a21;--line:#262a33;--fg:#e8eaf0;--mut:#8b92a3;--acc:#e0242f;--ok:#2fbf71}

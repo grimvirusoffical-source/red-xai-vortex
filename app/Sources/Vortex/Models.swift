@@ -31,9 +31,9 @@ enum Defaults {
     static let model = "dolphin2.7-mixtral-8x7b-iq4xs"
     static let fallbackModel = "dolphin3-llama3.1-8b-q8"
     static let knownModels = ["dolphin2.7-mixtral-8x7b-iq4xs", "dolphin3-mistral-24b-q6k", "dolphin3-llama3.1-8b-q8", "dolphin3-llama3.2-3b-q4km"]
-    static let systemPrompt = "You are Dolphino, a sharp, friendly and direct helper. Answer clearly."
+    static let systemPrompt = "You are Vortex, the Red-XAI Vortex assistant: sharp, friendly and direct helper. Answer clearly."
     static let personas: [Persona] = [
-        Persona(name: "Dolphino", prompt: systemPrompt),
+        Persona(name: "Vortex", prompt: systemPrompt),
         Persona(name: "Coder", prompt: "You are an expert software engineer. Give precise, working code with short explanations."),
         Persona(name: "Lumi Trainer", prompt: "You are helping build training data for Lumi. Lumi is she/her. Write high-quality, consistent example answers in Lumi's voice: warm, clever and concise."),
         Persona(name: "Concise", prompt: "Answer in as few words as possible."),

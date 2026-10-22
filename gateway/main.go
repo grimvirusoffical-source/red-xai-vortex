@@ -202,7 +202,7 @@ func modelOK(k *Key, m string) bool {
 		return true
 	}
 	for _, x := range k.Models {
-		if x == m || x == "*" {
+		if x == m || x == "*" || (strings.HasPrefix(m, rxModel) && x == "vortex"+strings.TrimPrefix(m, rxModel)) {
 			return true
 		}
 	}
@@ -515,9 +515,9 @@ func handleModels(w http.ResponseWriter, k *Key) {
 			data = append(data, map[string]any{"id": m.ID, "object": "model", "owned_by": "redx", "created": 0})
 		}
 	}
-	for _, id := range append([]string{rxModel}, func() (o []string) {
+	for _, id := range append([]string{"vortex", rxModel}, func() (o []string) {
 		for _, v := range rxVersions() {
-			o = append(o, rxModel+"-"+v)
+			o = append(o, "vortex-"+v, rxModel+"-"+v)
 		}
 		return
 	}()...) {
@@ -570,6 +570,10 @@ func handleV1(w http.ResponseWriter, r *http.Request, k *Key) {
 		return
 	}
 	model, _ := body["model"].(string)
+	if model == "vortex" || strings.HasPrefix(model, "vortex-v") || strings.HasPrefix(model, "vortex:") {
+		model = rxModel + strings.TrimPrefix(strings.TrimSuffix(model, ":latest"), "vortex") // Vortex is the name of the Red-XAI model
+		body["model"] = model
+	}
 	if model == "" {
 		model = defaultModel()
 		body["model"] = model
@@ -642,9 +646,15 @@ func handleV1(w http.ResponseWriter, r *http.Request, k *Key) {
 		w.WriteHeader(resp.StatusCode)
 		fl, _ := w.(http.Flusher)
 		buf := make([]byte, 4096)
+		var cb *capBuf
+		if learnWanted(r, path) && resp.StatusCode == 200 {
+			cb = &capBuf{}
+			defer func() { st, _ := body["stream"].(bool); distillCapture(model, body, answerFrom(cb.Bytes(), st)) }()
+		}
 		for {
 			n, err := resp.Body.Read(buf)
 			if n > 0 {
+				cb.add(buf[:n])
 				w.Write(buf[:n])
 				if fl != nil {
 					fl.Flush()
@@ -681,6 +691,11 @@ func handleV1(w http.ResponseWriter, r *http.Request, k *Key) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	stream, _ := body["stream"].(bool)
+	var cb *capBuf
+	if learnWanted(r, path) && resp.StatusCode == 200 {
+		cb = &capBuf{}
+		defer func() { distillCapture(model, body, answerFrom(cb.Bytes(), stream)) }()
+	}
 	if stream {
 		fl, _ := w.(http.Flusher)
 		br := bufio.NewReader(resp.Body)
@@ -688,6 +703,7 @@ func handleV1(w http.ResponseWriter, r *http.Request, k *Key) {
 		for {
 			n, err := br.Read(buf)
 			if n > 0 {
+				cb.add(buf[:n])
 				w.Write(buf[:n])
 				if fl != nil {
 					fl.Flush()
@@ -700,6 +716,7 @@ func handleV1(w http.ResponseWriter, r *http.Request, k *Key) {
 		return
 	}
 	out, _ := io.ReadAll(resp.Body)
+	cb.add(out)
 	var u struct {
 		Usage struct {
 			Total int64 `json:"total_tokens"`
@@ -741,6 +758,9 @@ func serveMerge(w http.ResponseWriter, r *http.Request, k *Key, mg *Merge, body 
 	mu.Lock()
 	k.Tokens += tok
 	mu.Unlock()
+	if learnWanted(r, "/v1/chat/completions") {
+		distillCapture(mergePref+mg.Name, body, out)
+	}
 	id := "chatcmpl-merge-" + randB62(12)
 	meta := map[string]any{"merge": mg.Name, "mode": mg.Mode, "models_used": len(steps), "steps": steps, "seconds": time.Since(t0).Seconds()}
 	if stream, _ := body["stream"].(bool); stream {
@@ -820,7 +840,7 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&in)
 	}
 	str := func(f string) string { s, _ := in[f].(string); return s }
-	if providerAdmin(w, r, p, in) || redxaiAdmin(w, r, p, in) {
+	if providerAdmin(w, r, p, in) || redxaiAdmin(w, r, p, in) || storageAdmin(w, r, p, in) {
 		return
 	}
 	switch {
@@ -1039,6 +1059,7 @@ func main() {
 		return
 	}
 	load()
+	go offloadLoop()
 	go func() {
 		for range time.Tick(15 * time.Second) {
 			mu.Lock()

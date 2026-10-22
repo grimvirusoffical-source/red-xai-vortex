@@ -58,7 +58,7 @@ struct ConnectionSettings: View {
                     }
                 }
                 if !tunnel.lastError.isEmpty { Text(tunnel.lastError).font(.caption).foregroundStyle(.red) }
-                Text("The model API on the VPS only listens on 127.0.0.1:\(sshRemotePort). Dolphino forwards it to 127.0.0.1:\(sshLocalPort) on this Mac over SSH, and every request also carries the bearer key.")
+                Text("The model API on the VPS only listens on 127.0.0.1:\(sshRemotePort). Red-XAI Vortex forwards it to 127.0.0.1:\(sshLocalPort) on this Mac over SSH, and every request also carries the bearer key.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
@@ -176,7 +176,7 @@ struct DataSettings: View {
     var body: some View {
         Form {
             Section("Chats") {
-                Text("\(store.chats.count) chats, \(store.chats.reduce(0) { $0 + $1.messages.count }) messages, stored in ~/Library/Application Support/Dolphino/")
+                Text("\(store.chats.count) chats, \(store.chats.reduce(0) { $0 + $1.messages.count }) messages, stored in ~/Library/Application Support/Red-XAI Vortex/")
                 HStack { Button("Export Chats (JSON)…") { store.exportJSON() }; Button("Import Chats…") { store.importJSON() } }
                 Button("Export for Training (JSONL)…") { store.exportTraining(systemPrompt: systemPrompt, onlyCurrent: false) }
                 Button("Reveal data folder") { NSWorkspace.shared.open(ChatStore.dir) }
@@ -209,11 +209,11 @@ struct LumiSettings: View {
                     Service       : systemctl status dolphin-llm   (6 threads, CPUQuota 500%, MemoryMax 12G)
                     API key file  : /etc/dolphin/api-keys  (root/dolphin only)
                     Endpoint (VPS): http://127.0.0.1:8090/v1   (localhost only)
-                    Endpoint (Mac): http://127.0.0.1:18090/v1  (through Dolphino's SSH tunnel)
+                    Endpoint (Mac): http://127.0.0.1:18090/v1  (through Red-XAI Vortex's SSH tunnel)
                     Logs          : journalctl -u dolphin-llm -f
                     """)
                     h("2. Build a dataset")
-                    Text("Chat with Dolphino (the \"Lumi Trainer\" persona helps), keep the good conversations, then export. Each line is one conversation in OpenAI chat format: {\"messages\":[{\"role\":\"system\",…},{\"role\":\"user\",…},{\"role\":\"assistant\",…}]}. Lumi is she/her, so keep her voice consistent in every example.")
+                    Text("Chat with Red-XAI Vortex (the \"Lumi Trainer\" persona helps), keep the good conversations, then export. Each line is one conversation in OpenAI chat format: {\"messages\":[{\"role\":\"system\",…},{\"role\":\"user\",…},{\"role\":\"assistant\",…}]}. Lumi is she/her, so keep her voice consistent in every example.")
                     TextField("System prompt written into the training file", text: $lumiPrompt)
                     HStack {
                         Button("Export for Training (all chats)…") { store.exportTraining(systemPrompt: lumiPrompt, onlyCurrent: false) }.buttonStyle(.borderedProminent)
@@ -250,7 +250,7 @@ struct LumiSettings: View {
                     # Expect hours for a few hundred samples. Load the adapter with --lora at serve time.
                     systemctl start dolphin-llm
                     """)
-                    Text("A new .gguf dropped into /opt/dolphin/models shows up automatically in Dolphino's model picker after a service restart.").font(.caption)
+                    Text("A new .gguf dropped into /opt/dolphin/models shows up automatically in Red-XAI Vortex's model picker after a service restart.").font(.caption)
                 }
                 Group {
                     h("4. OmniRoute")
@@ -262,7 +262,7 @@ struct LumiSettings: View {
                     API key       : contents of /etc/dolphin/api-keys
                     Models        : dolphin3-llama3.1-8b-q8, dolphin3-llama3.2-3b-q4km (+ lumi-* when trained)
                     """)
-                    Text("Keep OmniRoute bound to localhost or behind the tunnel; do not expose port 8090 publicly. Export OmniRoute's request logs as JSONL in the same {\"messages\":[…]} format to merge them with Dolphino exports.")
+                    Text("Keep OmniRoute bound to localhost or behind the tunnel; do not expose port 8090 publicly. Export OmniRoute's request logs as JSONL in the same {\"messages\":[…]} format to merge them with Red-XAI Vortex exports.")
                     TextField("OmniRoute URL (optional; use it as Server URL in Connection to chat through it)", text: $omniRouteURL)
                 }
             }.padding(20).textSelection(.enabled)

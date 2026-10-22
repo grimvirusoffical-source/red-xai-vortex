@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Dolphino server installer: llama.cpp (router mode) + dolphin-gateway + dolphin-models.
+# Red-XAI Vortex server installer: llama.cpp (router mode) + dolphin-gateway + dolphin-models.
 # Tested on Ubuntu 22.04/24.04 and Debian 12 (x86_64 / arm64). Run as root:
-#   curl -fsSL https://raw.githubusercontent.com/grimvirusoffical-source/dolphino/main/server/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/grimvirusoffical-source/red-xai-vortex/main/server/install.sh | bash
 # or from a checkout:  sudo bash server/install.sh
 # Options (env): LLAMA_TAG=<tag>  CRYPTO_TAG=stdcrypto|rsx  STARTER=llama3.2-3b  WITH_MEDIA=1 (image+audio, ~15 GB)
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "run as root"; exit 1; }
-REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/grimvirusoffical-source/dolphino/main}"
+REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/grimvirusoffical-source/red-xai-vortex/main}"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")/.." 2>/dev/null && pwd || echo)"
 CRYPTO_TAG="${CRYPTO_TAG:-stdcrypto}"
 STARTER="${STARTER:-llama3.2-3b}"
@@ -38,14 +38,14 @@ log "Installing model manager and catalog"
 fetch server/dolphin-models /usr/local/bin/dolphin-models; chmod 755 /usr/local/bin/dolphin-models
 fetch server/catalog.json /etc/dolphin/catalog.json
 fetch server/dolphin-pool /usr/local/bin/dolphin-pool; chmod 755 /usr/local/bin/dolphin-pool
-for f in redxai-crawl redxai-eval redxai-train; do fetch server/$f /usr/local/bin/$f; chmod 755 /usr/local/bin/$f; done
+for f in redxai-crawl redxai-eval redxai-train vortex-preload; do fetch server/$f /usr/local/bin/$f; chmod 755 /usr/local/bin/$f; done
 mkdir -p /opt/dolphin/redxai /etc/dolphin/redxai /opt/dolphin/audio; fetch server/audio/gen.py /opt/dolphin/audio/gen.py
 fetch server/media-setup.sh /opt/dolphin/media-setup.sh
 [ "${WITH_MEDIA:-0}" = 1 ] && { log "Installing image + audio generation (large, slow)"; bash /opt/dolphin/media-setup.sh >/opt/dolphin/cache/media-setup.log 2>&1 || true; }
 
 log "Building gateway (crypto backend: $CRYPTO_TAG)"
 GW=/opt/dolphin/src-gateway; rm -rf $GW; mkdir -p $GW
-for f in go.mod main.go providers.go ollama.go redxai.go media.go crypto_stub.go crypto_std.go crypto_rsx.go; do fetch gateway/$f $GW/$f; done
+for f in go.mod main.go providers.go ollama.go redxai.go media.go learn.go storage.go crypto_stub.go crypto_std.go crypto_rsx.go; do fetch gateway/$f $GW/$f; done
 [ "$CRYPTO_TAG" = rsx ] || rm -f $GW/crypto_rsx.go
 (cd $GW && CGO_ENABLED=0 go build -tags "$CRYPTO_TAG" -trimpath -ldflags="-s -w" -o /usr/local/bin/dolphin-gateway .)
 

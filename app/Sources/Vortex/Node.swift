@@ -78,7 +78,7 @@ final class NodeManager: ObservableObject {
     func killLocal() {
         for p in [tunnel, worker] { if p?.isRunning == true { p?.terminate() } }
         tunnel = nil; worker = nil
-        Self.run("/usr/bin/pkill", ["-f", "Dolphino.app/Contents/Resources/ggml-rpc-server"])
+        Self.run("/usr/bin/pkill", ["-f", "Vortex.app/Contents/Resources/ggml-rpc-server"])
     }
 
     /// Quit: never leave the worker running; tell the server to stop pooling.
@@ -110,7 +110,7 @@ struct NodeSettings: View {
                     Spacer()
                     Text("Server pool: \(node.serverPool)").foregroundStyle(.secondary)
                 }
-                Text("Off by default and turned off when Dolphino quits. When on, a Metal worker runs on this Mac (127.0.0.1 only) and an SSH reverse tunnel lets the server use it; the server restarts its model with --rpc, so the first reply after switching is slower. Over home internet this is usually slower than the server alone — use it to test.")
+                Text("Off by default and turned off when Red-XAI Vortex quits. When on, a Metal worker runs on this Mac (127.0.0.1 only) and an SSH reverse tunnel lets the server use it; the server restarts its model with --rpc, so the first reply after switching is slower. Over home internet this is usually slower than the server alone — use it to test.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)

@@ -19,9 +19,9 @@ enum Admin {
         let j = (try? JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? [:]
         if let h = resp as? HTTPURLResponse, h.statusCode >= 300 {
             let m = ((j["error"] as? [String: Any])?["message"] as? String) ?? "HTTP \(h.statusCode)"
-            throw NSError(domain: "Dolphino", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: m])
+            throw NSError(domain: "Vortex", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: m])
         }
-        if let e = j["error"] as? String { throw NSError(domain: "Dolphino", code: 1, userInfo: [NSLocalizedDescriptionKey: e]) }
+        if let e = j["error"] as? String { throw NSError(domain: "Vortex", code: 1, userInfo: [NSLocalizedDescriptionKey: e]) }
         return j
     }
 }
@@ -418,6 +418,7 @@ struct DocsView: View {
                     Label("If your public address isn't set up yet, apps on this Mac can use http://127.0.0.1:18091/v1 with this command running: ssh -N -L 18091:127.0.0.1:8091 root@\(UserDefaults.standard.string(forKey: "sshHost")?.components(separatedBy: "@").last ?? "YOUR_SERVER")", systemImage: "exclamationmark.triangle").font(.caption)
                 }
                 block("Endpoints", "Outside provider models (Providers tab) appear as ext-… ids and work the same way.\nGET  /v1/models\nPOST /v1/chat/completions\nPOST /v1/completions\nPOST /v1/embeddings   (model: nomic-embed-v1.5)\nMerge models: redx-merge-auto, redx-merge-draft-refine, redx-merge-panel, …")
+                block("Connect any app", "OpenAI-style apps: base URL \(Self.publicBase), API key redx_ai_… (or redx_xai_…)\nOllama-style apps: base URL \(Self.publicBase.replacingOccurrences(of: "/v1", with: "")) with header Authorization: Bearer <key> (/api/tags, /api/chat, /api/generate, /api/embed)\nModels: any installed model, vortex (learning model), redx-merge-<name>, ext-… providers\nCustom GPT Actions: import docs/openapi-gpt-actions.yaml, Authentication = API Key, Bearer. Needs the public https URL.")
                 block("Test with curl", "curl \(Self.publicBase)/chat/completions \\\n  -H \"Authorization: Bearer redx_ai_YOUR_KEY\" -H \"Content-Type: application/json\" \\\n  -d '{\"model\":\"qwen2.5-coder-14b\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'")
                 block("OmniRoute", "Providers → Add provider → OpenAI-compatible\n  Name:     RedX AI\n  Base URL: \(Self.publicBase)\n  API key:  redx_ai_YOUR_KEY\n  Models:   click Fetch models (or type e.g. dolphin2.7-mixtral-8x7b-iq4xs, redx-merge-auto)")
                 block("Continue (VS Code / JetBrains) — ~/.continue/config.yaml", "models:\n  - name: RedX Coder\n    provider: openai\n    model: qwen2.5-coder-14b\n    apiBase: \(Self.publicBase)\n    apiKey: redx_ai_YOUR_KEY\n    roles: [chat, edit, apply]\n  - name: RedX Autocomplete\n    provider: openai\n    model: dolphin3-llama3.2-3b-q4km\n    apiBase: \(Self.publicBase)\n    apiKey: redx_ai_YOUR_KEY\n    roles: [autocomplete]\n  - name: RedX Embed\n    provider: openai\n    model: nomic-embed-v1.5\n    apiBase: \(Self.publicBase)\n    apiKey: redx_ai_YOUR_KEY\n    roles: [embed]")

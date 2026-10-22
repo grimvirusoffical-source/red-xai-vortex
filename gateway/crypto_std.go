@@ -44,3 +44,5 @@ func cbOpen(key, nonce, aad, ct []byte) ([]byte, error) {
 	}
 	return a.Open(nil, nonce, ct, aad)
 }
+
+func cbSHA256(msg []byte) [32]byte { return sha256.Sum256(msg) }

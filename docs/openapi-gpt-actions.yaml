@@ -1,0 +1,139 @@
+openapi: 3.1.0
+info:
+  title: Red-XAI Vortex
+  version: "2.0"
+  description: Chat with your own models, merges and the Vortex learning model; generate images and audio; teach Vortex.
+servers:
+  - url: https://YOUR_DOMAIN
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+  schemas:
+    Message:
+      type: object
+      required: [role, content]
+      properties:
+        role: { type: string, enum: [system, user, assistant] }
+        content: { type: string }
+security:
+  - bearer: []
+paths:
+  /v1/models:
+    get:
+      operationId: listModels
+      summary: List the models, merges and Vortex versions this key may use
+      responses:
+        "200":
+          description: Models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { type: object, properties: { id: { type: string } } }
+  /v1/chat/completions:
+    post:
+      operationId: askModel
+      summary: Ask a model. Use model "vortex" for the learning model, "redx-merge-<name>" for a merge, or any id from listModels.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, messages]
+              properties:
+                model: { type: string, default: vortex }
+                messages: { type: array, items: { $ref: "#/components/schemas/Message" } }
+                max_tokens: { type: integer, default: 1024 }
+                temperature: { type: number, default: 0.7 }
+      responses:
+        "200":
+          description: Completion
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  model: { type: string }
+                  choices:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        message: { $ref: "#/components/schemas/Message" }
+  /v1/images/generations:
+    post:
+      operationId: generateImage
+      summary: Generate an image (needs the image scope). Takes about 15 s on CPU.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt: { type: string }
+                size: { type: string, enum: ["512x512", "768x768"], default: "512x512" }
+      responses:
+        "200":
+          description: Base64 PNG
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { type: object, properties: { b64_json: { type: string } } } }
+  /v1/audio/generations:
+    post:
+      operationId: generateAudio
+      summary: Generate music or sound (needs the audio scope). Slow on CPU.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt: { type: string }
+                duration: { type: number, default: 5, maximum: 30 }
+      responses:
+        "200":
+          description: Base64 WAV
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  b64_audio: { type: string }
+                  format: { type: string }
+  /v1/redxai/ingest:
+    post:
+      operationId: teachVortex
+      summary: Add a document to Vortex's memory (needs the train:submit scope)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+                source: { type: string, default: "gpt-action" }
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chunks_added: { type: integer }
+                  duplicates_skipped: { type: integer }

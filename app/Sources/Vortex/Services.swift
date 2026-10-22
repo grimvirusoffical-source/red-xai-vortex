@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 enum Keychain {
-    static let service = "com.redxai.dolphino"
+    static let service = "com.redxai.dolphino" // kept so existing Keychain items keep working
     static let account = "api-key"
     static func get() -> String? {
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
@@ -64,7 +64,7 @@ enum API {
         guard let u = url(base, "/models") else { throw URLError(.badURL) }
         var r = URLRequest(url: u); r.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         let (d, resp) = try await URLSession.shared.data(for: r)
-        if let h = resp as? HTTPURLResponse, h.statusCode != 200 { throw NSError(domain: "Dolphino", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(h.statusCode)"]) }
+        if let h = resp as? HTTPURLResponse, h.statusCode != 200 { throw NSError(domain: "Vortex", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(h.statusCode)"]) }
         let j = try JSONSerialization.jsonObject(with: d) as? [String: Any]
         return (j?["data"] as? [[String: Any]])?.compactMap { $0["id"] as? String } ?? []
     }
@@ -73,6 +73,8 @@ enum API {
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = 600
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.setValue("Bearer \(p.apiKey)", forHTTPHeaderField: "Authorization")
+        // training mode: let Vortex learn from whatever model is active (server must have learning on)
+        if UserDefaults.standard.bool(forKey: "trainingMode"), UserDefaults.standard.bool(forKey: "trainingConsent") { r.setValue("1", forHTTPHeaderField: "X-Vortex-Train") }
         var body: [String: Any] = ["model": p.model, "stream": true,
             "messages": messages.map { ["role": $0.role, "content": $0.content] },
             "temperature": p.temperature, "top_p": p.topP, "top_k": p.topK,
@@ -81,7 +83,7 @@ enum API {
         r.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (bytes, resp) = try await URLSession.shared.bytes(for: r)
         if let h = resp as? HTTPURLResponse, h.statusCode != 200 {
-            throw NSError(domain: "Dolphino", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: "Server returned HTTP \(h.statusCode)"])
+            throw NSError(domain: "Vortex", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: "Server returned HTTP \(h.statusCode)"])
         }
         var tps: Double?
         for try await line in bytes.lines {

@@ -13,7 +13,9 @@ final class ChatStore: ObservableObject {
     private var task: Task<Void, Never>?
 
     static var dir: URL {
-        let d = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Dolphino")
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let d = base.appendingPathComponent("Red-XAI Vortex"), old = base.appendingPathComponent("Dolphino")
+        if !FileManager.default.fileExists(atPath: d.path), FileManager.default.fileExists(atPath: old.path) { try? FileManager.default.moveItem(at: old, to: d) } // one-time move from the old app name
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         return d
     }
@@ -61,7 +63,7 @@ final class ChatStore: ObservableObject {
         // "Show replies only when finished" (default ON): collect the whole reply, show a typing indicator, then render it at once.
         let whole = UserDefaults.standard.object(forKey: "replyWhenFinished") as? Bool ?? true
         let buffer = ReplyBuffer()
-        if whole { status = "Dolphino is typing…" }
+        if whole { status = "Vortex is typing…" }
         if params.model.hasPrefix("redx-merge-") {
             let n = HubStore.shared.merges.first { "redx-merge-\($0.name)" == params.model }?.stepCount ?? 2
             status = "Thinking with \(n) models…"
@@ -136,7 +138,7 @@ final class ChatStore: ObservableObject {
             let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
             if let c = (try? dec.decode([Chat].self, from: d)) ?? (try? JSONDecoder().decode([Chat].self, from: d)) {
                 let have = Set(chats.map(\.id)); chats += c.filter { !have.contains($0.id) }; save(); status = "Imported \(c.count) chats"
-            } else { status = "Import failed: not a Dolphino export" }
+            } else { status = "Import failed: not a Red-XAI Vortex export" }
         }
     }
     /// OpenAI/ShareGPT-style chat JSONL: one {"messages":[...]} object per conversation.

@@ -4,7 +4,7 @@ Supported: Ubuntu 22.04/24.04 and Debian 12, x86_64 or arm64. A GPU is optional;
 
 ## Install
 ```bash
-git clone https://github.com/grimvirusoffical-source/dolphino && cd dolphino
+git clone https://github.com/grimvirusoffical-source/red-xai-vortex && cd dolphino
 sudo bash server/install.sh                      # portable crypto backend
 # options: STARTER=qwen2.5-coder-7b  LLAMA_TAG=<llama.cpp tag>  CRYPTO_TAG=stdcrypto
 ```

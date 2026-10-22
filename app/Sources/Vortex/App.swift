@@ -10,7 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for k in ["serverURL", "sshLocalPort", "sshRemotePort"] { UserDefaults.standard.removeObject(forKey: k) }
             UserDefaults.standard.set(true, forKey: "migratedGateway1")
         }
-        Process.launchedProcess(launchPath: "/usr/bin/pkill", arguments: ["-f", "Dolphino.app/Contents/Resources/ggml-rpc-server"])
+        Process.launchedProcess(launchPath: "/usr/bin/pkill", arguments: ["-f", "Vortex.app/Contents/Resources/ggml-rpc-server"])
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
     func applicationWillTerminate(_ n: Notification) { MainActor.assumeIsolated {
@@ -20,14 +20,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @main
-struct DolphinoApp: App {
+struct VortexApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject var store = ChatStore()
     @StateObject var tunnel = TunnelManager()
     @AppStorage("theme") var theme = "system"
 
     var body: some Scene {
-        WindowGroup("Dolphino") {
+        WindowGroup("Red-XAI Vortex") {
             ContentView().environmentObject(store).environmentObject(tunnel)
                 .preferredColorScheme(theme == "dark" ? .dark : theme == "light" ? .light : nil)
                 .frame(minWidth: 760, minHeight: 500)

@@ -31,20 +31,23 @@ const (
 )
 
 type RXConfig struct {
-	Base        string  `json:"base"`
-	Coder       string  `json:"coder"`
-	Reasoner    string  `json:"reasoner"`
-	EmbedModel  string  `json:"embed_model"`
-	Persona     string  `json:"persona"`
-	RagK        int     `json:"rag_k"`
-	RagMinScore float64 `json:"rag_min_score"`
-	Active      string  `json:"active_version"` // "" = base only, or "v1", "v2"…
+	Base          string  `json:"base"`
+	Coder         string  `json:"coder"`
+	Reasoner      string  `json:"reasoner"`
+	EmbedModel    string  `json:"embed_model"`
+	Persona       string  `json:"persona"`
+	RagK          int     `json:"rag_k"`
+	RagMinScore   float64 `json:"rag_min_score"`
+	Active        string  `json:"active_version"`  // "" = base only, or "v1", "v2"…
+	Learn         bool    `json:"learn"`           // capture active-model chats (training mode) for distillation
+	LearnMinScore float64 `json:"learn_min_score"` // judge score needed to be exported
+	OffloadPct    int     `json:"offload_pct"`     // disk use % that triggers training-data offload
 }
 
 var rxDefault = RXConfig{
 	Base: "dolphin2.7-mixtral-8x7b-iq4xs", Coder: "qwen2.5-coder-14b", Reasoner: "r1-distill-qwen-14b", EmbedModel: "nomic-embed-v1.5",
-	Persona: "You are Red-XAI, the assistant built by Red-XAI. You are direct, warm and precise. Use the KNOWLEDGE section when it is relevant and say when you are unsure. Never invent facts about Red-XAI.",
-	RagK:    4, RagMinScore: 0.45,
+	Persona: "You are Vortex, the assistant of Red-XAI Vortex, built by Red-XAI. You are direct, warm and precise. Use the KNOWLEDGE section when it is relevant and say when you are unsure. Never invent facts about Red-XAI or Vortex.",
+	RagK:    4, RagMinScore: 0.45, LearnMinScore: 8, OffloadPct: 80,
 }
 
 type rxChunkT struct {
@@ -628,6 +631,7 @@ func redxaiAdmin(w http.ResponseWriter, r *http.Request, p string, in map[string
 	case sub == "export" && r.Method == "POST":
 		// plaintext JSONL for the trainer (root-only file); good = thumbs up, or a correction replaces the reply
 		ds := readDataset()
+		scores := loadScores()
 		os.MkdirAll(filepath.Join(rxDir, "export"), 0700)
 		name := filepath.Join(rxDir, "export", "train-"+time.Now().Format("20060102-150405")+".jsonl")
 		f, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
@@ -639,7 +643,11 @@ func redxaiAdmin(w http.ResponseWriter, r *http.Request, p string, in map[string
 		for _, d := range ds {
 			msgs, _ := d["messages"].([]any)
 			reply, _ := d["response"].(string)
-			if c, _ := d["correction"].(string); c != "" {
+			if d["kind"] == "distill" {
+				if sc, ok := scores[fmt.Sprint(d["id"])]; !ok || sc < rxConfig().LearnMinScore {
+					continue
+				}
+			} else if c, _ := d["correction"].(string); c != "" {
 				reply = c
 			} else if v, _ := d["rating"].(float64); v <= 0 {
 				continue
@@ -655,6 +663,15 @@ func redxaiAdmin(w http.ResponseWriter, r *http.Request, p string, in map[string
 		}
 		f.Close()
 		json.NewEncoder(w).Encode(map[string]any{"ok": true, "file": name, "examples": n})
+	case sub == "distill" && r.Method == "GET":
+		json.NewEncoder(w).Encode(distillStats())
+	case sub == "distill/score" && r.Method == "POST":
+		lim := 50
+		if v, ok := in["limit"].(float64); ok && v > 0 {
+			lim = int(v)
+		}
+		go distillScore(lim)
+		w.Write([]byte(`{"ok":true,"started":true}`))
 	case sub == "eval" && r.Method == "POST":
 		cmd := exec.Command("/usr/local/bin/redxai-eval")
 		if err := cmd.Start(); err != nil {
