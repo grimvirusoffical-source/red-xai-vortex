@@ -20,7 +20,7 @@ These arrived in app builds 14 to 19 (version 2.2).
 ## Plugins and the Plugin Store (build 15)
 - Plugins give models **tools** to call. The 🔧 button in the chat toolbar switches tool use on or off for the chat.
 - Starters: Web Search, File Reader, Calculator, Weather, Date & Time and Wikipedia. Install, enable or remove them in **Hub → Plugins** or in the **Plugin Store** tab of the model browser.
-- **Plugin maker:** in Hub → Plugins click **New plugin**. Each tool is one of:
+- **Plugin maker:** in Hub → Plugins, describe the plugin you want (for example "Convert currencies using a free exchange-rate API") and click **Generate**. The `vortex` model writes a draft. Review it, click **Test first tool**, then **Install** or **Discard**. You can also use **Import plugin.json…**. Each tool is one of:
   - **HTTP**: a URL template whose `{arguments}` are filled in.
   - **JavaScript**: runs in a sandbox with no network or file access and a time limit.
 - Models with native tool calling (for example `qwen2.5-14b`) use it. Others, including `vortex` and `red-xai`, use a text protocol that the app understands. Each tool call is listed under the reply.
@@ -28,7 +28,7 @@ These arrived in app builds 14 to 19 (version 2.2).
 ## Skills (build 16)
 - A skill is saved instructions plus a set of tools, and optionally a preferred model.
 - Starters: Researcher, Code Reviewer, Summarize a file, Math Tutor and Trip Weather.
-- Pick one in the chat toolbar, or type `/researcher` (any skill id) at the start of a message. Type `/off` or pick **No skill** to stop.
+- Pick one in the chat toolbar, or type `/researcher` (any skill id) at the start of a message. Type `/noskill` or pick **No skill** to stop.
 - Create and edit skills in **Hub → Skills**.
 
 ## MCP servers (build 17)
@@ -43,7 +43,7 @@ These arrived in app builds 14 to 19 (version 2.2).
 - Click the phone button. The first time, macOS asks for microphone access: click **Allow**.
 - **Hold to talk**, or switch on **hands-free**, which starts and stops listening when you speak.
 - Everything runs on your Mac. whisper.cpp turns your speech into text, the reply is sent like a normal message, and Piper reads it aloud. If Piper is missing, the built-in macOS voice is used.
-- Voice files are stored in `~/Library/Application Support/Red-XAI Vortex/voice`. **Install voice tools** sets them up if they are missing.
+- Voice files are stored in `~/Library/Application Support/Red-XAI Vortex/voice`. If whisper.cpp or Piper is missing, the call window offers **Set up** to install them.
 
 ## Group chat (build 19)
 - Click the people button, add two or more models and set their turn order. Each reply is labelled and coloured by its model.
