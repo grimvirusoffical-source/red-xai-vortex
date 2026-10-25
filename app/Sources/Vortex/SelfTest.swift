@@ -61,6 +61,8 @@ import AVFoundation
         if let a = ServerStore.shared.active { _ = await ServerStore.shared.ping(a) }   // wait for the tunnel before the first API call
         // ---- chat & model picker
         var models: [String] = []
+        // The link helper starts with the app; give it up to 15 s before the first network check.
+        if RedXLink.enabled { for _ in 0..<75 where !(await RedXLink.statusOK()) { try? await Task.sleep(for: .milliseconds(200)) } }
         await t("Model picker", "GET /v1/models via API.models") {
             models = try await API.models(base: params.baseURL, key: params.apiKey)
             try expect(models.contains("vortex") && models.contains("red-xai"), "vortex/red-xai missing: \(models)")
@@ -163,7 +165,8 @@ import AVFoundation
             guard let r = await RedXLink.check(key: Keychain.get() ?? "", servers: list) else { throw err("check did not run") }
             let rows = r["results"] as? [[String: Any]] ?? []
             try expect(r["ok"] as? Bool == true, rows.map { "s\($0["server"] ?? "?"): \($0["error"] ?? "status \($0["status"] ?? "?")")" }.joined(separator: "; "))
-            return rows.map { "server \($0["server"] ?? "?"): \($0["models"] ?? 0) models in \($0["ms"] ?? 0) ms" }.joined(separator: ", ")
+            try expect(rows.allSatisfy { $0["forward_secrecy"] as? Bool == true }, "not every server negotiated rxl 2 (forward secrecy): " + rows.map { "s\($0["server"] ?? "?") rxl \($0["rxl"] ?? "?")" }.joined(separator: ", "))
+            return rows.map { "server \($0["server"] ?? "?"): rxl \($0["rxl"] ?? "?") forward-secret, \($0["models"] ?? 0) models in \($0["ms"] ?? 0) ms" }.joined(separator: ", ")
         }
         await t("RedX Link", "chat over the link (vortex)") {
             var p = params; p.baseURL = RedXLink.chatURL; p.model = "vortex"; p.maxTokens = 12

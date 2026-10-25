@@ -408,7 +408,10 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
             case "claude-code":
                 let launcher = home + "/.local/bin/claude-vortex"
                 if FileManager.default.isExecutableFile(atPath: launcher) {
-                    let out = try await runProcess(launcher, ["-p", "Reply with exactly: VORTEX_OK"], env: [:], timeout: 300)
+                    // Minimal probe: no built-in tools, MCP, skills or 20k-token default system prompt, so a local CPU model answers in seconds.
+                    let out = try await runProcess(launcher, ["-p", "--tools", "", "--strict-mcp-config", "--disable-slash-commands",
+                                                              "--system-prompt", "You are Vortex. Follow the user's instruction exactly.",
+                                                              "Reply with exactly: VORTEX_OK"], env: [:], timeout: 90)
                     if out.combined.contains("VORTEX_OK") { result = "claude-vortex -p → VORTEX_OK" }
                     else { result = "claude-vortex didn't answer (\(out.status)); /v1/messages: " + (try await httpProbeAnthropic(base: b, key: key, model: st.model)) }
                 } else { result = "/v1/messages: " + (try await httpProbeAnthropic(base: b, key: key, model: st.model)) }

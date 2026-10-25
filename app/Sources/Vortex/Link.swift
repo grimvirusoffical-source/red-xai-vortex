@@ -70,7 +70,7 @@ final class RedXLink: ObservableObject {
             let ok = await Self.statusOK()
             await MainActor.run {
                 RedXLink.shared.proc = p; RedXLink.shared.running = ok
-                RedXLink.shared.status = ok ? "connected · \(list.count) server(s), encrypted with Red-SecretsXAI" : "helper started but not answering"
+                RedXLink.shared.status = ok ? "connected · \(list.count) server(s), encrypted with Red-SecretsXAI (forward secrecy)" : "helper started but not answering"
             }
         }
     }
