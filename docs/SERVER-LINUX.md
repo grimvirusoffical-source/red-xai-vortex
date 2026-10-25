@@ -4,7 +4,7 @@ Supported: Ubuntu 22.04/24.04 and Debian 12, x86_64 or arm64. A GPU is optional;
 
 ## Install
 ```bash
-git clone https://github.com/grimvirusoffical-source/red-xai-vortex && cd dolphino
+git clone https://github.com/grimvirusoffical-source/red-xai-vortex && cd vortex
 sudo bash server/install.sh                      # portable crypto backend
 # options: STARTER=qwen2.5-coder-7b  LLAMA_TAG=<llama.cpp tag>  CRYPTO_TAG=stdcrypto
 ```
@@ -13,7 +13,7 @@ The script:
 2. installs `dolphin-models`, the catalog and `dolphin-pool`
 3. builds `dolphin-gateway` and runs it as a systemd service
 4. creates `dolphin-llm.service` (127.0.0.1:8090) and `dolphin-gateway.service` (127.0.0.1:8091 public API, 127.0.0.1:8092 admin)
-5. pulls a small starter model and writes an admin key to `/root/dolphino-admin.key` (mode 600)
+5. pulls a small starter model and writes an admin key to `/root/vortex-admin.key` (mode 600)
 
 Everything binds to localhost. Keep the firewall at SSH-only and use an SSH tunnel or a
 tunnel/reverse proxy (see PUBLIC-ACCESS.md).

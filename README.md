@@ -58,7 +58,7 @@ cd app && ./build.sh            # ad-hoc signed; set SIGN_ID to sign with your D
 cp -R "build/Red-XAI Vortex.app" /Applications/
 ```
 Then open Settings → Connection, set the SSH host (`root@YOUR_SERVER`), and paste the admin key
-from `/root/dolphino-admin.key` on the server. See [docs/MAC-APP.md](docs/MAC-APP.md).
+from `/root/vortex-admin.key` on the server. See [docs/MAC-APP.md](docs/MAC-APP.md).
 
 ### 3. Other apps
 Create a key under **Library, Merges & Keys → API Keys**, then point any OpenAI client at

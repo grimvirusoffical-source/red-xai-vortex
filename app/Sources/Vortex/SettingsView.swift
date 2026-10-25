@@ -89,7 +89,7 @@ struct ModelSettings: View {
                     ForEach(Array(Set(store.availableModels + Defaults.knownModels + [model])).sorted(), id: \.self) { Text($0).tag($0) }
                 }
                 TextField("Custom model id", text: $model)
-                Text("dolphin2.7-mixtral-8x7b-iq4xs = biggest, default (47B MoE, ~22 tokens/s). dolphin3-mistral-24b-q6k = Dolphin 3.0 24B (~11 tokens/s). dolphin3-llama3.1-8b-q8 = 8B (~22 tokens/s). dolphin3-llama3.2-3b-q4km = fastest (~79 tokens/s). Switching loads the model on the server; the first reply takes a few extra seconds.")
+                Text("vortex = default Red-XAI learning model. red-xai = production router. qwen2.5-coder-14b = coding. Other installed models appear in the Hub. Switching loads the model on the server; the first reply takes a few extra seconds.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Sampling") {

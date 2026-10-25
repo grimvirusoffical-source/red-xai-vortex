@@ -7,3 +7,9 @@ build/
 *.gguf
 .DS_Store
 gateway/dolphin-gateway
+
+# Built installers (hosted on download page)
+dist/
+*.tar.gz
+*.zip
+*.dmg

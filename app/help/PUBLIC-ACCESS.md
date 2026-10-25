@@ -5,8 +5,8 @@ Only expose port **8091** (the keyed API), never 8090 (the model server) or 8092
 ## Cloudflare Tunnel (no open ports)
 ```bash
 cloudflared tunnel login
-cloudflared tunnel create dolphino
-cloudflared tunnel route dns dolphino ai.YOUR_DOMAIN
+cloudflared tunnel create vortex
+cloudflared tunnel route dns vortex ai.YOUR_DOMAIN
 cat > /etc/cloudflared/config.yml <<CFG
 tunnel: <TUNNEL_ID>
 credentials-file: /etc/cloudflared/<TUNNEL_ID>.json

@@ -34,9 +34,9 @@ enum Defaults {
     static let sshHost = "root@YOUR_SERVER"
     static let sshLocalPort = 18092
     static let sshRemotePort = 8092
-    static let model = "dolphin2.7-mixtral-8x7b-iq4xs"
+    static let model = "vortex"
     static let fallbackModel = "dolphin3-llama3.1-8b-q8"
-    static let knownModels = ["dolphin2.7-mixtral-8x7b-iq4xs", "dolphin3-mistral-24b-q6k", "dolphin3-llama3.1-8b-q8", "dolphin3-llama3.2-3b-q4km"]
+    static let knownModels = ["vortex", "red-xai", "qwen2.5-coder-14b", "r1-distill-qwen-14b", "mistral-small-24b", "dolphin2.7-mixtral-8x7b-iq4xs", "dolphin3-mistral-24b-q6k", "dolphin3-llama3.1-8b-q8", "dolphin3-llama3.2-3b-q4km"]
     static let systemPrompt = "You are Vortex, the Red-XAI Vortex assistant: sharp, friendly and direct. Answer clearly."
     static let personas: [Persona] = [
         Persona(name: "Vortex", prompt: systemPrompt),

@@ -195,7 +195,7 @@ final class ServerStore: ObservableObject {
             let (code, _) = ssh("sudo -n true 2>/dev/null || [ $(id -u) = 0 ] || exit 9; sudo bash -s 2>&1 || bash -s", stdin: script, stream: true)
             var msg = code == 0 ? "\nInstall finished.\n" : "\nInstall failed (exit \(code)).\n"
             if code == 0 {
-                let (c2, k) = ssh("sudo cat /root/dolphino-admin.key 2>/dev/null || cat /root/dolphino-admin.key", stream: false)
+                let (c2, k) = ssh("sudo cat /root/vortex-admin.key 2>/dev/null || cat /root/vortex-admin.key", stream: false)
                 let key = k.trimmingCharacters(in: .whitespacesAndNewlines)
                 if c2 == 0 && key.hasPrefix("redx_ai_") {
                     Keychain.set(key, account: s.keychainAccount); msg += "Admin key saved to Keychain.\n"
@@ -256,7 +256,7 @@ struct ServersView: View {
         .sheet(item: $keyEdit) { s in
             VStack(alignment: .leading, spacing: 10) {
                 Text("Admin key for \(s.name)").font(.headline)
-                SecureField("redx_ai_… (from /root/dolphino-admin.key)", text: $keyText)
+                SecureField("redx_ai_… (from /root/vortex-admin.key)", text: $keyText)
                 HStack { Spacer(); Button("Cancel") { keyEdit = nil }
                     Button("Save") { Keychain.set(keyText, account: s.keychainAccount); if s.id == ss.activeID { Keychain.set(keyText) }; keyEdit = nil }.disabled(!keyText.hasPrefix("redx_ai_")) }
             }.padding(20).frame(width: 460)

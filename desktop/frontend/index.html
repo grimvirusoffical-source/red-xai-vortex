@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Red-XAI Vortex</title>
+<style>
+:root{--bg:#0b0f14;--card:#141a22;--fg:#e8eef6;--muted:#8b9bb0;--accent:#5b8cff;--ok:#3dd68c;--bad:#ff6b6b}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--fg);height:100vh;display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid #1e2733;background:#0e131a}
+header img{width:28px;height:28px;border-radius:6px}
+header h1{font-size:15px;margin:0;font-weight:650}
+header .tabs{display:flex;gap:6px;margin-left:18px}
+header .tabs button{background:transparent;border:0;color:var(--muted);padding:6px 10px;border-radius:6px;cursor:pointer}
+header .tabs button.on{background:#1a2433;color:var(--fg)}
+main{flex:1;display:grid;grid-template-columns:240px 1fr;min-height:0}
+aside{border-right:1px solid #1e2733;padding:10px;overflow:auto}
+aside button{display:block;width:100%;text-align:left;background:transparent;border:0;color:var(--fg);padding:8px 10px;border-radius:6px;cursor:pointer;margin-bottom:4px}
+aside button:hover,aside button.on{background:#1a2433}
+.panel{display:none;padding:14px;overflow:auto;min-height:0}
+.panel.on{display:block}
+.card{background:var(--card);border:1px solid #1e2733;border-radius:10px;padding:12px;margin-bottom:10px}
+label{display:block;color:var(--muted);font-size:12px;margin:8px 0 4px}
+input,select,textarea{width:100%;background:#0e131a;border:1px solid #243041;color:var(--fg);border-radius:6px;padding:8px}
+button.primary{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer;font-weight:600}
+button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);border-radius:6px;padding:8px 12px;cursor:pointer}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.msg{white-space:pre-wrap;padding:8px 10px;border-radius:8px;margin:6px 0;max-width:80%}
+.msg.user{background:#1a2a44;margin-left:auto}
+.msg.assistant{background:#162018}
+#chatlog{height:calc(100vh - 220px);overflow:auto;padding:8px}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#1a2433;color:var(--muted);font-size:11px}
+.ok{color:var(--ok)}.bad{color:var(--bad)}
+</style>
+</head>
+<body>
+<header>
+  <img id="logo" alt="Vortex" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='12' fill='%23141a22'/><path d='M32 10 L54 48 H10 Z' fill='%235b8cff'/><circle cx='32' cy='38' r='6' fill='%23e8eef6'/></svg>"/>
+  <h1>Red-XAI Vortex</h1>
+  <div class="tabs">
+    <button class="on" data-tab="chat">Chat</button>
+    <button data-tab="agents">Agents</button>
+    <button data-tab="integrations">Integrations</button>
+    <button data-tab="plugins">Plugins</button>
+    <button data-tab="settings">Settings</button>
+  </div>
+  <span class="pill" id="status">starting…</span>
+</header>
+<main>
+  <aside id="chatside">
+    <button class="primary" id="newchat" style="margin-bottom:10px">+ New chat</button>
+    <div id="chatlist"></div>
+  </aside>
+  <section class="panel on" id="tab-chat">
+    <div class="row" style="margin-bottom:8px">
+      <select id="agentPick" style="max-width:220px"></select>
+      <select id="modelPick" style="max-width:220px"></select>
+      <span class="pill" id="conn">offline</span>
+    </div>
+    <div id="chatlog"></div>
+    <div class="row" style="margin-top:8px">
+      <textarea id="prompt" rows="2" placeholder="Message Vortex…"></textarea>
+      <button class="primary" id="send">Send</button>
+    </div>
+  </section>
+  <section class="panel" id="tab-agents" style="grid-column:1/-1">
+    <div class="card">
+      <h3 style="margin:0 0 8px">Agents</h3>
+      <p style="color:var(--muted);margin:0 0 10px">Create an agent that can use PC control (Allow/Deny), web, files, skills/plugins. Pick any Vortex model or an external AI via API key (keys stay in the OS keychain).</p>
+      <div id="agentList"></div>
+      <hr style="border-color:#1e2733;margin:14px 0"/>
+      <div class="row">
+        <input id="aName" placeholder="Name" style="max-width:160px"/>
+        <select id="aProv" style="max-width:180px">
+          <option value="vortex">Vortex (Red-XAI)</option>
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="google">Google AI</option>
+          <option value="xai">xAI</option>
+          <option value="openrouter">OpenRouter</option>
+          <option value="ollama">Ollama</option>
+          <option value="openai_compat">OpenAI-compatible</option>
+        </select>
+        <input id="aModel" placeholder="Model id" value="vortex" style="max-width:160px"/>
+        <input id="aBase" placeholder="Base URL (optional)" style="max-width:220px"/>
+        <input id="aKey" type="password" placeholder="API key (external)" style="max-width:180px"/>
+        <button class="primary" id="aSave">Save agent</button>
+        <button class="ghost" id="aTest">Test Vortex E2E</button>
+      </div>
+      <p id="aMsg" class="ok"></p>
+    </div>
+  </section>
+  <section class="panel" id="tab-integrations" style="grid-column:1/-1">
+    <div class="card">
+      <h3>One-click integrations</h3>
+      <p style="color:var(--muted)">Point tools at your Vortex gateway. OmniRoute and VS Code / Continue are one-click.</p>
+      <div class="row">
+        <button class="primary" data-int="omniroute">Connect OmniRoute</button>
+        <button class="primary" data-int="vscode">Connect VS Code / Continue</button>
+        <button class="ghost" data-int="test-omniroute">Test OmniRoute</button>
+        <button class="ghost" data-int="test-vscode">Test VS Code</button>
+      </div>
+      <pre id="intLog" style="color:var(--muted);white-space:pre-wrap"></pre>
+    </div>
+  </section>
+  <section class="panel" id="tab-plugins" style="grid-column:1/-1">
+    <div class="card">
+      <h3>Plugins & Skill Maker</h3>
+      <textarea id="maker" rows="3" placeholder="Describe a plugin or skill…"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" id="makePlugin">Generate plugin</button>
+        <button class="ghost" id="uploadPlugin">Upload to store (RedX sign-in)</button>
+        <button class="ghost" id="refreshStore">Refresh store</button>
+      </div>
+      <pre id="pluginOut" style="color:var(--muted);white-space:pre-wrap"></pre>
+    </div>
+  </section>
+  <section class="panel" id="tab-settings" style="grid-column:1/-1">
+    <div class="card">
+      <h3>Connection</h3>
+      <label>Gateway base URL</label>
+      <input id="baseURL" placeholder="https://ai.red-xai.com/v1 or http://127.0.0.1:18091/v1"/>
+      <label>API key (stored in OS keychain)</label>
+      <input id="apiKey" type="password" placeholder="redx_ai_…"/>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="saveSettings">Save</button>
+        <button class="ghost" id="probe">Test connection</button>
+      </div>
+      <p id="setMsg"></p>
+    </div>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

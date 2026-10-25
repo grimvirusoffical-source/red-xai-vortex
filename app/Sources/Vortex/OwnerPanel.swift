@@ -39,7 +39,7 @@ enum OwnerWipe {
         try? fm.removeItem(atPath: app)
         if let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
             try? fm.removeItem(at: support.appendingPathComponent("Red-XAI Vortex"))
-            try? fm.removeItem(at: support.appendingPathComponent("Dolphino"))
+            try? fm.removeItem(at: support.appendingPathComponent("Vortex"))
         }
         // Keychain: all items for our service
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Keychain.service]

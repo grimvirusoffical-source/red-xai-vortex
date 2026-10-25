@@ -246,6 +246,7 @@ struct HubView: View {
                 PluginsView().tabItem { Label("Plugins", systemImage: "puzzlepiece") }.tag("plugins")
                 SkillsView().tabItem { Label("Skills", systemImage: "wand.and.stars") }.tag("skills")
                 MCPView().tabItem { Label("MCP", systemImage: "server.rack") }.tag("mcp")
+                AgentsView().tabItem { Label("Agents", systemImage: "person.3") }.tag("agents")
                 PCControlView().tabItem { Label("PC Control", systemImage: "desktopcomputer") }.tag("pc")
                 IntegrationsView().tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }.tag("integrations")
                 HelpView().tabItem { Label("Help", systemImage: "questionmark.circle") }.tag("help")
@@ -336,6 +337,11 @@ struct MergesView: View {
     @Local var judge = ""
     @Local var name = ""
     @Local var filter = ""
+    @Local var target = "vortex"
+    @Local var teachPrompts = 8
+    @Local var jobStatus = ""
+    @Local var jobProgress = ""
+    @Local var panel = "teach" // teach | classic
     var all: [(String, String)] {
         hub.catalog.filter { $0.installed && $0.category != "embeddings" }.map { ($0.id, "Server · \($0.category)") } +
         ps.providers.flatMap { p in p.models.map { ($0.id, "Provider · \(p.name) · \($0.name)") } }
@@ -343,11 +349,59 @@ struct MergesView: View {
     static let modes = [("draft_refine", "Draft + Refine", "Model #1 drafts fast, model #2 improves it. Pick exactly 2."),
                         ("panel_judge", "Panel + Judge", "2–3 models answer, the judge picks or combines the best."),
                         ("router", "Router", "Auto-picks one per message: code → coder, reasoning → reasoner, else general.")]
-    var valid: Bool {
+    var validClassic: Bool {
         name.range(of: "^[a-z0-9-]{1,32}$", options: .regularExpression) != nil && !picked.isEmpty && picked.count <= 3 &&
         (mode != "draft_refine" || picked.count == 2) && (mode != "panel_judge" || (picked.count >= 2 && !judge.isEmpty))
     }
+    var validTeach: Bool { (1...3).contains(picked.count) && (target == "vortex" || target == "red-xai") }
     var body: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $panel) {
+                Text("Teach Vortex (distill)").tag("teach")
+                Text("Classic merges").tag("classic")
+            }.pickerStyle(.segmented).padding(8)
+            if panel == "teach" { teachPane } else { classicPane }
+        }
+        .task { await ps.load(); if hub.catalog.isEmpty { try? await hub.loadCatalog() }; try? await hub.loadMerges(); await pollJob(once: true) }
+    }
+    var teachPane: some View {
+        HSplitView {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("1. Pick 1–3 source models").font(.headline)
+                Text("Their answers become training samples for the Red-XAI target.").font(.caption).foregroundStyle(.secondary)
+                TextField("Filter", text: $filter)
+                List(all.filter { filter.isEmpty || $0.0.localizedCaseInsensitiveContains(filter) }, id: \.0) { m in
+                    Toggle(isOn: Binding(get: { picked.contains(m.0) }, set: { on in
+                        if on { if picked.count < 3 { picked.append(m.0) } } else { picked.removeAll { $0 == m.0 } } })) {
+                        VStack(alignment: .leading) {
+                            HStack { Text(m.0); if let i = picked.firstIndex(of: m.0) { Text("#\(i + 1)").font(.caption.bold()).foregroundStyle(.secondary) } }
+                            Text(m.1).font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }.disabled(!picked.contains(m.0) && picked.count >= 3)
+                }
+                Text("2. Target").font(.headline)
+                Picker("Target", selection: $target) { Text("vortex").tag("vortex"); Text("red-xai").tag("red-xai") }.pickerStyle(.segmented)
+                Stepper("Prompts: \(teachPrompts)", value: $teachPrompts, in: 1...20)
+                Button {
+                    Task { await startTeach() }
+                } label: { Label("Start distillation", systemImage: "flame") }
+                    .buttonStyle(.borderedProminent).disabled(!validTeach || jobStatus == "running" || jobStatus == "queued" || jobStatus == "exporting" || jobStatus == "training")
+                if !validTeach { Text("Pick 1–3 sources and a target.").font(.caption).foregroundStyle(.orange) }
+                if !jobProgress.isEmpty {
+                    Text(jobProgress).font(.caption.monospaced()).textSelection(.enabled)
+                        .foregroundStyle(jobStatus == "error" ? .red : (jobStatus == "done" ? .green : .primary))
+                }
+                Text("Progress updates while the job runs. Samples are sealed server-side; keys are never shown.").font(.caption2).foregroundStyle(.secondary)
+            }.padding().frame(minWidth: 380)
+            VStack(alignment: .leading) {
+                Text("How it works").font(.headline).padding([.top, .horizontal])
+                Text("Sources answer a prompt bank → preferred replies land in the distill dataset → export JSONL → optional LoRA train into \(target). Classic merge modes stay on the other tab.")
+                    .font(.callout).foregroundStyle(.secondary).padding(.horizontal)
+                Spacer()
+            }.frame(minWidth: 280)
+        }
+    }
+    var classicPane: some View {
         HSplitView {
             VStack(alignment: .leading, spacing: 8) {
                 Text("1. Tick up to 3 models").font(.headline)
@@ -371,11 +425,10 @@ struct MergesView: View {
                     TextField("Name (a-z, 0-9, -)", text: $name)
                     Button { hub.saveMerge(MergeDef(name: name, mode: mode, models: picked, judge: mode == "panel_judge" ? judge : "", note: ""))
                         picked = []; name = ""; judge = "" } label: { Label("Merge", systemImage: "arrow.triangle.merge") }
-                        .buttonStyle(.borderedProminent).disabled(!valid)
+                        .buttonStyle(.borderedProminent).disabled(!validClassic)
                 }
-                if !valid { Text(whyInvalid).font(.caption).foregroundStyle(.orange) }
+                if !validClassic { Text(whyInvalid).font(.caption).foregroundStyle(.orange) }
                 if !hub.mergeStatus.isEmpty { Text(hub.mergeStatus).font(.caption).textSelection(.enabled).foregroundStyle(hub.mergeStatus.contains("fail") ? .red : .green) }
-                Text("Steps run one after another so they fit in RAM; time ≈ the sum of each model's reply.").font(.caption2).foregroundStyle(.secondary)
             }.padding().frame(minWidth: 380)
             VStack(alignment: .leading) {
                 Text("Merged models").font(.headline).padding([.top, .horizontal])
@@ -393,7 +446,6 @@ struct MergesView: View {
                 }
             }.frame(minWidth: 320)
         }
-        .task { await ps.load(); if hub.catalog.isEmpty { try? await hub.loadCatalog() }; try? await hub.loadMerges() }
     }
     var whyInvalid: String {
         if picked.isEmpty { return "Tick 1–3 models." }
@@ -402,6 +454,38 @@ struct MergesView: View {
         if mode == "panel_judge" && judge.isEmpty { return "Choose a judge model." }
         if name.range(of: "^[a-z0-9-]{1,32}$", options: .regularExpression) == nil { return "Name: lowercase letters, digits and - only (e.g. my-merge)." }
         return ""
+    }
+    func startTeach() async {
+        jobProgress = "Starting…"; jobStatus = "queued"
+        do {
+            let r = try await Admin.call("POST", "/admin/redxai/distill/job",
+                                         ["sources": picked, "target": target, "prompts": teachPrompts])
+            jobStatus = (r["status"] as? String) ?? "running"
+            jobProgress = (r["message"] as? String) ?? "running"
+            await pollJob(once: false)
+        } catch {
+            jobStatus = "error"; jobProgress = error.localizedDescription
+        }
+    }
+    func pollJob(once: Bool) async {
+        for _ in 0..<(once ? 1 : 120) {
+            do {
+                let r = try await Admin.call("GET", "/admin/redxai/distill/job")
+                if let cur = r["current"] as? [String: Any] {
+                    jobStatus = (cur["status"] as? String) ?? ""
+                    let done = cur["done"] as? Int ?? 0
+                    let prompts = cur["prompts"] as? Int ?? 0
+                    let cap = cur["captured"] as? Int ?? 0
+                    let msg = (cur["message"] as? String) ?? ""
+                    jobProgress = "\(jobStatus) · \(done)/\(prompts) prompts · \(cap) samples — \(msg)"
+                    if ["done", "error"].contains(jobStatus) { return }
+                } else if once { return }
+            } catch {
+                if once { return }
+                jobProgress = error.localizedDescription
+            }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+        }
     }
 }
 

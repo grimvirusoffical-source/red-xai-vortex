@@ -579,6 +579,9 @@ func handleRedXAI(w http.ResponseWriter, r *http.Request, k *Key) {
 
 // admin: /admin/redxai/*
 func redxaiAdmin(w http.ResponseWriter, r *http.Request, p string, in map[string]any) bool {
+	if distillJobAdmin(w, r, p, in) {
+		return true
+	}
 	if !strings.HasPrefix(p, "/admin/redxai/") {
 		return false
 	}

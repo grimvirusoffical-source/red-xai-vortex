@@ -204,9 +204,15 @@ func runOffload(force bool) (map[string]any, error) {
 	if !force && pct < lim {
 		return map[string]any{"ok": true, "disk_pct": pct, "threshold": lim, "moved": 0}, nil
 	}
-	be, err := stBackend()
-	if err != nil {
-		return nil, err
+	var be StorageBackend
+	pre := ""
+	if nodeDiskOK() {
+		be, pre = &nodeB{nodeDiskDir}, "node:"
+	} else {
+		var err error
+		if be, err = stBackend(); err != nil {
+			return nil, err
+		}
 	}
 	idx := offIndex()
 	moved := 0
@@ -216,7 +222,7 @@ func runOffload(force bool) (map[string]any, error) {
 			continue
 		}
 		rel, _ := filepath.Rel(rxDir, f)
-		remote := strings.ReplaceAll(rel, "/", "_") + "." + time.Now().Format("20060102150405") + ".vxo"
+		remote := pre + strings.ReplaceAll(rel, "/", "_") + "." + time.Now().Format("20060102150405") + ".vxo"
 		sealed, err := rxSeal(pt, "offload:"+remote)
 		if err != nil {
 			return nil, err
@@ -238,8 +244,11 @@ func runOffload(force bool) (map[string]any, error) {
 }
 
 func restoreOffload(remote string) error {
-	be, err := stBackend()
-	if err != nil {
+	var be StorageBackend
+	var err error
+	if strings.HasPrefix(remote, "node:") {
+		be = &nodeB{nodeDiskDir}
+	} else if be, err = stBackend(); err != nil {
 		return err
 	}
 	for _, r := range offIndex() {
@@ -260,9 +269,53 @@ func restoreOffload(remote string) error {
 	return errors.New("unknown remote object")
 }
 
+// ---------- node disk (Atlanta node's disk, sshfs-mounted on main; tried before S3/WebDAV) ----------
+const nodeDiskDir = "/var/lib/vortex/overflow-atl"
+
+type nodeB struct{ dir string }
+
+func nodeDiskOK() bool {
+	var a, b syscall.Stat_t
+	if syscall.Stat(nodeDiskDir, &a) != nil || syscall.Stat(filepath.Dir(nodeDiskDir), &b) != nil || a.Dev == b.Dev {
+		return false // not a mount: never write overflow onto main's own disk
+	}
+	return diskPct(nodeDiskDir) > 0 && diskPct(nodeDiskDir) < 90
+}
+func (n *nodeB) p(name string) string            { return filepath.Join(n.dir, filepath.Base(name)) }
+func (n *nodeB) Put(name string, d []byte) error { return os.WriteFile(n.p(name), d, 0600) }
+func (n *nodeB) Get(name string) ([]byte, error) { return os.ReadFile(n.p(name)) }
+func (n *nodeB) Delete(name string) error        { return os.Remove(n.p(name)) }
+
+// diskInfo for the combined-storage view.
+func diskInfo(path string) map[string]any {
+	var s syscall.Statfs_t
+	if syscall.Statfs(path, &s) != nil {
+		return nil
+	}
+	t, f := s.Blocks*uint64(s.Bsize), s.Bavail*uint64(s.Bsize)
+	return map[string]any{"total": t, "free": f, "used": t - f, "pct": diskPct(path)}
+}
+func combinedStorage() map[string]any {
+	out := map[string]any{"vps": diskInfo("/")}
+	var t, f uint64
+	if v := diskInfo("/"); v != nil {
+		t, f = v["total"].(uint64), v["free"].(uint64)
+	}
+	if nodeDiskOK() {
+		if v := diskInfo(nodeDiskDir); v != nil {
+			v["node"] = "atl"
+			out["atl"] = v
+			t += v["total"].(uint64)
+			f += v["free"].(uint64)
+		}
+	}
+	out["combined"] = map[string]any{"total": t, "free": f, "used": t - f}
+	return out
+}
+
 func offloadLoop() {
 	for range time.Tick(10 * time.Minute) {
-		if stLoad().Kind != "" {
+		if stLoad().Kind != "" || nodeDiskOK() {
 			runOffload(false)
 		}
 	}
@@ -280,7 +333,7 @@ func storageAdmin(w http.ResponseWriter, r *http.Request, p string, in map[strin
 		c := stLoad()
 		has := c.SecretSealed != ""
 		c.SecretSealed = ""
-		json.NewEncoder(w).Encode(map[string]any{"config": c, "secret_set": has, "disk_pct": diskPct("/"), "threshold": rxConfig().OffloadPct, "offloaded": offIndex(), "pending": len(offloadCandidates())})
+		json.NewEncoder(w).Encode(map[string]any{"config": c, "secret_set": has, "disk_pct": diskPct("/"), "storage": combinedStorage(), "node_disk": nodeDiskOK(), "threshold": rxConfig().OffloadPct, "offloaded": offIndex(), "pending": len(offloadCandidates())})
 	case p == "/admin/storage" && r.Method == "POST":
 		old := stLoad()
 		var c StorageCfg

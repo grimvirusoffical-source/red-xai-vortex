@@ -30,6 +30,8 @@ enum IntegrationCatalog {
               how: "Adds an `aider-vortex` command (~/.local/bin). Your ~/.aider.conf.yml is untouched."),
         .init(id: "continue", name: "VS Code / JetBrains: Continue", category: "Editors", wire: "OpenAI Chat", mode: .auto,
               how: "~/.continue/config.yaml → appends a Vortex model to your models list (existing models kept). VS Code is relaunched."),
+        .init(id: "vscode", name: "VS Code (Continue one-click)", category: "Editors", wire: "OpenAI Chat", mode: .auto,
+              how: "Same as Continue: writes ~/.continue/config.yaml and relaunches VS Code / Cursor if installed."),
         .init(id: "raycast", name: "Raycast AI", category: "Desktop chat", wire: "OpenAI Chat", mode: .auto,
               how: "~/.config/raycast/ai/providers.yaml → appends a Vortex provider (existing providers kept). Raycast is relaunched."),
         .init(id: "zed", name: "Zed", category: "Editors", wire: "OpenAI Chat", mode: .auto,
@@ -69,9 +71,8 @@ enum IntegrationCatalog {
               steps: "Copilot settings → Model → Add Custom Model: provider 3rd party (openai-format), Base URL {BASE}, key: paste, name {MODEL}. Turn on CORS if requests fail."),
         .init(id: "lmstudio", name: "Apps built for LM Studio", category: "Chat apps", wire: "OpenAI Chat", mode: .guided, how: "Same OpenAI-compatible base URL",
               steps: "LM Studio itself serves models and can't use a remote endpoint. Apps that talk to LM Studio's API (http://localhost:1234/v1) can point at {BASE} with the key instead."),
-        .init(id: "omniroute", name: "OmniRoute", category: "Automation", wire: "OpenAI Chat", mode: .guided,
-              how: "OmniRoute dashboard → Providers → Add OpenAI-compatible (stored in OmniRoute's own database; no config file to write)",
-              steps: "OmniRoute (http://127.0.0.1:20128) → Providers → Add → OpenAI Compatible (Chat). Name: Red-XAI · Prefix: redxai · Base URL: {BASE} · Chat path: leave empty (/chat/completions) · Models path: /models · API key: paste (on your clipboard) · Default model: {MODEL} (a model id, NOT /models) · turn OFF Proxy egress for this provider (it's local). Save → Test → Sync models. Use as redxai/{MODEL}."),
+        .init(id: "omniroute", name: "OmniRoute", category: "Automation", wire: "OpenAI Chat", mode: .auto,
+              how: "One-click: writes ~/.config/omniroute/vortex-provider.json (or posts to local OmniRoute API) and opens the dashboard. Use as redxai/{MODEL}."),
         .init(id: "n8n", name: "n8n", category: "Automation", wire: "OpenAI Chat", mode: .guided, how: "OpenAI credential → Base URL",
               steps: "Credentials → OpenAI: API Key: paste, Base URL {BASE}. Use the OpenAI Chat Model node with model {MODEL}.", publicOnly: true),
         .init(id: "flowise", name: "Flowise", category: "Automation", wire: "OpenAI Chat", mode: .guided, how: "ChatOpenAI Custom node → Base Path",
@@ -304,7 +305,7 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
                 try setEnv("VORTEX_API_KEY", key, files: &files, id: i.id); env.append("VORTEX_API_KEY")
                 let bin = toolPaths["aider"] ?? "aider"
                 _ = try writeLauncher("aider-vortex", "exec \"\(bin)\" --openai-api-base '\(b)/v1' --openai-api-key \"$VORTEX_API_KEY\" --model 'openai/\(model)' \"$@\"", id: i.id, files: &files)
-            case "continue":
+            case "continue", "vscode":
                 let p = home + "/.continue/config.yaml"
                 try backup(i.id, p, into: &files)
                 var y = (try? String(contentsOfFile: p, encoding: .utf8)) ?? "name: Local Config\nversion: 1.0.0\nschema: v1\n"
@@ -318,6 +319,26 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
                 y = Self.stripItem(y)
                 let item = "  # red-xai-vortex begin\n  - id: vortex\n    name: Red-XAI Vortex\n    base_url: \(b)/v1\n    api_keys:\n      vortex: \(key)\n    models:\n      - id: \(model)\n        name: \(model)\n        provider: vortex\n        context: 32768\n  # red-xai-vortex end\n"
                 try write(p, yamlAppend(y, key: "providers", item: item), secret: true)
+            case "omniroute":
+                // One-click: drop a provider file OmniRoute / compatible routers can import, plus try local API.
+                let dir = home + "/.config/omniroute"
+                try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                let p = dir + "/vortex-provider.json"
+                try backup(i.id, p, into: &files)
+                let body: [String: Any] = [
+                    "name": "Red-XAI", "prefix": "redxai", "type": "openai_compatible",
+                    "base_url": b + "/v1", "api_key": key, "default_model": model,
+                    "chat_path": "/chat/completions", "models_path": "/models", "proxy_egress": false
+                ]
+                try writeJSON(p, body)
+                // Best-effort: POST to local OmniRoute if it's running (ignore failures).
+                if let u = URL(string: "http://127.0.0.1:20128/api/providers") {
+                    var req = URLRequest(url: u); req.httpMethod = "POST"
+                    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+                    _ = try? await URLSession.shared.data(for: req)
+                }
+                NSWorkspace.shared.open(URL(string: "http://127.0.0.1:20128")!)
             case "zed":
                 let p = home + "/.config/zed/settings.json"
                 var o: [String: Any] = [:]
@@ -420,13 +441,18 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
                 let opts = ((o["provider"] as? [String: Any])?["vortex"] as? [String: Any])?["options"] as? [String: Any]
                 let cfgBase = opts?["baseURL"] as? String ?? b + "/v1"
                 result = "opencode.json provider vortex (\(cfgBase)): " + (try await httpProbeChat(base: cfgBase, key: key, model: st.model))
+            case "omniroute":
+                let p = home + "/.config/omniroute/vortex-provider.json"
+                let o = readJSON(p) ?? [:]
+                let u = (o["base_url"] as? String) ?? (b + "/v1")
+                result = "omniroute provider \(u): " + (try await httpProbeChat(base: u, key: key, model: st.model))
             case "zed":
                 let o = readJSON(home + "/.config/zed/settings.json") ?? [:]
                 let v = ((o["language_models"] as? [String: Any])?["openai_compatible"] as? [String: Any])?["Vortex"] as? [String: Any]
                 guard let u = v?["api_url"] as? String else { throw NSError(domain: "Vortex", code: 7, userInfo: [NSLocalizedDescriptionKey: "Vortex block missing from Zed settings.json"]) }
                 result = "Zed settings api_url \(u): " + (try await httpProbeChat(base: u, key: key, model: st.model))
-            case "continue", "raycast":
-                let p = home + (i.id == "continue" ? "/.continue/config.yaml" : "/.config/raycast/ai/providers.yaml")
+            case "continue", "vscode", "raycast":
+                let p = home + (i.id == "raycast" ? "/.config/raycast/ai/providers.yaml" : "/.continue/config.yaml")
                 let y = (try? String(contentsOfFile: p, encoding: .utf8)) ?? ""
                 let line = y.components(separatedBy: "\n").first { $0.contains("apiBase:") || $0.contains("base_url:") } ?? ""
                 let u = line.components(separatedBy: ": ").dropFirst().joined(separator: ": ").trimmingCharacters(in: .whitespaces)

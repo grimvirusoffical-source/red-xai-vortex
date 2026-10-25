@@ -10,6 +10,6 @@ The gateway needs a CSPRNG, HMAC-SHA256 (key hashing) and a 256-bit AEAD (provid
 
 ```bash
 cd gateway && CGO_ENABLED=0 go build -tags stdcrypto -trimpath -o dolphin-gateway .
-./dolphin-gateway init-admin /root/dolphino-admin.key   # creates/rotates the admin key
+./dolphin-gateway init-admin /root/vortex-admin.key   # creates/rotates the admin key
 ```
 State lives in `/etc/dolphin/gateway/` (mode 700): `keys.json` (hashes only), `merges.json`, `providers.json` (sealed keys), `pepper` and `seal.key`.

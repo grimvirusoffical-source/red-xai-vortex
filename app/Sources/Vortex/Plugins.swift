@@ -178,6 +178,32 @@ enum PluginCatalog {
         try validate(m)
         return m
     }
+
+    /// Publish a plugin to the Vultr Plugin Store (requires RedX session).
+    func uploadToStore(_ p: PluginManifest) async {
+        let base = UserDefaults.standard.string(forKey: "pluginStoreURL") ?? "https://ai.red-xai.com/plugins/v1/plugins"
+        guard let url = URL(string: base) else { message = "Bad plugin store URL"; return }
+        var req = URLRequest(url: url); req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let tok = Keychain.get(account: "redx-session"), !tok.isEmpty {
+            req.setValue(tok, forHTTPHeaderField: "X-RedX-Session")
+        } else if let tok = UserDefaults.standard.string(forKey: "redxSession"), !tok.isEmpty {
+            req.setValue(tok, forHTTPHeaderField: "X-RedX-Session")
+        }
+        let enc = JSONEncoder(); enc.outputFormatting = [.sortedKeys]
+        do {
+            req.httpBody = try enc.encode(p)
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if code == 401 { message = "Sign in with RedX to upload plugins."; return }
+            guard (200..<300).contains(code) else {
+                message = "Upload failed (HTTP \(code))."; return
+            }
+            _ = data
+            message = "Uploaded \(p.name) to the Plugin Store."
+        } catch { message = "Upload failed: \(error.localizedDescription)" }
+    }
+
 }
 
 // MARK: - Runner
@@ -390,6 +416,7 @@ struct PluginsView: View {
                                 .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary))
                             HStack {
                                 Button("Install") { do { try ps.install(d); draft = nil } catch { ps.message = "Install failed: \(error.localizedDescription)" } }.buttonStyle(.borderedProminent)
+                                Button("Upload to store") { Task { await ps.uploadToStore(d) } }
                                 Button("Test first tool") {
                                     Task { do { let t = d.tools[0]; let r = try await PluginRunner.run(t, [:]); ps.message = "Test: \(r.prefix(200))" } catch { ps.message = "Test failed: \(error.localizedDescription)" } }
                                 }

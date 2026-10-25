@@ -44,6 +44,26 @@ struct Skill: Codable, Identifiable, Hashable {
     /// Preferred model of the first always-on skill that names one.
     var preferredModel: String? { always.first { !$0.model.isEmpty }?.model }
     func upsert(_ s: Skill) { if let i = skills.firstIndex(where: { $0.id == s.id }) { skills[i] = s } else { skills.append(s) }; save() }
+
+    /// Skill Maker — Vortex writes a skill from a plain-language description.
+    func make(description: String) async throws -> Skill {
+        let prompt = """
+        Write a Red-XAI Vortex skill as JSON only (no prose, no code fences).
+        Schema: {"id":"kebab-id","name":"Name","description":"one line","prompt":"detailed instructions the assistant must follow","tools":["web_search"],"model":""}
+        tools must be a subset of: web_search, fetch_url, read_file, list_folder, calculator, weather, wikipedia, now (or empty).
+        Skill to build: \(description)
+        """
+        let base = UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL
+        let key = Keychain.get() ?? ""
+        let p = ChatParams(baseURL: base, apiKey: key, model: UserDefaults.standard.string(forKey: "pluginMakerModel") ?? "vortex",
+                           temperature: 0.2, topP: 0.9, repeatPenalty: 1.05, topK: 40, maxTokens: 1200, seed: -1)
+        let j = try await Agent.complete(p, messages: [["role": "user", "content": prompt]], tools: [])
+        var txt = (((j["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any])?["content"] as? String) ?? ""
+        if let a = txt.firstIndex(of: "{"), let b = txt.lastIndex(of: "}") { txt = String(txt[a...b]) }
+        let s = try JSONDecoder().decode(Skill.self, from: Data(txt.utf8))
+        guard s.id.range(of: "^[a-z0-9-]{1,40}$", options: .regularExpression) != nil else { throw NSError(domain: "Vortex", code: 1, userInfo: [NSLocalizedDescriptionKey: "Bad skill id"]) }
+        return s
+    }
     func delete(_ id: String) { skills.removeAll { $0.id == id }; modes[id] = nil; UserDefaults.standard.set(modes, forKey: "skillModes"); save() }
 
     /// "/skill-id rest of message" activates a skill for this chat and strips the prefix.
@@ -100,6 +120,9 @@ struct SkillsView: View {
     @StateObject var ss = SkillStore.shared
     @StateObject var ps = PluginStore.shared
     @Local var editing: Skill?
+    @Local var makerText = ""
+    @Local var making = false
+    @Local var makerMsg = ""
     var allTools: [String] { ps.installed.flatMap { $0.tools.map(\.name) }.sorted() }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -110,6 +133,20 @@ struct SkillsView: View {
             }
             Text("A skill is a reusable recipe: instructions plus the tools it may use. Set each one in the chat's + menu or here: Always on (used in every chat), Auto (the model switches it on when it fits) or Off. Starting a message with /skill-id turns that skill Always on; /noskill turns Always-on skills off.")
                 .font(.callout).foregroundStyle(.secondary)
+            GroupBox("Skill Maker — describe a skill and Vortex writes it") {
+                HStack {
+                    TextField("e.g. Research a topic and cite sources", text: $makerText)
+                    Button(making ? "Writing…" : "Create") {
+                        making = true; makerMsg = ""
+                        Task {
+                            do { let s = try await ss.make(description: makerText); ss.upsert(s); editing = s; makerMsg = "Created \(s.name)." }
+                            catch { makerMsg = "Maker failed: \(error.localizedDescription)" }
+                            making = false
+                        }
+                    }.disabled(makerText.trimmingCharacters(in: .whitespaces).isEmpty || making)
+                }
+                if !makerMsg.isEmpty { Text(makerMsg).font(.caption).foregroundStyle(.secondary) }
+            }
             List {
                 ForEach(ss.skills) { s in
                     HStack(alignment: .top) {

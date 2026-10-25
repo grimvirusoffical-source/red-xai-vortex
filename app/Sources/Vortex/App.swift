@@ -6,6 +6,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true)
         UserDefaults.standard.set(false, forKey: "nodeAutoStart")
         if !UserDefaults.standard.bool(forKey: "migratedVultr1") { UserDefaults.standard.set(Defaults.model, forKey: "model"); UserDefaults.standard.removeObject(forKey: "sshHost"); UserDefaults.standard.set(true, forKey: "migratedVultr1") }
+        if !UserDefaults.standard.bool(forKey: "migratedVortexDefault1") {
+            let cur = UserDefaults.standard.string(forKey: "model") ?? ""
+            if cur.isEmpty || cur.hasPrefix("dolphin") { UserDefaults.standard.set(Defaults.model, forKey: "model") }
+            UserDefaults.standard.set(true, forKey: "migratedVortexDefault1")
+        }
         if !UserDefaults.standard.bool(forKey: "migratedGateway1") {
             for k in ["serverURL", "sshLocalPort", "sshRemotePort"] { UserDefaults.standard.removeObject(forKey: k) }
             UserDefaults.standard.set(true, forKey: "migratedGateway1")
@@ -15,7 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         Process.launchedProcess(launchPath: "/usr/bin/pkill", arguments: ["-f", "Vortex.app/Contents/Resources/ggml-rpc-server"])
-        MainActor.assumeIsolated { _ = PluginStore.shared; _ = SkillStore.shared; Task { await MCPStore.shared.connectEnabled() }; Task { await ServerStore.shared.healthCheckActive() } }   // seed starter plugins/skills on first launch
+        MainActor.assumeIsolated { _ = PluginStore.shared; _ = SkillStore.shared; _ = AgentStore.shared; Task { await MCPStore.shared.connectEnabled() }; Task { await ServerStore.shared.healthCheckActive() } }   // seed starter plugins/skills on first launch
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { SelfTest.arg == nil }
     func applicationWillTerminate(_ n: Notification) { MainActor.assumeIsolated {

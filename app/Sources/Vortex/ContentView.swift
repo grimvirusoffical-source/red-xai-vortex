@@ -93,8 +93,9 @@ struct ChatView: View {
     @Local var groupSetup = false
 
     var params: ChatParams {
-        ChatParams(baseURL: serverURL, apiKey: Keychain.get() ?? "", model: model, temperature: temperature, topP: topP,
+        let base = ChatParams(baseURL: serverURL, apiKey: Keychain.get() ?? "", model: model, temperature: temperature, topP: topP,
                    repeatPenalty: repeatPenalty, topK: topK, maxTokens: maxTokens, seed: seed)
+        return AgentStore.shared.chatParams(fallback: base)
     }
 
     var body: some View {
@@ -105,7 +106,7 @@ struct ChatView: View {
                         if let c = store.current {
                             if c.messages.isEmpty {
                                 VStack(spacing: 8) {
-                                    Text("🐬").font(.system(size: 56))
+                                    Image(systemName: "sparkles").font(.system(size: 56)).foregroundStyle(.tint)
                                     Text("Red-XAI Vortex").font(.largeTitle.bold())
                                     Text("Model: \(model)").foregroundStyle(.secondary)
                                 }.frame(maxWidth: .infinity).padding(.top, 80)
@@ -164,7 +165,7 @@ struct ChatView: View {
                 Button { groupSetup = true } label: { Image(systemName: (store.current?.participants?.isEmpty == false) ? "person.3.fill" : "person.3") }
                     .help("Group chat: several models reply in turn; @mention one to ask only it")
                 Button { voiceCall = true } label: { Image(systemName: "phone.fill") }.help("Voice call (whisper.cpp + Piper on this Mac)")
-                Button { if let u = URL(string: UserDefaults.standard.string(forKey: "cloudpc.url") ?? "https://red-xai.com/vortex/cloudpc/") { NSWorkspace.shared.open(u) } } label: { Image(systemName: "cloud") }
+                Button { if let u = URL(string: UserDefaults.standard.string(forKey: "cloudpc.url") ?? "https://45.77.105.187/vortex/cloudpc/") { NSWorkspace.shared.open(u) } } label: { Image(systemName: "cloud") }
                     .help("Cloud PC: open your private Linux desktop in the browser")
                 Button { store.regenerate(systemPrompt: systemPrompt, contextTokens: contextTokens, params: params) } label: {
                     Image(systemName: "arrow.clockwise") }.help("Regenerate last reply").disabled(store.streaming)
@@ -187,7 +188,8 @@ struct ChatView: View {
         if a.contains(where: { $0.kind == "image" }) && !(model.contains("vision") || model.contains("vl") || model.hasPrefix("ext:")) {
             store.status = "Tip: images need a vision model (e.g. gemma3-12b-vision)."
         }
-        store.send(t, attachments: a, systemPrompt: skills.systemPrompt(base: systemPrompt), contextTokens: contextTokens, params: p)
+        let sp = AgentStore.shared.active?.systemPrompt ?? systemPrompt
+        store.send(t, attachments: a, systemPrompt: skills.systemPrompt(base: sp), contextTokens: contextTokens, params: p)
     }
     func pickFiles() {
         let p = NSOpenPanel(); p.allowsMultipleSelection = true; p.canChooseDirectories = false
@@ -238,7 +240,7 @@ struct BubbleView: View {
     }
     var body: some View {
         HStack(alignment: .top) {
-            if isUser { Spacer(minLength: 60) } else { Text("🐬").font(.title2) }
+            if isUser { Spacer(minLength: 60) } else { Image(systemName: "sparkles").font(.title2) }
             VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
                 if let who = message.model { Text(who).font(.caption.bold()).foregroundStyle(GroupColors.color(who)) }
                 if let a = message.attachments, !a.isEmpty { AttachmentChips(items: a) }

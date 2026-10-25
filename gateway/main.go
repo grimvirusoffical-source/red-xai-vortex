@@ -1173,7 +1173,7 @@ func main() {
 				x.Revoked = time.Now().Unix()
 			}
 		}
-		keys = append(keys, &Key{ID: "admin_" + randB62(8), Name: "Dolphino admin", Prefix: plain[:14] + "…", Hash: hashKey(plain), Admin: true, Created: time.Now().Unix()})
+		keys = append(keys, &Key{ID: "admin_" + randB62(8), Name: "Vortex admin", Prefix: plain[:14] + "…", Hash: hashKey(plain), Admin: true, Created: time.Now().Unix()})
 		saveKeys()
 		os.WriteFile(os.Args[2], []byte(plain+"\n"), 0600)
 		fmt.Println("admin key written to", os.Args[2])

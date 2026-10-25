@@ -11,7 +11,7 @@ cp -R "build/Red-XAI Vortex.app" /Applications/
 
 ## Connect
 - **Settings → Connection**: SSH host `root@YOUR_SERVER`, key `~/.ssh/id_ed25519`, local port 18092, remote port 8092 (the gateway admin port). Red-XAI Vortex keeps an SSH tunnel open, so no model port is ever exposed.
-- Store the admin key from `/root/dolphino-admin.key` in the API key field. It's saved in the macOS Keychain.
+- Store the admin key from `/root/vortex-admin.key` in the API key field. It's saved in the macOS Keychain.
 - Optional: `defaults write com.redxai.vortex publicBaseURL https://YOUR_DOMAIN/v1` so the docs tab shows your public URL.
 
 ## Windows

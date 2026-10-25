@@ -24,7 +24,7 @@ progress{width:100%;height:8px;accent-color:var(--acc)}
 #installed td,#installed th{padding:8px 12px;border-bottom:1px solid var(--line);text-align:left}
 #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:9px 16px;border-radius:10px;display:none}
 </style></head><body>
-<header><h1>🐬 Models</h1>
+<header><h1>✦ Models</h1>
 <div class="tabs"><button id="t-cur" class="on">Curated</button> <button id="t-ol">Ollama library</button> <button id="t-inst">Installed</button> <button id="t-plug">Plugins</button></div>
 <input type="search" id="q" placeholder="Search models…">
 <label class="mut">Install on</label><select id="target"></select></header>

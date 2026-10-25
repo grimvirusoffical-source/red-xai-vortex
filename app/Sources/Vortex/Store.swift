@@ -14,7 +14,7 @@ final class ChatStore: ObservableObject {
 
     static var dir: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let d = base.appendingPathComponent("Red-XAI Vortex"), old = base.appendingPathComponent("Dolphino")
+        let d = base.appendingPathComponent("Red-XAI Vortex"), old = base.appendingPathComponent("Vortex")
         if !FileManager.default.fileExists(atPath: d.path), FileManager.default.fileExists(atPath: old.path) { try? FileManager.default.moveItem(at: old, to: d) } // one-time move from the old app name
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         return d
@@ -158,7 +158,7 @@ final class ChatStore: ObservableObject {
 
     // MARK: export / import
     func exportJSON() {
-        let p = NSSavePanel(); p.nameFieldStringValue = "dolphino-chats.json"; p.allowedContentTypes = [.json]
+        let p = NSSavePanel(); p.nameFieldStringValue = "vortex-chats.json"; p.allowedContentTypes = [.json]
         if p.runModal() == .OK, let u = p.url {
             let e = JSONEncoder(); e.outputFormatting = [.prettyPrinted]; e.dateEncodingStrategy = .iso8601
             try? e.encode(chats).write(to: u)
