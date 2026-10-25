@@ -738,7 +738,7 @@ struct IntegrationsView: View {
                 if st == nil {
                     HStack {
                         Picker("Model", selection: Binding(get: { picks[i.id] ?? (models.contains("vortex") ? "vortex" : models.first ?? "") }, set: { picks[i.id] = $0 })) {
-                            ForEach(models, id: \.self) { Text($0).tag($0) }
+                            ForEach(models, id: \.self) { Text(Defaults.displayName($0)).tag($0) }
                         }.labelsHidden()
                         Button(busy == i.id ? "Connecting…" : "Connect") { confirmConnect = i }.buttonStyle(.borderedProminent).disabled(models.isEmpty || !busy.isEmpty)
                         if !store.toolInstalled(i.id), IntegrationStore.installCommand(i.id) != nil {

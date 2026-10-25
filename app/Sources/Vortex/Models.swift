@@ -35,6 +35,17 @@ enum Defaults {
     static let sshLocalPort = 18092
     static let sshRemotePort = 8092
     static let model = "vortex"
+    /// User-facing names (internal file ids are unchanged).
+    static let displayNames: [String: String] = [
+        "vortex": "Vortex", "red-xai": "Red-XAI",
+        "dolphin3-llama3.2-3b-q4km": "Vortex Lite 3B", "dolphin3-llama3.1-8b-q8": "Vortex 8B",
+        "dolphin3-mistral-24b-q6k": "Vortex 24B", "dolphin2.7-mixtral-8x7b-iq4xs": "Vortex MoE 8x7B",
+    ]
+    static func displayName(_ id: String) -> String {
+        if let n = displayNames[id] { return n }
+        if id.lowercased().hasPrefix("dolphin") { return "Vortex " + id.replacingOccurrences(of: "dolphin", with: "", options: .caseInsensitive) }
+        return id
+    }
     static let fallbackModel = "dolphin3-llama3.1-8b-q8"
     static let knownModels = ["vortex", "red-xai", "qwen2.5-coder-14b", "r1-distill-qwen-14b", "mistral-small-24b", "dolphin2.7-mixtral-8x7b-iq4xs", "dolphin3-mistral-24b-q6k", "dolphin3-llama3.1-8b-q8", "dolphin3-llama3.2-3b-q4km"]
     static let systemPrompt = "You are Vortex, the Red-XAI Vortex assistant: sharp, friendly and direct. Answer clearly."

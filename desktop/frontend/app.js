@@ -136,3 +136,35 @@ $('#mGo').onclick=async()=>{
   $('#mMsg').textContent=r.ok?`Queued ${r.id} (position ${r.position})`:(r.message||'failed'); $('#mMsg').className=r.ok?'ok':'bad'; mPoll();
 };
 setInterval(()=>{ if($('#tab-media').classList.contains('on')) mPoll(); }, 1500);
+
+// ---- ToS + RedX sign-in gate (required on every launch; re-prompts when terms change)
+const TERMS_VERSION='2026-10-25';
+let gFlow='';
+async function gate(){
+  const show=id=>['gTerms','gLogin','gWait'].forEach(x=>$('#'+x).style.display=x===id?'':'none');
+  show('gWait');
+  const g=await bridge.call('gate.status').catch(()=>({}));
+  if(g.termsAccepted!==TERMS_VERSION){
+    $('#gTermsText').textContent=await fetch('terms.md').then(r=>r.text()).catch(()=>'Terms unavailable.');
+    show('gTerms'); return;
+  }
+  if(!(g.signedIn||g.owner)){ show('gLogin'); return; }
+  $('#fUser').textContent=g.username?('· '+g.username):(g.owner?'· owner mode':'');
+  $('#gate').style.display='none';
+}
+$('#gAccept').onclick=async()=>{await bridge.call('gate.accept',{version:TERMS_VERSION}); gate();};
+$('#gDecline').onclick=()=>{document.body.innerHTML='<p style="padding:40px">You must accept the Terms of Service to use Red-XAI Vortex. Close this window to quit.</p>';};
+$('#gGo').onclick=async()=>{
+  $('#gMsg').textContent='';
+  let r;
+  if(!gFlow) r=await bridge.call('redx.login',{login:$('#gUser').value,password:$('#gPass').value});
+  else r=await bridge.call('redx.2fa',{flow:gFlow,method:'totp',code:$('#gOtp').value});
+  if(!r.ok){$('#gMsg').textContent=r.error||'Sign-in failed.';return;}
+  if(r.next==='2fa'){gFlow=r.flow;$('#gCreds').style.display='none';$('#gCode').style.display='';$('#gGo').textContent='Verify';return;}
+  if(r.next==='2fa_setup'){$('#gMsg').textContent='Finish two-factor setup at red-xai.com, then sign in again.';return;}
+  gFlow=''; gate();
+};
+$('#gCallMe').onclick=async()=>{const r=await bridge.call('redx.call',{flow:gFlow});$('#gMsg').textContent=r.ok?'Calling you now — enter the code you hear.':(r.message||'Call failed.');};
+$('#fSignOut').onclick=async e=>{e.preventDefault();await bridge.call('redx.logout');location.reload();};
+$('#fTerms').onclick=async e=>{e.preventDefault();const t=await fetch('terms.md').then(r=>r.text());const w=window.open('','_blank');if(w){w.document.body.innerHTML='<pre style="white-space:pre-wrap"></pre>';w.document.querySelector('pre').textContent=t;}else alert(t);};
+gate();

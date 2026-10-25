@@ -87,3 +87,7 @@ All times above were measured on a 16-vCPU / 32 GB CPU server with no GPU.
 
 ## Training from merges
 When a merge includes **vortex**, the gateway stores the judge-chosen answer as a preferred distill sample and the other members as non-preferred under the same consent rules. Preferred rows export with a rejected alternative for DPO-style training.
+
+## Group merge
+Group merge (turning the models in a Group chat into a single merge) is planned for a later update. Until then,
+create a merge with the same models under **Library, Merges & Keys → Merges** using *Panel + Judge*.

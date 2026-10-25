@@ -14,7 +14,7 @@ final class ChatStore: ObservableObject {
 
     static var dir: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let d = base.appendingPathComponent("Red-XAI Vortex"), old = base.appendingPathComponent("Vortex")
+        let d = base.appendingPathComponent("Red-XAI Vortex"), old = base.appendingPathComponent("Dolphino")
         if !FileManager.default.fileExists(atPath: d.path), FileManager.default.fileExists(atPath: old.path) { try? FileManager.default.moveItem(at: old, to: d) } // one-time move from the old app name
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         return d

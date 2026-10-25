@@ -43,3 +43,14 @@ Add `--only plugins,skills` to run only some areas. The test restores the settin
 
 ### Backup server shows "failover candidates reachable: no other server answered"
 A backup only works for failover if it runs its own `dolphin-llm` and `dolphin-gateway` (an RPC/storage-only node has neither). Install both on the backup, keep its RPC service disabled, and sync keys/config from the main server on a timer (e.g. a systemd timer using an `rrsync`-restricted key). Then run `Vortex --selftest out.json --only servers`; the "real failover" check switches to the backup, sends a chat, and switches back.
+
+### "Wrong username, email or password" / can't sign in
+Use your red-xai.com account (not an API key). Reset the password on red-xai.com. If two-factor setup is required,
+finish it there first. See [SIGN-IN.md](SIGN-IN.md).
+
+### The app keeps showing the Terms
+The Terms changed and must be accepted again, or the settings folder isn't writable. On the web, enable cookies for the site.
+
+### Background agent shows "error" / "upstream 500"
+The server was swapping models. Runs retry automatically; the next tick usually succeeds. Pick a smaller model or
+a longer interval if it repeats.

@@ -133,7 +133,7 @@ struct AgentsView: View {
                                 Text(a.name).font(.body.bold())
                                 if a.id == store.activeID { Text("ACTIVE").font(.caption2.bold()).padding(3).background(Capsule().fill(.green.opacity(0.25))) }
                             }
-                            Text("\(label(a.provider)) · \(a.model)").font(.caption).foregroundStyle(.secondary)
+                            Text("\(label(a.provider)) · \(Defaults.displayName(a.model))").font(.caption).foregroundStyle(.secondary)
                             if !a.description.isEmpty { Text(a.description).font(.caption2).foregroundStyle(.secondary).lineLimit(2) }
                         }
                         Spacer()
@@ -152,6 +152,8 @@ struct AgentsView: View {
                     Text("Select or create an agent.").foregroundStyle(.secondary)
                     Text("Tools: PC control (Allow/Deny), web, files, skills & plugins — same rules as chat.").font(.caption)
                     Button("Test with Vortex model") { Task { await testVortex() } }.buttonStyle(.borderedProminent)
+                    Divider()
+                    ScrollView { BackgroundAgentsView() }
                 }.padding().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }

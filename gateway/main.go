@@ -345,7 +345,11 @@ func chatOnce(model string, msgs []msg, extra map[string]any) (string, int64, er
 		body[k] = v
 	}
 	body["model"] = model
-	body["messages"] = msgs
+	var anyMsgs []any
+	if b, e := json.Marshal(msgs); e == nil {
+		json.Unmarshal(b, &anyMsgs)
+	}
+	body["messages"] = anyMsgs
 	body["stream"] = false
 	if model == "vortex" || strings.HasPrefix(model, "vortex-v") {
 		model = rxModel + strings.TrimPrefix(model, "vortex")
@@ -568,6 +572,10 @@ func handleV1(w http.ResponseWriter, r *http.Request, k *Key) {
 	path := r.URL.Path
 	if strings.HasPrefix(path, "/v1/redxai/") {
 		handleRedXAI(w, r, k)
+		return
+	}
+	if path == "/v1/agents" || strings.HasPrefix(path, "/v1/agents/") {
+		handleAgents(w, r, k)
 		return
 	}
 	if path == "/v1/jobs" || strings.HasPrefix(path, "/v1/jobs/") {

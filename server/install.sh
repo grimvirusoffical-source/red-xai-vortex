@@ -54,8 +54,8 @@ fetch server/media-setup.sh /opt/dolphin/media-setup.sh
 
 log "Building gateway (crypto backend: $CRYPTO_TAG)"
 GW=/opt/dolphin/src-gateway; rm -rf $GW; mkdir -p $GW
-for f in go.mod main.go providers.go ollama.go redxai.go media.go learn.go storage.go owner.go shim.go shim_gemini.go jobs.go sysstats.go crypto_stub.go crypto_std.go crypto_rsx.go; do fetch gateway/$f $GW/$f; done
-[ "$CRYPTO_TAG" = rsx ] || rm -f $GW/crypto_rsx.go
+for f in go.mod access.go agents_bg.go crypto_std.go crypto_stub.go distill_job.go jobs.go learn.go link.go link_off.go main.go media.go nodes.go ollama.go owner.go providers.go redxai.go shim.go shim_gemini.go storage.go sysstats.go; do fetch gateway/$f $GW/$f; done
+[ "$CRYPTO_TAG" = rsx ] && [ ! -f $GW/crypto_rsx.go ] && { echo "rsx build needs the private crypto_rsx.go + SDK; falling back to stdcrypto"; CRYPTO_TAG=stdcrypto; } || true
 (cd $GW && CGO_ENABLED=0 go build -tags "$CRYPTO_TAG" -trimpath -ldflags="-s -w" -o /usr/local/bin/dolphin-gateway .)
 
 log "Generating internal model-server key"

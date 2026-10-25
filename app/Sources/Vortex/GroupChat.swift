@@ -122,7 +122,7 @@ struct GroupSetupView: View {
                 List {
                     Section("Available") {
                         ForEach(all.filter { !picked.contains($0) }, id: \.self) { m in
-                            HStack { Text(m).lineLimit(1); Spacer(); Button("Add") { picked.append(m) } }
+                            HStack { Text(Defaults.displayName(m)).lineLimit(1); Spacer(); Button("Add") { picked.append(m) } }
                         }
                     }
                 }.frame(minWidth: 280)

@@ -56,11 +56,15 @@ struct VortexApp: App {
 
     var body: some Scene {
         WindowGroup("Red-XAI Vortex") {
-            ContentView().environmentObject(store).environmentObject(tunnel)
+            GateView { ContentView().environmentObject(store).environmentObject(tunnel) }
                 .preferredColorScheme(theme == "dark" ? .dark : theme == "light" ? .light : nil)
                 .frame(minWidth: 760, minHeight: 500)
         }
         .commands {
+            CommandGroup(replacing: .appInfo) { OpenAboutButton() }
+            CommandGroup(after: .appInfo) {
+                Button("Sign Out of RedX") { Task { await AccountGate.shared.signOut() } }
+            }
             CommandGroup(replacing: .newItem) { Button("New Chat") { store.newChat() }.keyboardShortcut("n") }
             CommandMenu("Chat") {
                 Button("Stop Generating") { store.stop() }.keyboardShortcut(".")
@@ -69,14 +73,29 @@ struct VortexApp: App {
             }
         }
         Window("Red-XAI Vortex Help", id: "help") { HelpView() }
-            .commands { CommandGroup(replacing: .help) { OpenHelpButton() } }
-        Window("Library, Merges & Keys", id: "hub") { HubView() }
+            .commands { CommandGroup(replacing: .help) {
+                OpenHelpButton()
+                OpenTermsButton()
+                Link("Donate — keep the servers up", destination: URL(string: "https://45.77.105.187/vortex/donate")!)
+            } }
+        Window("About Red-XAI Vortex", id: "about") { AboutVortexView() }.windowResizability(.contentSize)
+        Window("Terms of Service", id: "terms") { TermsView() }
+        Window("Library, Merges & Keys", id: "hub") { GateView { HubView() } }
             .commands { CommandMenu("Models") { OpenHubButton(); Button("Browse Models in Browser…") { ModelBrowserServer.shared.open() }.keyboardShortcut("b", modifiers: [.command, .shift]) } }
         Settings {
             SettingsView().environmentObject(store).environmentObject(tunnel)
                 .preferredColorScheme(theme == "dark" ? .dark : theme == "light" ? .light : nil)
         }
     }
+}
+
+struct OpenAboutButton: View {
+    @Environment(\.openWindow) var openWindow
+    var body: some View { Button("About Red-XAI Vortex") { openWindow(id: "about") } }
+}
+struct OpenTermsButton: View {
+    @Environment(\.openWindow) var openWindow
+    var body: some View { Button("Terms of Service & Privacy") { openWindow(id: "terms") } }
 }
 
 struct OpenHubButton: View {

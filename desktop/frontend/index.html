@@ -35,6 +35,24 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
 </style>
 </head>
 <body>
+<div id="gate" style="position:fixed;inset:0;background:#0b0f14;z-index:50;display:flex;align-items:center;justify-content:center;overflow:auto">
+  <div class="card" style="max-width:720px;width:92%">
+    <div id="gTerms" style="display:none">
+      <h2 style="margin-top:0">Terms of Service &amp; Privacy</h2>
+      <pre id="gTermsText" style="white-space:pre-wrap;max-height:55vh;overflow:auto;color:var(--muted)"></pre>
+      <div class="row"><button class="ghost" id="gDecline">Decline and Quit</button><button class="primary" id="gAccept">Accept</button></div>
+    </div>
+    <div id="gLogin" style="display:none">
+      <h2 style="margin-top:0">Sign in to Red-XAI Vortex</h2>
+      <p style="color:var(--muted)">Use your red-xai.com account. No account? <a href="https://red-xai.com" target="_blank">Create one at red-xai.com</a>.</p>
+      <div id="gCreds"><input id="gUser" placeholder="Username or email"/><input id="gPass" type="password" placeholder="Password" style="margin-top:8px"/></div>
+      <div id="gCode" style="display:none"><input id="gOtp" placeholder="6-digit code"/><button class="ghost" id="gCallMe" style="margin-top:6px">Call me instead</button></div>
+      <div class="row" style="margin-top:10px"><button class="primary" id="gGo">Sign in</button></div>
+      <p id="gMsg" class="bad"></p>
+    </div>
+    <div id="gWait">Checking your sign-in…</div>
+  </div>
+</div>
 <header>
   <img id="logo" alt="Red-XAI Vortex" src="logo.png" width="32" height="32"/>
   <h1>Red-XAI Vortex</h1>
@@ -45,6 +63,7 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
     <button data-tab="media">Media</button>
     <button data-tab="plugins">Plugins</button>
     <button data-tab="settings">Settings</button>
+    <a class="ghost" href="https://45.77.105.187/vortex/donate" target="_blank" style="margin-left:8px;color:#e5484d">♥ Donate</a>
   </div>
   <span class="pill" id="status">starting…</span>
 </header>
@@ -149,6 +168,12 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
     </div>
   </section>
 </main>
+<footer style="padding:8px 16px;color:var(--muted);font-size:12px;border-top:1px solid #1e2733">
+  Red-XAI Vortex is property of Red-XAI LLC. Our business registration is currently pending approval.
+  · <a href="#" id="fTerms">Terms</a> · <a href="https://45.77.105.187/vortex/donate" target="_blank">Donate</a>
+  · <a href="https://github.com/grimvirusoffical-source/red-xai-vortex/tree/main/docs" target="_blank">Help &amp; docs</a>
+  · <a href="#" id="fSignOut">Sign out</a> <span id="fUser"></span>
+</footer>
 <script src="app.js"></script>
 </body>
 </html>

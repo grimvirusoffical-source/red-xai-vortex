@@ -2,6 +2,12 @@
 
 ![Red-XAI Vortex](docs/icon.png)
 
+> Red-XAI Vortex is property of Red-XAI LLC. Our business registration is currently pending approval.
+>
+> ♥ **[Please donate](docs/DONATE.md)**: 100% of all donations go to keeping the servers up. PayPal: grimvirusoffical@gmail.com · Cash App: [$MainDirectory](https://cash.app/$MainDirectory)
+>
+> 📖 **[Documentation](docs/README.md)** · **[Install](docs/INSTALL.md)** · **[Terms](docs/TERMS.md)**
+
 Run open models on your own server, chat with them from a native Mac app, and plug them into
 any app that speaks the **OpenAI** or **Ollama** API, using your own API keys.
 
@@ -27,7 +33,9 @@ any app that speaks the **OpenAI** or **Ollama** API, using your own API keys.
 | PC control | vortex/red-xai only, per-type switches off by default, confirms destructive actions | ✅ build 20 |
 | Files, plugins, skills, MCP, voice, group chat | Chat features | ✅ builds 14–19 |
 | Vortex image / audio | stable-diffusion.cpp (SD-Turbo) and MusicGen-small on CPU | ✅ ~15 s per 512² image, ~18 s per 5 s clip on 16 vCPU |
-| Windows and Linux client apps | | 📋 planned. Use any OpenAI/Ollama client meanwhile |
+| `desktop/` | Windows and Linux client apps (Go bridge + web UI) | ✅ 2.2 |
+| Background agents | Run on the server until switched off; chat per agent | ✅ 2.2 |
+| Sign-in + Terms | RedX account and Terms acceptance required in every app | ✅ 2.2 |
 
 ## Features
 

@@ -273,7 +273,7 @@ func runMedia(ctx context.Context, t string, in map[string]any, prog func(int)) 
 		models, _ := filepath.Glob("/opt/dolphin/media-models/image/*")
 		out, mime = filepath.Join(tmp, "out.png"), "image/png"
 		cmd = exec.CommandContext(ctx, "/opt/dolphin/bin/sd", "-m", models[0], "-p", prompt, "-o", out,
-			"-W", strconv.Itoa(w0), "-H", strconv.Itoa(h0), "--steps", steps, "--cfg-scale", "1.0", "--sampling-method", "euler_a", "-t", "16")
+			"-W", strconv.Itoa(w0), "-H", strconv.Itoa(h0), "--steps", steps, "--cfg-scale", "1.0", "--sampling-method", "euler_a", "-t", "30")
 		cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH=/opt/dolphin/bin")
 		meta["size"], meta["steps"] = fmt.Sprintf("%dx%d", w0, h0), steps
 		estimate = 15
@@ -316,18 +316,34 @@ func runMedia(ctx context.Context, t string, in map[string]any, prog func(int)) 
 				}
 				continue
 			}
-			if t == "image" { // phased so the bar moves smoothly: load 0-40, sampling 40-90, decode 90-99
+			if t == "image" { // load 0-15, sampling steps 15-75, decode creeps 78-97 (sd prints no decode progress)
 				ll := strings.ToLower(l)
-				if strings.Contains(ll, "sampling") {
+				if strings.Contains(ll, "generating image") {
 					phase = 1
-				} else if strings.Contains(ll, "decod") {
+					prog(15)
+				} else if strings.Contains(ll, "decoding") && strings.Contains(ll, "latent") && phase < 2 {
 					phase = 2
+					prog(78)
+					go func() {
+						for p := 79; p <= 97; p++ {
+							select {
+							case <-done:
+								return
+							case <-time.After(450 * time.Millisecond):
+								prog(p)
+							}
+						}
+					}()
 				}
 				if m := progRe.FindStringSubmatch(l); m != nil {
 					a, _ := strconv.Atoi(m[1])
 					b, _ := strconv.Atoi(m[2])
 					if b > 0 && a <= b {
-						prog([]int{0, 40, 90}[phase] + a*[]int{40, 50, 9}[phase]/b)
+						if phase == 0 {
+							prog(a * 14 / b)
+						} else if phase == 1 && (strings.Contains(l, "s/it") || strings.Contains(l, "it/s")) {
+							prog(15 + a*60/b)
+						}
 					}
 				}
 			}

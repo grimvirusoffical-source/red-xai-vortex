@@ -86,7 +86,7 @@ struct ModelSettings: View {
         Form {
             Section("Model") {
                 Picker("Model", selection: $model) {
-                    ForEach(Array(Set(store.availableModels + Defaults.knownModels + [model])).sorted(), id: \.self) { Text($0).tag($0) }
+                    ForEach(Array(Set(store.availableModels + Defaults.knownModels + [model])).sorted(), id: \.self) { Text(Defaults.displayName($0)).tag($0) }
                 }
                 TextField("Custom model id", text: $model)
                 Text("vortex = default Red-XAI learning model. red-xai = production router. qwen2.5-coder-14b = coding. Other installed models appear in the Hub. Switching loads the model on the server; the first reply takes a few extra seconds.")

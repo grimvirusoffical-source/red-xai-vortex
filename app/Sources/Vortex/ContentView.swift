@@ -157,7 +157,7 @@ struct ChatView: View {
         .toolbar {
             ToolbarItemGroup {
                 Picker("Model", selection: $model) {
-                    ForEach(Array(Set(store.availableModels + LocalRuntime.shared.models.map { "local:\($0)" } + [model])).sorted(), id: \.self) { Text($0).tag($0) }
+                    ForEach(Array(Set(store.availableModels + LocalRuntime.shared.models.map { "local:\($0)" } + [model])).sorted(), id: \.self) { Text(Defaults.displayName($0)).tag($0) }
                 }.frame(width: 240)
                 Toggle(isOn: Binding(get: { ToolRegistry.chatToolsOn }, set: { ToolRegistry.chatToolsOn = $0; store.objectWillChange.send() })) {
                     Image(systemName: "wrench.and.screwdriver")

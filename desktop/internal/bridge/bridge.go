@@ -135,6 +135,9 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 	case "media.jobs":
 		return s.mediaJobs()
 	default:
+		if strings.HasPrefix(m, "gate.") || strings.HasPrefix(m, "redx.") {
+			return s.redx(m, in)
+		}
 		return map[string]any{"ok": false, "error": "unknown method " + m}
 	}
 }
