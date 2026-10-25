@@ -73,17 +73,36 @@ $$('[data-int]').forEach(b=>b.onclick=async()=>{
   const r=await bridge.call('integration',{id:b.dataset.int});
   $('#intLog').textContent = (r.message||JSON.stringify(r)) + '\n' + ($('#intLog').textContent||'');
 });
+const ICON=256; let iconURL=null;
+function fitIcon(src){ return new Promise((ok,bad)=>{ const im=new Image(); im.crossOrigin='anonymous';
+  im.onload=()=>{ const c=document.createElement('canvas'); c.width=c.height=ICON; const s=Math.min(im.width,im.height);
+    c.getContext('2d').drawImage(im,(im.width-s)/2,(im.height-s)/2,s,s,0,0,ICON,ICON);
+    ok({url:c.toDataURL('image/png'),w:im.width,h:im.height}); }; im.onerror=bad; im.src=src; }); }
+async function setIcon(src,why){ const f=await fitIcon(src); iconURL=f.url; $('#iconPrev').src=f.url;
+  $('#iconMsg').textContent=(f.w===ICON&&f.h===ICON)?why+': 256×256 ✓':why+`: ${f.w}×${f.h} → auto-fitted to 256×256`; }
+async function defaultIcon(){ return (await fitIcon('logo.png')).url; }
+function withIcon(js,url){ try{ const d=JSON.parse(js); d.icon=url; return JSON.stringify(d,null,2);}catch(e){ return js; } }
+$('#iconFile').onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>setIcon(r.result,'Uploaded'); r.readAsDataURL(f); };
+$('#aiIcon').onclick=async()=>{ $('#iconMsg').textContent='Generating icon…';
+  const r=await bridge.call('plugin.icon',{prompt:$('#maker').value});
+  if(r.ok) await setIcon(r.dataURL,'AI icon'); else $('#iconMsg').textContent=r.message||'failed'; };
 $('#makePlugin').onclick=async()=>{
   const r=await bridge.call('plugin.make',{description:$('#maker').value});
-  $('#pluginOut').textContent = r.json || r.error || '';
+  $('#pluginOut').textContent = r.json ? withIcon(r.json, iconURL||await defaultIcon()) : (r.error||'');
 };
 $('#uploadPlugin').onclick=async()=>{
-  const r=await bridge.call('plugin.upload',{json:$('#pluginOut').textContent});
-  $('#pluginOut').textContent = (r.message||'') + '\n' + ($('#pluginOut').textContent||'');
+  const js=withIcon($('#pluginOut').textContent, iconURL||await defaultIcon());
+  const r=await bridge.call('plugin.upload',{json:js});
+  $('#pluginOut').textContent = (r.message||'') + '\n' + js;
 };
+function iconSrc(i){ return (typeof i==='string' && /^(data:image|https:)/.test(i)) ? i : 'logo.png'; }
 $('#refreshStore').onclick=async()=>{
-  const r=await bridge.call('plugin.store',{});
-  $('#pluginOut').textContent = JSON.stringify(r.plugins||r,null,2);
+  const r=await bridge.call('plugin.store',{}); const list=r.plugins||[];
+  $('#storeList').innerHTML=''; list.forEach(p=>{ const d=document.createElement('div'); d.className='card';
+    d.innerHTML='<img width="48" height="48" style="border-radius:10px;float:left;margin-right:8px"/><b></b><div style="color:var(--muted);font-size:12px"></div>';
+    d.querySelector('img').src=iconSrc(p.icon); d.querySelector('b').textContent=p.name||p.id||'Plugin';
+    d.querySelector('div').textContent=p.description||''; $('#storeList').appendChild(d); });
+  if(!list.length) $('#pluginOut').textContent = JSON.stringify(r,null,2);
 };
 $('#saveSettings').onclick=async()=>{
   const r=await bridge.call('settings.save',{baseURL:$('#baseURL').value, apiKey:$('#apiKey').value});

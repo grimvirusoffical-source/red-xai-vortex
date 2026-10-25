@@ -236,10 +236,20 @@ var page = template.Must(template.New("p").Parse(`<!doctype html><html lang="en"
 {{if .Owner}}
 <section class="card" style="margin-top:1.5rem"><h2>Pending requests</h2>
 {{if .PendingList}}{{range .PendingList}}
-<form method="post" action="` + pfx + `/approve" style="display:flex;gap:.5rem;align-items:center;margin:.4rem 0">
+<form method="post" action="` + pfx + `/approve" style="display:inline-flex;gap:.5rem;align-items:center;margin:.4rem 0">
 <input type="hidden" name="user" value="{{.}}"><span>{{.}}</span>
 <button class="btn">Approve</button></form>
+<form method="post" action="` + pfx + `/deny" style="display:inline-flex;gap:.5rem;align-items:center;margin:.4rem 0">
+<input type="hidden" name="user" value="{{.}}">
+<button class="btn ghost">Deny</button></form>
 {{end}}{{else}}<p class="sub small">No pending requests.</p>{{end}}
+</section>
+<section class="card" style="margin-top:1rem"><h2>Approved users</h2>
+{{if .ApprovedList}}{{range .ApprovedList}}
+<form method="post" action="` + pfx + `/deny" style="display:flex;gap:.5rem;align-items:center;margin:.4rem 0">
+<input type="hidden" name="user" value="{{.}}"><span>{{.}}</span>
+<button class="btn ghost">Revoke</button></form>
+{{end}}{{else}}<p class="sub small">No approved non-owner users.</p>{{end}}
 </section>
 {{end}}
 <form method="post" action="/vortex/signout"><button class="link">Sign out</button></form>
@@ -249,7 +259,7 @@ func render(w http.ResponseWriter, s *sess, msg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	u := ""
 	owner, approved, pending := false, false, false
-	var pendingList []string
+	var pendingList, approvedList []string
 	if s != nil {
 		u = usernameOf(s)
 		owner = isOwner(u)
@@ -260,9 +270,14 @@ func render(w http.ResponseWriter, s *sess, msg string) {
 			for k := range a.Pending {
 				pendingList = append(pendingList, k)
 			}
+			for _, x := range a.Approved {
+				if !isOwner(x) {
+					approvedList = append(approvedList, x)
+				}
+			}
 		}
 	}
-	page.Execute(w, map[string]any{"Msg": msg, "User": u, "Owner": owner, "Approved": approved, "Pending": pending, "PendingList": pendingList})
+	page.Execute(w, map[string]any{"Msg": msg, "User": u, "Owner": owner, "Approved": approved, "Pending": pending, "PendingList": pendingList, "ApprovedList": approvedList})
 }
 
 func sameOrigin(r *http.Request) bool {
@@ -359,6 +374,27 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = saveACL(a)
 		render(w, s, "Approved "+u+".")
+	case "/deny":
+		if !isOwner(usernameOf(s)) {
+			http.Error(w, "forbidden", 403)
+			return
+		}
+		u := strings.ToLower(strings.TrimSpace(r.FormValue("user")))
+		if u == "" {
+			render(w, s, "Missing user.")
+			return
+		}
+		a := loadACL()
+		delete(a.Pending, u)
+		kept := a.Approved[:0]
+		for _, x := range a.Approved {
+			if strings.ToLower(x) != u {
+				kept = append(kept, x)
+			}
+		}
+		a.Approved = kept
+		_ = saveACL(a)
+		render(w, s, "Denied/revoked "+u+".")
 	case "/start":
 		if s == nil {
 			http.Redirect(w, r, pfx+"/", 303)
@@ -416,6 +452,10 @@ func main() {
 	m.HandleFunc("/vortex/signout", signout)
 	m.HandleFunc("/vortex/", func(w http.ResponseWriter, r *http.Request) {
 		// Public: stylesheet + desktop download artifacts (SHA256SUMS, installers).
+		if r.TLS == nil && r.Header.Get("CF-Visitor") == "" {
+			http.Redirect(w, r, "https://"+strings.Split(r.Host, ":")[0]+r.URL.RequestURI(), http.StatusMovedPermanently)
+			return
+		}
 		if r.URL.Path == "/vortex/style.css" || strings.HasPrefix(r.URL.Path, "/vortex/download/") {
 			fs.ServeHTTP(w, r)
 			return
@@ -431,6 +471,17 @@ func main() {
 			}
 		}
 		fs.ServeHTTP(w, r)
+	})
+	// Public OpenAI-compatible API for desktop apps (gateway enforces API keys).
+	gwURL, _ := url.Parse(env("CPC_GATEWAY", "http://127.0.0.1:8091"))
+	gwp := httputil.NewSingleHostReverseProxy(gwURL)
+	gwp.FlushInterval = -1
+	m.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil { // never accept API keys over cleartext
+			http.Error(w, `{"error":{"code":426,"message":"use https"}}`, http.StatusUpgradeRequired)
+			return
+		}
+		gwp.ServeHTTP(w, r)
 	})
 	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/vortex/", 302) })
 	h := sec(m)

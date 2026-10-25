@@ -168,7 +168,15 @@ enum PluginCatalog {
         """
         let srv = ServerStore.shared.active
         let base = srv?.chatURL ?? (UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL)
-        let key = srv.map { ServerStore.shared.key(for: $0) } ?? (Keychain.get() ?? "")
+        // Prefer Keychain (same key SelfTest / chat use); ServerStore.key can be empty when Link is on.
+        let key: String = {
+            if let k = Keychain.get(), !k.isEmpty { return k }
+            if let s = srv {
+                let k = ServerStore.shared.key(for: s)
+                if !k.isEmpty { return k }
+            }
+            return ""
+        }()
         let p = ChatParams(baseURL: base, apiKey: key, model: UserDefaults.standard.string(forKey: "pluginMakerModel") ?? "vortex",
                            temperature: 0.2, topP: 0.9, repeatPenalty: 1.05, topK: 40, maxTokens: 1500, seed: -1)
         let j = try await Agent.complete(p, messages: [["role": "user", "content": prompt]], tools: [])

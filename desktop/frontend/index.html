@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<link rel="icon" href="favicon.png"/>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Red-XAI Vortex</title>
@@ -35,7 +36,7 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
 </head>
 <body>
 <header>
-  <img id="logo" alt="Vortex" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='12' fill='%23141a22'/><path d='M32 10 L54 48 H10 Z' fill='%235b8cff'/><circle cx='32' cy='38' r='6' fill='%23e8eef6'/></svg>"/>
+  <img id="logo" alt="Red-XAI Vortex" src="logo.png" width="32" height="32"/>
   <h1>Red-XAI Vortex</h1>
   <div class="tabs">
     <button class="on" data-tab="chat">Chat</button>
@@ -109,9 +110,17 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
       <textarea id="maker" rows="3" placeholder="Describe a plugin or skill…"></textarea>
       <div class="row" style="margin-top:8px">
         <button class="primary" id="makePlugin">Generate plugin</button>
+        <button class="ghost" id="aiIcon">AI icon</button>
         <button class="ghost" id="uploadPlugin">Upload to store (RedX sign-in)</button>
         <button class="ghost" id="refreshStore">Refresh store</button>
       </div>
+      <div id="iconBox" style="display:flex;gap:12px;align-items:center;margin:10px 0">
+        <img id="iconPrev" src="logo.png" width="64" height="64" alt="Plugin icon" style="border-radius:12px"/>
+        <div><label>Plugin icon <input type="file" id="iconFile" accept="image/png,image/jpeg,image/webp"/></label>
+        <div style="color:var(--muted);font-size:12px">Required: 256 × 256 px square PNG. Other sizes are auto-cropped to square and resized. No upload = Red-XAI logo.</div>
+        <div id="iconMsg" style="font-size:12px"></div></div>
+      </div>
+      <div id="storeList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px"></div>
       <pre id="pluginOut" style="color:var(--muted);white-space:pre-wrap"></pre>
     </div>
   </section>

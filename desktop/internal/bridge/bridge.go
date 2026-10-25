@@ -124,6 +124,8 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		return s.pluginMake(str(in, "description"))
 	case "plugin.upload":
 		return s.pluginUpload(str(in, "json"))
+	case "plugin.icon":
+		return s.pluginIcon(str(in, "prompt"))
 	case "plugin.store":
 		return s.pluginStore()
 	default:
@@ -391,7 +393,7 @@ func (s *Server) pluginMake(desc string) map[string]any {
 	id := "plugin-" + fmt.Sprintf("%d", time.Now().Unix()%100000)
 	doc := map[string]any{
 		"id": id, "name": "Generated Plugin", "version": "1.0.0",
-		"description": desc, "author": "you", "icon": "puzzlepiece.fill",
+		"description": desc, "author": "you", "icon": "",
 		"tools": []map[string]any{{
 			"name": "run", "description": desc, "kind": "shell",
 			"command": "echo", "args": []string{"ok"},
@@ -448,4 +450,39 @@ func (s *Server) pluginStore() map[string]any {
 func str(m map[string]any, k string) string {
 	v, _ := m[k].(string)
 	return v
+}
+
+// pluginIcon asks the Vortex gateway for a square icon (OpenAI images API). The UI fits it to 256x256.
+func (s *Server) pluginIcon(prompt string) map[string]any {
+	if prompt == "" {
+		prompt = "plugin"
+	}
+	base := s.St.Settings.BaseURL
+	key := keyring.Get("vortex-api-key")
+	body, _ := json.Marshal(map[string]any{"model": "vortex-image", "prompt": "flat app icon, centered, dark background, red accent: " + prompt, "size": "256x256", "n": 1, "response_format": "b64_json"})
+	req, _ := http.NewRequest("POST", base+"/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	res, err := (&http.Client{Timeout: 180 * time.Second}).Do(req)
+	if err != nil {
+		return map[string]any{"ok": false, "message": err.Error()}
+	}
+	defer res.Body.Close()
+	var out struct {
+		Data []struct {
+			B64 string `json:"b64_json"`
+			URL string `json:"url"`
+		} `json:"data"`
+	}
+	b, _ := io.ReadAll(io.LimitReader(res.Body, 16<<20))
+	json.Unmarshal(b, &out)
+	if len(out.Data) == 0 || (out.Data[0].B64 == "" && out.Data[0].URL == "") {
+		return map[string]any{"ok": false, "message": fmt.Sprintf("image generation failed (HTTP %d)", res.StatusCode)}
+	}
+	if out.Data[0].B64 != "" {
+		return map[string]any{"ok": true, "dataURL": "data:image/png;base64," + out.Data[0].B64}
+	}
+	return map[string]any{"ok": true, "dataURL": out.Data[0].URL}
 }

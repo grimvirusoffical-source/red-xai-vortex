@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -50,7 +51,7 @@ func Open() *Store {
 	h, _ := os.UserHomeDir()
 	d := filepath.Join(h, ".config", "red-xai-vortex")
 	_ = os.MkdirAll(d, 0700)
-	s := &Store{Dir: d, Settings: Settings{BaseURL: "http://127.0.0.1:18091/v1", ActiveID: "vortex-default"}}
+	s := &Store{Dir: d, Settings: Settings{BaseURL: "https://45.77.105.187/v1", ActiveID: "vortex-default"}}
 	s.load()
 	if len(s.Agents) == 0 {
 		s.Agents = []Agent{{
@@ -69,8 +70,8 @@ func (s *Store) load() {
 	_ = readJSON(s.path("agents.json"), &s.Agents)
 	_ = readJSON(s.path("chats.json"), &s.Chats)
 	_ = readJSON(s.path("settings.json"), &s.Settings)
-	if s.Settings.BaseURL == "" {
-		s.Settings.BaseURL = "http://127.0.0.1:18091/v1"
+	if b := s.Settings.BaseURL; b == "" || strings.Contains(b, ":8091") || strings.Contains(b, ":18091") || strings.HasPrefix(b, "http://45.77.105.187") {
+		s.Settings.BaseURL = "https://45.77.105.187/v1"
 	}
 }
 
