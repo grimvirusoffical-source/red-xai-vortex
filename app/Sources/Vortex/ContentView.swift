@@ -164,6 +164,8 @@ struct ChatView: View {
                 Button { groupSetup = true } label: { Image(systemName: (store.current?.participants?.isEmpty == false) ? "person.3.fill" : "person.3") }
                     .help("Group chat: several models reply in turn; @mention one to ask only it")
                 Button { voiceCall = true } label: { Image(systemName: "phone.fill") }.help("Voice call (whisper.cpp + Piper on this Mac)")
+                Button { if let u = URL(string: UserDefaults.standard.string(forKey: "cloudpc.url") ?? "https://red-xai.com/vortex/cloudpc/") { NSWorkspace.shared.open(u) } } label: { Image(systemName: "cloud") }
+                    .help("Cloud PC: open your private Linux desktop in the browser")
                 Button { store.regenerate(systemPrompt: systemPrompt, contextTokens: contextTokens, params: params) } label: {
                     Image(systemName: "arrow.clockwise") }.help("Regenerate last reply").disabled(store.streaming)
                 OpenHubToolbar()
