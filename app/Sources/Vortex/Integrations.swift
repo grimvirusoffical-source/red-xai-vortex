@@ -106,7 +106,7 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
     @Published var toolPaths: [String: String] = [:]
     @Published var toolsScanned = false
     let home = FileManager.default.homeDirectoryForCurrentUser.path
-    var localBase: String { "http://127.0.0.1:\(Defaults.sshLocalPort - 1)" }
+    var localBase: String { RedXLink.enabled ? RedXLink.base : "http://127.0.0.1:\(Defaults.sshLocalPort - 1)" }
     var publicBase: String { (UserDefaults.standard.string(forKey: "publicBaseURL") ?? "").replacingOccurrences(of: "/v1", with: "") }
     var envFile: String { home + "/.config/red-xai-vortex/env" }
     static let marker = "# red-xai-vortex integrations (added by the Red-XAI Vortex app; removed on Disconnect)"
@@ -219,7 +219,7 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
     }
 
     // ---------- connect ----------
-    func connect(_ i: Integration, model: String) async {
+    func connect(_ i: Integration, model: String, relaunchApps: Bool = true) async {
         message = ""; cardError[i.id] = nil; cardOK[i.id] = nil
         do {
             // Ensure tunnel public port is up (Integrations use localBase = sshLocalPort-1 → 18091)
@@ -234,7 +234,10 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
                 throw NSError(domain: "Vortex", code: 1, userInfo: [NSLocalizedDescriptionKey: "key creation failed (no key in response)"])
             }
             Keychain.set(key, account: "integration-\(i.id)")
-            var files: [FileBackup] = []; var env: [String] = []
+            // Re-Connect: keep the ORIGINAL backups (never back up our own config over them) and revoke the old key.
+            let prev = state[i.id]
+            var files: [FileBackup] = prev?.files ?? []; var env: [String] = []
+            if let old = prev?.keyID, old != kid { _ = try? await Admin.call("DELETE", "/admin/keys/\(old)") }
             let b = base(i)
             switch i.id {
             case "codex":
@@ -338,7 +341,7 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
             }
             if i.id == "codex" { setLaunchEnv("VORTEX_API_KEY", key) }
             state[i.id] = IntegrationState(model: model, keyID: kid, at: Date(), files: files, envVars: env); save()
-            let rl = await relaunch(i.id, name: i.name)
+            let rl = relaunchApps ? await relaunch(i.id, name: i.name) : ""
             let ok = "\(i.name) connected to \(model) via \(b). \(rl)"
             cardOK[i.id] = ok
             if message.isEmpty { message = ok + " Your existing models are kept. Disconnect restores the backup and revokes the key." }

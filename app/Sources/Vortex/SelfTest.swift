@@ -58,6 +58,7 @@ import AVFoundation
         try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
 
         await ServerStore.shared.healthCheckActive()   // same check the app runs at launch
+        if let a = ServerStore.shared.active { _ = await ServerStore.shared.ping(a) }   // wait for the tunnel before the first API call
         // ---- chat & model picker
         var models: [String] = []
         await t("Model picker", "GET /v1/models via API.models") {
@@ -65,8 +66,16 @@ import AVFoundation
             try expect(models.contains("vortex") && models.contains("red-xai"), "vortex/red-xai missing: \(models)")
             return "\(models.count) models incl. vortex, red-xai, \(models.filter { $0.hasPrefix("redx-merge-") }.count) merges"
         }
-        await t("Chat", "stream vortex (API.stream)") { try await ask("vortex", [Message(role: "user", content: "Reply with exactly: PONG")]) }
-        await t("Chat", "stream red-xai") { try await ask("red-xai", [Message(role: "user", content: "Reply with exactly: PONG")]) }
+        await t("Chat", "vortex follows 'Reply exactly: PONG'") {
+            let r = try await ask("vortex", [Message(role: "user", content: "Reply with exactly: PONG")], max: 20)
+            let w = r.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+            try expect(w.uppercased() == "PONG", "replied: \(r.prefix(120))"); return r
+        }
+        await t("Chat", "red-xai follows 'Reply exactly: PONG'") {
+            let r = try await ask("red-xai", [Message(role: "user", content: "Reply with exactly: PONG")], max: 20)
+            let w = r.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+            try expect(w.uppercased() == "PONG", "replied: \(r.prefix(120))"); return r
+        }
         await t("Chat", "stream qwen2.5-14b") { try await ask("qwen2.5-14b", [Message(role: "user", content: "Reply with exactly: PONG")]) }
         await t("Chat", "context trimming keeps newest message") {
             var budget = 2000 * 4; var hist: [Message] = []
@@ -85,9 +94,19 @@ import AVFoundation
 
         // ---- keys
         await t("API keys", "admin list (HubStore.loadKeys)") { try await HubStore.shared.loadKeys(); return "\(HubStore.shared.keys.count) keys listed (masked)" }
-        await t("API keys", "create → use → disable → revoke (HubStore)") {
+        await t("API keys", "owner gate refuses non-integration keys while locked") {
+            await OwnerGate.shared.refresh()
+            if OwnerGate.shared.unlocked { return "owner unlocked on this device; gate not testable now" }
+            let k = await HubStore.shared.createKey(name: "selftest-gate", models: ["qwen2.5-14b"], rpm: 5)
+            if k != nil, let row = HubStore.shared.keys.first(where: { $0.name == "selftest-gate" }) { _ = try? await Admin.call("DELETE", "/admin/keys/\(row.id)") }
+            try expect(k == nil && HubStore.shared.keyError.contains("owner"), "locked gateway created a key")
+            return "refused: \(HubStore.shared.keyError)"
+        }
+        await t("API keys", "create → use (model-scoped) → disable → revoke (HubStore)") {
             let hub = HubStore.shared
-            guard let k = await hub.createKey(name: "selftest-temp", models: ["qwen2.5-14b"], rpm: 30) else { throw err("create failed: \(hub.keyError)") }
+            // Owner unlocked → a normal key; locked → an integration-scoped key, which the gateway allows without unlock.
+            let name = OwnerGate.shared.unlocked ? "selftest-temp" : "integration: selftest-temp"
+            guard let k = await hub.createKey(name: name, models: ["qwen2.5-14b"], rpm: 30) else { throw err("create failed: \(hub.keyError)") }
             let chatURL = URL(string: params.baseURL + "/chat/completions")!
             func code(_ model: String) async throws -> Int {
                 var r = URLRequest(url: chatURL); r.httpMethod = "POST"
@@ -95,13 +114,16 @@ import AVFoundation
                 r.httpBody = try JSONSerialization.data(withJSONObject: ["model": model, "messages": [["role": "user", "content": "hi"]], "max_tokens": 3])
                 return ((try await URLSession.shared.data(for: r)).1 as? HTTPURLResponse)?.statusCode ?? 0
             }
-            guard let row = hub.keys.first(where: { $0.name == "selftest-temp" && !$0.revoked }) else { throw err("new key not listed") }
+            guard let row = hub.keys.first(where: { $0.name == name && !$0.revoked }) else { throw err("new key not listed") }
             defer { Task { _ = try? await Admin.call("DELETE", "/admin/keys/\(row.id)") } }
             let ok = try await code("qwen2.5-14b"), denied = try await code("vortex")
-            await hub.patchKey(row.id, ["disabled": true]); let off = try await code("qwen2.5-14b")
+            await hub.patchKey(row.id, ["disabled": true])
+            // Disabling needs owner unlock; while locked the gateway must refuse the change instead.
+            let lockedRefused = !OwnerGate.shared.unlocked && hub.keyError.contains("owner")
+            let off = try await code("qwen2.5-14b")
             _ = try await Admin.call("DELETE", "/admin/keys/\(row.id)"); let gone = try await code("qwen2.5-14b")
-            try expect(ok == 200 && denied == 403 && off == 401 && gone == 401, "allowed=\(ok) other-model=\(denied) disabled=\(off) revoked=\(gone)")
-            return "shown once (\(k.prefix(8))…), listed masked as \(row.prefix); 200 / 403 other model / 401 disabled / 401 revoked"
+            try expect(ok == 200 && denied == 403 && (off == 401 || (lockedRefused && off == 200)) && gone == 401, "allowed=\(ok) other-model=\(denied) disabled=\(off) revoked=\(gone)")
+            return "\(name): shown once (\(k.prefix(8))…), listed masked as \(row.prefix); 200 / 403 other model / 401 disabled / 401 revoked"
         }
         await t("Owner panel", "owner status") {
             await OwnerGate.shared.refresh(); try expect(OwnerGate.shared.message.isEmpty || OwnerGate.shared.configured, OwnerGate.shared.message)
@@ -127,23 +149,80 @@ import AVFoundation
             return "reachable: " + ok.joined(separator: ", ")
         }
 
+        // ---- RedX Link (default connection: no SSH, rsx-encrypted, API-key authenticated)
+        await t("RedX Link", "helper bundled and local proxy up") {
+            try expect(RedXLink.binary != nil, "redx-link missing from app bundle")
+            if !RedXLink.enabled { return "connection mode is SSH; RedX Link helper present" }
+            for _ in 0..<30 where !(await RedXLink.statusOK()) { try? await Task.sleep(for: .milliseconds(200)) }
+            try expect(await RedXLink.statusOK(), "proxy \(RedXLink.base) not answering: \(RedXLink.shared.status)")
+            try expect(UserDefaults.standard.string(forKey: "serverURL") == RedXLink.chatURL, "chat URL is not the link proxy")
+            return "proxy \(RedXLink.base) up; chat uses it; \(RedXLink.shared.serverList().count) server(s)"
+        }
+        await t("RedX Link", "handshake + /v1/models on every server (no SSH)") {
+            let list = RedXLink.shared.serverList()
+            guard let r = await RedXLink.check(key: Keychain.get() ?? "", servers: list) else { throw err("check did not run") }
+            let rows = r["results"] as? [[String: Any]] ?? []
+            try expect(r["ok"] as? Bool == true, rows.map { "s\($0["server"] ?? "?"): \($0["error"] ?? "status \($0["status"] ?? "?")")" }.joined(separator: "; "))
+            return rows.map { "server \($0["server"] ?? "?"): \($0["models"] ?? 0) models in \($0["ms"] ?? 0) ms" }.joined(separator: ", ")
+        }
+        await t("RedX Link", "chat over the link (vortex)") {
+            var p = params; p.baseURL = RedXLink.chatURL; p.model = "vortex"; p.maxTokens = 12
+            let b = ReplyBuffer(); _ = try await API.stream(p, messages: [Message(role: "user", content: "Reply with exactly: PONG")], onToken: { b.append($0) })
+            let r = b.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            try expect(r.uppercased().hasPrefix("PONG"), "reply: \(r.prefix(60))")
+            return "streamed over RedX Link: \(r)"
+        }
+        func linkGet(_ path: String, key: String) async throws -> (Int, String) {
+            var r = URLRequest(url: URL(string: RedXLink.base + path)!); r.timeoutInterval = 20
+            r.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            let (d, resp) = try await URLSession.shared.data(for: r)
+            return ((resp as? HTTPURLResponse)?.statusCode ?? 0, String(data: d, encoding: .utf8) ?? "")
+        }
+        await t("RedX Link", "admin/owner endpoints unreachable over the link") {
+            let (c, b) = try await linkGet("/admin/keys", key: Keychain.get() ?? "")
+            let (c2, _) = try await linkGet("/owner/status", key: Keychain.get() ?? "")
+            try expect(c == 403 && c2 == 403 && b.contains("not available over RedX Link"), "admin=\(c) owner=\(c2)")
+            return "/admin → 403, /owner → 403"
+        }
+        await t("RedX Link", "invalid key rejected") {
+            let (c, _) = try await linkGet("/v1/models", key: "redx_ai_" + String(repeating: "x", count: 40))
+            try expect(c == 401, "HTTP \(c)"); return "401 for an unknown key"
+        }
+        await t("RedX Link", "forged session / frame rejected by server") {
+            guard let a = RedXLink.shared.serverList().first, let u = URL(string: "http://\(a)/link/v1/req") else { throw err("no server") }
+            var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = 10
+            r.setValue("forged-session", forHTTPHeaderField: "X-RXL-Sid"); r.httpBody = Data(repeating: 7, count: 64)
+            let (_, resp) = try await URLSession.shared.data(for: r)
+            let c = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            try expect(c == 401, "HTTP \(c)"); return "401 for a forged session"
+        }
+        await t("RedX Link", "integrations point at the link proxy") {
+            try expect(!RedXLink.enabled || IntegrationStore.shared.localBase == RedXLink.base, IntegrationStore.shared.localBase)
+            return IntegrationStore.shared.localBase
+        }
+
         await t("Servers", "real failover: switch, chat on backup, switch back") {
             let ss = ServerStore.shared; let orig = ss.activeID
             guard ss.servers.count > 1 else { return "only one server configured" }
             guard let b = await ss.failover() else { throw err("failover() found no server") }
             defer { ss.activate(orig) }
-            var r = URLRequest(url: URL(string: b.chatURL + "/chat/completions")!); r.httpMethod = "POST"; r.timeoutInterval = 180
-            r.setValue("Bearer \(ss.key(for: b))", forHTTPHeaderField: "Authorization"); r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if RedXLink.enabled {   // the link helper restarts with the backup first
+                for _ in 0..<40 where !(RedXLink.shared.lastServers.first == RedXLink.address(b) && RedXLink.shared.running) { try? await Task.sleep(for: .milliseconds(150)) }
+            }
+            let via = RedXLink.enabled ? RedXLink.chatURL : b.chatURL
+            var r = URLRequest(url: URL(string: via + "/chat/completions")!); r.httpMethod = "POST"; r.timeoutInterval = 180
+            let fk = RedXLink.enabled ? (Keychain.get() ?? ss.key(for: b)) : ss.key(for: b)   // one link key serves every server
+            r.setValue("Bearer \(fk)", forHTTPHeaderField: "Authorization"); r.setValue("application/json", forHTTPHeaderField: "Content-Type")
             r.httpBody = try JSONSerialization.data(withJSONObject: ["model": "dolphin3-llama3.1-8b-q8", "max_tokens": 8, "messages": [["role": "user", "content": "Reply with the word ok."]]])
             let (d, resp) = try await URLSession.shared.data(for: r)
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             try expect(code == 200, "\(b.name) chat HTTP \(code)")
             let j = try JSONSerialization.jsonObject(with: d) as? [String: Any]
             let c = ((j?["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any])?["content"] as? String ?? ""
-            return "switched to \(b.name), reply: \(c.prefix(30)); restored"
+            return "switched to \(b.name)\(RedXLink.enabled ? " via RedX Link" : ""), reply: \(c.prefix(30)); restored"
         }
 
-        // ---- integrations (only those already connected; never writes configs)
+        // ---- integrations (only those already connected; re-Connect rewrites only Vortex-owned files)
         let integ = IntegrationStore.shared
         integ.refreshInstalledTools()
         for i in IntegrationCatalog.all where integ.state[i.id] != nil {
@@ -154,6 +233,26 @@ import AVFoundation
             }
         }
         await t("Integrations", "connected count") { "\(integ.state.count) connected: " + integ.state.keys.sorted().joined(separator: ", ") }
+
+        for id in ["codex", "claude-code", "gemini-cli"] {
+            guard let i = IntegrationCatalog.all.first(where: { $0.id == id }), let st = integ.state[id] else { continue }
+            await t("Integrations", "re-Connect \(i.name): original backups kept, old key revoked, test OK") {
+                let userCfgs = [NSHomeDirectory() + "/.codex/config.toml", NSHomeDirectory() + "/.claude/settings.json", NSHomeDirectory() + "/.gemini/settings.json"]
+                let before = userCfgs.map { FileManager.default.contents(atPath: $0) }
+                let oldKey = st.keyID, oldFiles = st.files
+                await integ.connect(i, model: st.model, relaunchApps: false)
+                if let e = integ.cardError[id] { throw err("connect: \(e)") }
+                guard let now = integ.state[id] else { throw err("state lost") }
+                for f in oldFiles { try expect(now.files.contains { $0.path == f.path && $0.backup == f.backup && $0.existed == f.existed }, "backup replaced for \(f.path)") }
+                try expect(now.keyID != oldKey, "key not rotated")
+                try await HubStore.shared.loadKeys()
+                try expect(!HubStore.shared.keys.contains { $0.id == oldKey && !$0.revoked }, "old key still active")
+                try expect(userCfgs.map { FileManager.default.contents(atPath: $0) } == before, "a normal (non-Vortex) config changed")
+                await integ.test(i)
+                if let e = integ.cardError[id] { throw err("test: \(e)") }
+                return "\(oldFiles.count) original backups kept; key rotated; normal configs untouched; " + (integ.cardOK[id] ?? "")
+            }
+        }
 
         // ---- upload
         await t("Upload", "text/code file") {

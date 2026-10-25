@@ -23,6 +23,10 @@ if [ -x "$W" ]; then cp "$W" "$APP/Contents/Resources/ggml-rpc-server"
 mkdir -p "$APP/Contents/Resources/Help"; cp help/*.md "$APP/Contents/Resources/Help/" 2>/dev/null || cp ../docs/*.md "$APP/Contents/Resources/Help/" 2>/dev/null || true
 # server installer for one-click Servers > Install
 [ -f server/install.sh ] && cp server/install.sh "$APP/Contents/Resources/install.sh"
+# RedX Link helper (private source, built separately with rsx; universal binary in ~/Projects/redx-link)
+RL=~/Projects/redx-link/redx-link
+if [ -x "$RL" ]; then cp "$RL" "$APP/Contents/Resources/redx-link"
+  codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP/Contents/Resources/redx-link" 2>&1 | tail -1; fi
 # local mode runtime (Metal); signed without hardened runtime so it can load Homebrew's OpenSSL
 L=~/Projects/redx-node/llama.cpp/build/bin/llama-server
 if [ -x "$L" ]; then cp "$L" "$APP/Contents/Resources/llama-server"; codesign --force --timestamp --sign "$SIGN_ID" "$APP/Contents/Resources/llama-server" 2>&1 | tail -1; fi
@@ -43,7 +47,7 @@ cat > "$APP/Contents/Info.plist" <<P
 <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
 <key>NSMicrophoneUsageDescription</key><string>Voice calls: your speech is transcribed on this Mac by whisper.cpp.</string>
 <key>NSAppleEventsUsageDescription</key><string>PC control (off by default): open and control apps when you allow it.</string>
-<key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+<key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict>
 </dict></plist>
 P
 cat > build/vortex.entitlements <<EOT

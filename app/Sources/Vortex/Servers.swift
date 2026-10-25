@@ -10,6 +10,7 @@ struct ServerDef: Identifiable, Codable, Hashable {
     var localPort: Int
     var remotePort: Int = 8092
     var primary = false          // the original server: uses the "api-key" Keychain entry
+    var linkAddr: String?        // RedX Link address (host[:port]); nil = derive from sshHost
     /// Admin API (8092) through the SSH tunnel — Hub / Owner / keys / pulls.
     var baseURL: String { "http://127.0.0.1:\(localPort)/v1" }
     var adminBase: String { "http://127.0.0.1:\(localPort)" }
@@ -63,7 +64,18 @@ final class ServerStore: ObservableObject {
         if !servers.contains(where: { $0.id == activeID }) { activeID = servers[0].id }
         // Never stay on a server whose SSH host is unusable; fall back to the primary.
         if let a = active, !Self.validHost(a.sshHost), let p = servers.first(where: { $0.primary }) { activate(p.id) }
+        if RedXLink.enabled {
+            UserDefaults.standard.set(RedXLink.chatURL, forKey: "serverURL")
+            Task { @MainActor in RedXLink.shared.start() }
+        }
     }
+    func setLinkAddr(_ id: String, _ a: String) {
+        guard let i = servers.firstIndex(where: { $0.id == id }) else { return }
+        let v = a.trimmingCharacters(in: .whitespaces)
+        servers[i].linkAddr = v.isEmpty ? nil : v; save(); RedXLink.shared.start(force: true)
+    }
+    /// SSH tunnels are owner-only: start them only when this Mac has the SSH key.
+    static func hasSSHKey(_ s: ServerDef) -> Bool { FileManager.default.fileExists(atPath: (s.keyPath as NSString).expandingTildeInPath) }
     static func validHost(_ h: String) -> Bool { h.range(of: "^[A-Za-z0-9._-]+@[A-Za-z0-9.:-]+$", options: .regularExpression) != nil }
     static func normalizeHost(_ h: String) -> String {
         var s = h.trimmingCharacters(in: .whitespaces)
@@ -107,19 +119,25 @@ final class ServerStore: ObservableObject {
     func activate(_ id: String) {
         guard let s = server(id) else { return }
         activeID = id; UserDefaults.standard.set(id, forKey: "activeServer")
-        // Chat always hits the public gateway port (18091). Admin stays on localPort (18092).
-        UserDefaults.standard.set(s.chatURL, forKey: "serverURL")
+        // Chat: RedX Link proxy (default) or the public gateway port through SSH (18091). Admin stays on localPort (18092).
+        UserDefaults.standard.set(RedXLink.enabled ? RedXLink.chatURL : s.chatURL, forKey: "serverURL")
         UserDefaults.standard.set(s.adminBase, forKey: "adminBaseURL")
         let k = key(for: s)
         if !k.isEmpty {
-            Keychain.set(k)  // chat api-key
+            // RedX Link: one link-enabled key serves every server, so failover keeps the chat key.
+            if !RedXLink.enabled { Keychain.set(k) }  // chat api-key
             Keychain.set(k, account: s.keychainAccount)
             if s.primary { Keychain.set(k, account: "admin-primary") }
         }
-        ensureTunnel(s)
+        if RedXLink.enabled { RedXLink.shared.start() }
+        if !RedXLink.enabled || Self.hasSSHKey(s) { ensureTunnel(s) }
     }
 
     func ping(_ s: ServerDef) async -> Bool {
+        if RedXLink.enabled, let a = RedXLink.address(s) {
+            if await RedXLink.ping(a) { health[s.id] = true; return true }
+            if !Self.hasSSHKey(s) { health[s.id] = false; return false }
+        }
         ensureTunnel(s)
         for _ in 0..<6 {
             // Prefer the public chat port — that is what the chat window needs.
@@ -201,6 +219,7 @@ struct ServersView: View {
     @AppStorage("autoFailover") var autoFailover = true
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            LinkSettingsBox()
             GroupBox("Add a server (Ubuntu/Debian VPS with SSH key login)") {
                 HStack {
                     TextField("Name", text: $name).frame(width: 140)
@@ -231,7 +250,7 @@ struct ServersView: View {
                     }
                 }.padding(.vertical, 4)
             }
-            Text("Install / Update runs the bundled server installer over SSH: llama.cpp, the gateway and the model manager. Nothing is opened to the internet; Red-XAI Vortex talks to each server through its own SSH tunnel.").font(.caption).foregroundStyle(.secondary)
+            Text("Install / Update runs the bundled server installer over SSH: llama.cpp, the gateway and the model manager. Only the encrypted RedX Link port is open to the internet; admin tools reach each server through its own SSH tunnel.").font(.caption).foregroundStyle(.secondary)
         }
         .padding()
         .sheet(item: $keyEdit) { s in

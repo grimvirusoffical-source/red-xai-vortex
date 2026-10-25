@@ -19,7 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { SelfTest.arg == nil }
     func applicationWillTerminate(_ n: Notification) { MainActor.assumeIsolated {
-        NodeManager.shared.shutdown(); LocalRuntime.shared.stop(); MCPStore.shared.stopAll(); ServerStore.shared.stopAll(); ModelBrowserServer.shared.stop()
+        NodeManager.shared.shutdown(); LocalRuntime.shared.stop(); MCPStore.shared.stopAll(); ServerStore.shared.stopAll(); RedXLink.shared.stop(); ModelBrowserServer.shared.stop()
         // make sure no SSH tunnel or local model outlives the app
         let k = Process(); k.executableURL = URL(fileURLWithPath: "/usr/bin/pkill"); k.arguments = ["-P", "\(ProcessInfo.processInfo.processIdentifier)"]; try? k.run(); k.waitUntilExit() } }
 }
@@ -34,6 +34,10 @@ struct VortexApp: App {
         }
         if UserDefaults.standard.string(forKey: "adminBaseURL") == nil {
             UserDefaults.standard.set("http://127.0.0.1:18092", forKey: "adminBaseURL")
+        }
+        // RedX Link is the default connection (no SSH needed).
+        if (UserDefaults.standard.string(forKey: "connectionMode") ?? "link") == "link" {
+            UserDefaults.standard.set("http://127.0.0.1:18191/v1", forKey: "serverURL")
         }
         if (UserDefaults.standard.string(forKey: "serverURL") ?? "").isEmpty {
             UserDefaults.standard.set(Defaults.serverURL, forKey: "serverURL")
