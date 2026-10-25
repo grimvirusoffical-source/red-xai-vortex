@@ -141,6 +141,7 @@ func agStep(id string) {
 	a.LastRun, a.Runs = now, a.Runs+1
 	if err != nil {
 		a.Status, a.LastError = "error", err.Error()
+		notify(a.KeyID, "agent", "Agent "+a.Name+" hit an error", err.Error(), a.ID)
 		log.Printf("agent %s run failed: %v", a.ID, err)
 	} else {
 		out = strings.TrimSpace(thinkRe.ReplaceAllString(out, ""))
@@ -149,6 +150,9 @@ func agStep(id string) {
 		a.Status = "idle"
 		if strings.Contains(out, "DONE") {
 			a.On, a.Status = false, "done"
+			notify(a.KeyID, "agent", "Agent "+a.Name+" finished", out, a.ID)
+		} else {
+			notify(a.KeyID, "agent", "New reply from "+a.Name, out, a.ID)
 		}
 	}
 	agSaveLocked()

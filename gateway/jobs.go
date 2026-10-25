@@ -5,7 +5,7 @@ package main
 //   GET  /v1/jobs/{id}       → status queued|running|done|error, progress 0-100, position, seconds, result
 //   GET  /v1/jobs            → this key's recent jobs (no result payloads)
 //   POST /v1/audio/speech    OpenAI-style TTS ("input") → WAV bytes (synchronous; Piper is fast)
-// Every finished job is written to the media learning log (sealed with rsx, PII scrubbed):
+// Every finished job is written to the media learning log (sealed, PII scrubbed):
 //   GET  /admin/learning/media?n=50 (admin)
 
 import (
@@ -218,8 +218,10 @@ func jobWorker() {
 		j.finished = time.Now()
 		if err != nil {
 			j.Status, j.Error = "error", err.Error()
+			notify(j.keyID, "media", "Media job failed ("+j.Type+")", err.Error(), "")
 		} else {
 			j.Status, j.Progress, j.Result = "done", 100, res
+			notify(j.keyID, "media", "Your "+j.Type+" is ready", j.ID, "")
 		}
 		jobsMu.Unlock()
 		logMedia(j, err)

@@ -578,6 +578,10 @@ func handleV1(w http.ResponseWriter, r *http.Request, k *Key) {
 		handleAgents(w, r, k)
 		return
 	}
+	if path == "/v1/notifications" || strings.HasPrefix(path, "/v1/notifications/") {
+		handleNotifications(w, r, k)
+		return
+	}
 	if path == "/v1/jobs" || strings.HasPrefix(path, "/v1/jobs/") {
 		handleJobs(w, r, k)
 		return
@@ -1224,6 +1228,7 @@ func main() {
 		return
 	}
 	load()
+	startNotifyLocal()
 	go offloadLoop()
 	go func() {
 		for range time.Tick(15 * time.Second) {

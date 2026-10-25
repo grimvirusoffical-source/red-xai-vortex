@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/smtp"
 	"net/url"
 	"os"
 	"os/exec"
@@ -17,8 +18,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-
 )
 
 const pfx = "/vortex/cloudpc"
@@ -52,8 +51,8 @@ func env(k, d string) string {
 // Everyone else must Request access; an owner Approves from the panel.
 
 type aclFile struct {
-	Approved []string            `json:"approved"`
-	Pending  map[string]string   `json:"pending"` // username -> requested_at RFC3339
+	Approved []string          `json:"approved"`
+	Pending  map[string]string `json:"pending"` // username -> requested_at RFC3339
 }
 
 func aclPath() string { return env("CPC_ACL", "/var/lib/cloudpc/acl.json") }
@@ -77,7 +76,7 @@ func saveACL(a aclFile) error {
 }
 
 func owners() []string {
-	v := env("CPC_OWNERS", "jf")
+	v := env("CPC_OWNERS", "jf,maindirectory")
 	var out []string
 	for _, p := range strings.Split(v, ",") {
 		p = strings.ToLower(strings.TrimSpace(p))
@@ -292,6 +291,9 @@ func sameOrigin(r *http.Request) bool {
 func cloud(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimPrefix(r.URL.Path, pfx)
 	tok, s := getSess(r)
+	if s != nil && !termsOK(w, r) {
+		return
+	}
 	if strings.HasPrefix(p, "/desktop/") {
 		if s == nil {
 			toSignin(w, r)
@@ -349,7 +351,8 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 		a := loadACL()
 		a.Pending[strings.ToLower(u)] = time.Now().UTC().Format(time.RFC3339)
 		_ = saveACL(a)
-		render(w, s, "Access requested. An owner will approve it.")
+		ownerAlert(u)
+		render(w, s, "Access requested. The owner has been notified.")
 	case "/approve":
 		if !isOwner(usernameOf(s)) {
 			http.Error(w, "forbidden", 403)
@@ -373,6 +376,7 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 			a.Approved = append(a.Approved, u)
 		}
 		_ = saveACL(a)
+		notifyLocal("user:"+u, "cloudpc_decision", "Cloud PC access approved", "You can now open your Cloud PC desktop.", pfx+"/")
 		render(w, s, "Approved "+u+".")
 	case "/deny":
 		if !isOwner(usernameOf(s)) {
@@ -394,6 +398,7 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 		}
 		a.Approved = kept
 		_ = saveACL(a)
+		notifyLocal("user:"+u, "cloudpc_decision", "Cloud PC access denied", "An owner declined or revoked your Cloud PC access.", "")
 		render(w, s, "Denied/revoked "+u+".")
 	case "/start":
 		if s == nil {
@@ -456,12 +461,21 @@ func main() {
 			http.Redirect(w, r, "https://"+strings.Split(r.Host, ":")[0]+r.URL.RequestURI(), http.StatusMovedPermanently)
 			return
 		}
-		if r.URL.Path == "/vortex/style.css" || strings.HasPrefix(r.URL.Path, "/vortex/download/") {
+		if r.URL.Path == "/vortex/donate" || r.URL.Path == "/vortex/terms" {
+			http.Redirect(w, r, r.URL.Path+"/"+qs(r), 301)
+			return
+		}
+		// Public: stylesheet, downloads, donate and terms pages.
+		if r.URL.Path == "/vortex/style.css" || strings.HasPrefix(r.URL.Path, "/vortex/download/") ||
+			strings.HasPrefix(r.URL.Path, "/vortex/donate/") || strings.HasPrefix(r.URL.Path, "/vortex/terms/") {
 			fs.ServeHTTP(w, r)
 			return
 		}
 		if _, s := getSess(r); s == nil {
 			toSignin(w, r)
+			return
+		}
+		if !termsOK(w, r) {
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/") && r.URL.Path != "/vortex/" {
@@ -671,4 +685,69 @@ func signout(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "cpc", Value: "", Path: "/vortex", MaxAge: -1})
 	}
 	http.Redirect(w, r, "/vortex/signin", 303)
+}
+
+// Web Terms of Service gate: signed-in pages require the current terms to be
+// accepted (cookie set by /vortex/terms/). A new version re-prompts.
+const termsVersion = "2026-10-25"
+
+func termsOK(w http.ResponseWriter, r *http.Request) bool {
+	if c, err := r.Cookie("vx_terms"); err == nil && c.Value == termsVersion {
+		return true
+	}
+	if r.Method != "GET" {
+		http.Error(w, "Accept the Terms of Service at /vortex/terms/ first.", 403)
+		return false
+	}
+	http.Redirect(w, r, "/vortex/terms/?next="+url.QueryEscape(r.URL.RequestURI()), 303)
+	return false
+}
+
+func qs(r *http.Request) string {
+	if r.URL.RawQuery != "" {
+		return "?" + r.URL.RawQuery
+	}
+	return ""
+}
+
+// ownerAlert tells the owner about a new Cloud PC request: an in-app
+// notification via the gateway feed and, when SMTP is configured, an email.
+func ownerAlert(user string) {
+	title := "Cloud PC request from " + user
+	body := user + " asked for Cloud PC access. Approve or deny it in Cloud PC (owner panel)."
+	notifyLocal("owner", "cloudpc_request", title, body, pfx+"/")
+	go sendMail(env("CPC_NOTIFY_EMAIL", "grimvirusoffical@gmail.com"), "[Red-XAI Vortex] "+title,
+		body+"\n\nOpen: https://"+env("CPC_PUBLIC_HOST", "45.77.105.187")+pfx+"/\n")
+}
+
+func notifyLocal(to, kind, title, body, link string) {
+	b, _ := json.Marshal(map[string]string{"to": to, "kind": kind, "title": title, "body": body, "link": link})
+	c := &http.Client{Timeout: 5 * time.Second}
+	resp, err := c.Post(env("CPC_NOTIFY", "http://127.0.0.1:18093/notify"), "application/json", bytes.NewReader(b))
+	if err != nil {
+		log.Printf("notify %s: %v", to, err)
+		return
+	}
+	resp.Body.Close()
+}
+
+// sendMail uses CPC_SMTP_HOST, CPC_SMTP_PORT (587), CPC_SMTP_USER, CPC_SMTP_PASS,
+// CPC_SMTP_FROM. Without a host it only logs.
+func sendMail(to, subject, body string) {
+	host := env("CPC_SMTP_HOST", "")
+	if host == "" {
+		log.Printf("email to owner skipped: CPC_SMTP_HOST not set (%s)", subject)
+		return
+	}
+	port, user := env("CPC_SMTP_PORT", "587"), env("CPC_SMTP_USER", "")
+	from := env("CPC_SMTP_FROM", user)
+	msg := "From: Red-XAI Vortex <" + from + ">\r\nTo: " + to + "\r\nSubject: " + subject +
+		"\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + body
+	var a smtp.Auth
+	if user != "" {
+		a = smtp.PlainAuth("", user, env("CPC_SMTP_PASS", ""), host)
+	}
+	if err := smtp.SendMail(host+":"+port, a, from, []string{to}, []byte(msg)); err != nil {
+		log.Printf("email to owner failed: %v", err)
+	}
 }
