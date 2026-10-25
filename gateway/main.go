@@ -570,6 +570,14 @@ func handleV1(w http.ResponseWriter, r *http.Request, k *Key) {
 		handleRedXAI(w, r, k)
 		return
 	}
+	if path == "/v1/jobs" || strings.HasPrefix(path, "/v1/jobs/") {
+		handleJobs(w, r, k)
+		return
+	}
+	if path == "/v1/audio/speech" && r.Method == "POST" {
+		handleSpeech(w, r, k)
+		return
+	}
 	if strings.HasPrefix(path, "/v1/images/") || strings.HasPrefix(path, "/v1/audio/") {
 		handleMedia(w, r, k)
 		return
@@ -913,7 +921,7 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&in)
 	}
 	str := func(f string) string { s, _ := in[f].(string); return s }
-	if providerAdmin(w, r, p, in) || redxaiAdmin(w, r, p, in) || storageAdmin(w, r, p, in) || nodesAdmin(w, r, p) {
+	if providerAdmin(w, r, p, in) || redxaiAdmin(w, r, p, in) || storageAdmin(w, r, p, in) || nodesAdmin(w, r, p) || mediaLogAdmin(w, r, p) || sysStatsAdmin(w, r, p) {
 		return
 	}
 	switch {
@@ -955,7 +963,7 @@ func adminHandler(w http.ResponseWriter, r *http.Request) {
 		var scopes []string
 		if kind, _ := in["kind"].(string); kind == "xai" {
 			prefix = "redx_xai_"
-			valid := map[string]bool{"chat": true, "image": true, "audio": true, "embeddings": true, "train:submit": true}
+			valid := map[string]bool{"chat": true, "image": true, "audio": true, "embeddings": true, "video": true, "train:submit": true}
 			if a, ok := in["scopes"].([]any); ok {
 				for _, v := range a {
 					if s := fmt.Sprint(v); valid[s] {
@@ -1162,6 +1170,34 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("owner password hash stored")
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "set-admin" {
+		// Owner-chosen admin key from env VORTEX_ADMIN_KEY (never argv). Stop the service first.
+		plain := strings.TrimSpace(os.Getenv("VORTEX_ADMIN_KEY"))
+		if len(plain) < 32 || !(strings.HasPrefix(plain, "redx_ai_") || strings.HasPrefix(plain, "redx_xai_")) {
+			fmt.Fprintln(os.Stderr, "VORTEX_ADMIN_KEY must be a redx_ai_/redx_xai_ key (32+ chars)")
+			os.Exit(2)
+		}
+		os.MkdirAll(dir, 0700)
+		load()
+		h := hashKey(plain)
+		for _, x := range keys {
+			if x.Admin && x.Hash != h && x.Revoked == 0 {
+				x.Revoked = time.Now().Unix()
+			}
+		}
+		found := false
+		for _, x := range keys {
+			if x.Hash == h {
+				x.Admin, x.Revoked, found = true, 0, true
+			}
+		}
+		if !found {
+			keys = append(keys, &Key{ID: "admin_" + randB62(8), Name: "Vortex admin", Prefix: plain[:14] + "…", Hash: h, Admin: true, Created: time.Now().Unix()})
+		}
+		saveKeys()
+		fmt.Println("admin key set")
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "init-admin" {

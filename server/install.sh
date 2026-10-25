@@ -4,6 +4,15 @@
 #   curl -fsSL https://raw.githubusercontent.com/grimvirusoffical-source/red-xai-vortex/main/server/install.sh | bash
 # or from a checkout:  sudo bash server/install.sh
 # Options (env): LLAMA_TAG=<tag>  CRYPTO_TAG=stdcrypto|rsx  STARTER=llama3.2-3b  WITH_MEDIA=1 (image+audio, ~15 GB)
+# Existing install: check only (never rebuild/downgrade the gateway or rotate the admin key).
+if [ "${DOLPHINO_REINSTALL:-0}" != 1 ] && [ -x /usr/local/bin/dolphin-gateway ] && systemctl is-active --quiet dolphin-gateway; then
+  echo "Existing Red-XAI server detected: running checks only (set DOLPHINO_REINSTALL=1 to reinstall)."
+  for s in dolphin-gateway dolphin-llm cloudpc-web; do printf "  %-16s %s\n" "$s" "$(systemctl is-active $s 2>/dev/null)"; done
+  printf "  %-16s %s\n" "public :8091" "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8091/healthz)"
+  printf "  %-16s %s\n" "admin key" "$([ -s /root/dolphino-admin.key ] && echo present || echo MISSING)"
+  printf "  %-16s %s free\n" "disk /" "$(df -h / | awk 'NR==2{print $4}')"
+  exit 0
+fi
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "run as root"; exit 1; }
 REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/grimvirusoffical-source/red-xai-vortex/main}"
@@ -39,13 +48,13 @@ fetch server/dolphin-models /usr/local/bin/dolphin-models; chmod 755 /usr/local/
 fetch server/catalog.json /etc/dolphin/catalog.json
 fetch server/dolphin-pool /usr/local/bin/dolphin-pool; chmod 755 /usr/local/bin/dolphin-pool
 for f in redxai-crawl redxai-eval redxai-train vortex-preload; do fetch server/$f /usr/local/bin/$f; chmod 755 /usr/local/bin/$f; done
-mkdir -p /opt/dolphin/redxai /etc/dolphin/redxai /opt/dolphin/audio; fetch server/audio/gen.py /opt/dolphin/audio/gen.py
+mkdir -p /opt/dolphin/redxai /etc/dolphin/redxai /opt/dolphin/audio; fetch server/audio/gen.py /opt/dolphin/audio/gen.py; fetch server/audio/gen2.py /opt/dolphin/audio/gen2.py
 fetch server/media-setup.sh /opt/dolphin/media-setup.sh
 [ "${WITH_MEDIA:-0}" = 1 ] && { log "Installing image + audio generation (large, slow)"; bash /opt/dolphin/media-setup.sh >/opt/dolphin/cache/media-setup.log 2>&1 || true; }
 
 log "Building gateway (crypto backend: $CRYPTO_TAG)"
 GW=/opt/dolphin/src-gateway; rm -rf $GW; mkdir -p $GW
-for f in go.mod main.go providers.go ollama.go redxai.go media.go learn.go storage.go owner.go shim.go shim_gemini.go crypto_stub.go crypto_std.go crypto_rsx.go; do fetch gateway/$f $GW/$f; done
+for f in go.mod main.go providers.go ollama.go redxai.go media.go learn.go storage.go owner.go shim.go shim_gemini.go jobs.go sysstats.go crypto_stub.go crypto_std.go crypto_rsx.go; do fetch gateway/$f $GW/$f; done
 [ "$CRYPTO_TAG" = rsx ] || rm -f $GW/crypto_rsx.go
 (cd $GW && CGO_ENABLED=0 go build -tags "$CRYPTO_TAG" -trimpath -ldflags="-s -w" -o /usr/local/bin/dolphin-gateway .)
 

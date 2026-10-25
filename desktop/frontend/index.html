@@ -42,6 +42,7 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
     <button class="on" data-tab="chat">Chat</button>
     <button data-tab="agents">Agents</button>
     <button data-tab="integrations">Integrations</button>
+    <button data-tab="media">Media</button>
     <button data-tab="plugins">Plugins</button>
     <button data-tab="settings">Settings</button>
   </div>
@@ -102,6 +103,15 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
         <button class="ghost" data-int="test-vscode">Test VS Code</button>
       </div>
       <pre id="intLog" style="color:var(--muted);white-space:pre-wrap"></pre>
+    </div>
+  </section>
+  <section class="panel" id="tab-media" style="grid-column:1/-1">
+    <div class="card">
+      <h3>Media jobs</h3>
+      <div class="row"><select id="mType"><option value="image">Image</option><option value="speech">Speech</option><option value="music">Music</option><option value="sfx">Sound effect</option><option value="video">Short video</option></select>
+      <input id="mPrompt" style="flex:1" placeholder="Prompt (or text to speak)…"><button class="primary" id="mGo">Queue</button></div>
+      <div id="mMsg" class="muted" style="margin-top:6px"></div>
+      <div id="mJobs" style="margin-top:10px"></div>
     </div>
   </section>
   <section class="panel" id="tab-plugins" style="grid-column:1/-1">

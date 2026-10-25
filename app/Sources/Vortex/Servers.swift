@@ -62,6 +62,7 @@ final class ServerStore: ObservableObject {
         repair()
         activeID = UserDefaults.standard.string(forKey: "activeServer") ?? servers[0].id
         if !servers.contains(where: { $0.id == activeID }) { activeID = servers[0].id }
+        startMonitor()
         // Never stay on a server whose SSH host is unusable; fall back to the primary.
         if let a = active, !Self.validHost(a.sshHost), let p = servers.first(where: { $0.primary }) { activate(p.id) }
         if RedXLink.enabled {
@@ -97,9 +98,28 @@ final class ServerStore: ObservableObject {
     }
     /// After launch: if the active server's tunnel can't come up but the primary answers, switch back.
     func healthCheckActive() async {
-        guard let a = active, !a.primary, let p = servers.first(where: { $0.primary }) else { return }
+        guard let a = active else { return }
         if await ping(a) { return }
+        if a.primary { if await failover() != nil { await ChatStoreRef.refresh() }; return }
+        guard let p = servers.first(where: { $0.primary }) else { return }
         if await ping(p) { activate(p.id); await ChatStoreRef.refresh() }
+    }
+    /// Runs for the app's lifetime: every 30 s, if the active server stops answering, switch to the next
+    /// reachable one (respecting the auto-failover toggle); when the primary returns, prefer it again.
+    private var monitor: Task<Void, Never>?
+    func startMonitor() {
+        guard monitor == nil else { return }
+        monitor = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard let self, UserDefaults.standard.object(forKey: "autoFailover") as? Bool ?? true, let a = self.active else { continue }
+                if await self.ping(a) {
+                    if !a.primary, let p = self.servers.first(where: { $0.primary }), await self.ping(p) { self.activate(p.id); await ChatStoreRef.refresh() }
+                    continue
+                }
+                if await self.failover() != nil { await ChatStoreRef.refresh() }
+            }
+        }
     }
     func save() { if let d = try? JSONEncoder().encode(servers) { try? d.write(to: file, options: .atomic) } }
     var active: ServerDef? { servers.first { $0.id == activeID } }
@@ -195,9 +215,9 @@ final class ServerStore: ObservableObject {
             let (code, _) = ssh("sudo -n true 2>/dev/null || [ $(id -u) = 0 ] || exit 9; sudo bash -s 2>&1 || bash -s", stdin: script, stream: true)
             var msg = code == 0 ? "\nInstall finished.\n" : "\nInstall failed (exit \(code)).\n"
             if code == 0 {
-                let (c2, k) = ssh("sudo cat /root/vortex-admin.key 2>/dev/null || cat /root/vortex-admin.key", stream: false)
+                let (c2, k) = ssh("sudo cat /root/dolphino-admin.key 2>/dev/null || cat /root/dolphino-admin.key", stream: false)
                 let key = k.trimmingCharacters(in: .whitespacesAndNewlines)
-                if c2 == 0 && key.hasPrefix("redx_ai_") {
+                if c2 == 0 && (key.hasPrefix("redx_ai_") || key.hasPrefix("redx_xai_")) {
                     Keychain.set(key, account: s.keychainAccount); msg += "Admin key saved to Keychain.\n"
                 } else { msg += "Could not read the admin key; paste it in the server's settings.\n" }
             }
@@ -229,6 +249,7 @@ struct ServersView: View {
                         .disabled(!ServerStore.validHost(ServerStore.normalizeHost(host)))
                 }.padding(4)
             }
+            if let a = ss.active { ServerStatsView(server: a).id(a.id) }
             Toggle("Fail over automatically to another server (or this Mac) when the current one stops answering", isOn: $autoFailover)
             List(ss.servers) { s in
                 VStack(alignment: .leading, spacing: 4) {
@@ -256,9 +277,9 @@ struct ServersView: View {
         .sheet(item: $keyEdit) { s in
             VStack(alignment: .leading, spacing: 10) {
                 Text("Admin key for \(s.name)").font(.headline)
-                SecureField("redx_ai_… (from /root/vortex-admin.key)", text: $keyText)
+                SecureField("redx_ai_… or redx_xai_… (from /root/dolphino-admin.key)", text: $keyText)
                 HStack { Spacer(); Button("Cancel") { keyEdit = nil }
-                    Button("Save") { Keychain.set(keyText, account: s.keychainAccount); if s.id == ss.activeID { Keychain.set(keyText) }; keyEdit = nil }.disabled(!keyText.hasPrefix("redx_ai_")) }
+                    Button("Save") { Keychain.set(keyText, account: s.keychainAccount); if s.id == ss.activeID { Keychain.set(keyText) }; keyEdit = nil }.disabled(!(keyText.hasPrefix("redx_ai_") || keyText.hasPrefix("redx_xai_"))) }
             }.padding(20).frame(width: 460)
         }
     }

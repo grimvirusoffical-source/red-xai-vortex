@@ -110,3 +110,29 @@ $('#saveSettings').onclick=async()=>{
 };
 $('#probe').onclick=async()=>{ const r=await bridge.call('settings.probe',{}); $('#setMsg').textContent=r.message||''; $('#setMsg').className=r.ok?'ok':'bad'; };
 refresh(); setInterval(refresh, 15000);
+
+// Media job queue with live progress
+const mOut={};
+function mRender(list){
+  $('#mJobs').innerHTML=(list||[]).map(j=>{
+    const pct=j.progress||0, st=j.status, pos=j.position?` · #${j.position} in queue`:'';
+    const secs=j.seconds?` · ${(+j.seconds).toFixed(1)}s`:'';
+    const res=mOut[j.id]?`<div style="margin-top:6px">${mOut[j.id]}</div>`:'';
+    return `<div class="card" data-job="${j.id}"><b>${j.type}</b> <span class="muted">${st}${pos}${secs}</span>
+      <div style="background:#222;height:6px;border-radius:3px;margin-top:4px"><div style="width:${pct}%;height:6px;background:#e0263a;border-radius:3px"></div></div>${res}</div>`}).join('')||'<span class="muted">No jobs yet.</span>';
+}
+function mMedia(r){const x=r.result;if(!x||!x.b64)return '';const u=`data:${x.mime};base64,${x.b64}`;
+  if(x.mime.startsWith('image'))return `<img src="${u}" style="max-width:256px">`;
+  if(x.mime.startsWith('audio'))return `<audio controls src="${u}"></audio>`;
+  if(x.mime.startsWith('video'))return `<video controls loop src="${u}" style="max-width:256px"></video>`;return '';}
+async function mPoll(){
+  const r=await bridge.call('media.jobs',{}); if(!r.ok){return;}
+  const list=r.jobs||r.data||[];
+  for(const j of list){ if(j.status==='done'&&!mOut[j.id]){ const d=await bridge.call('media.job',{id:j.id}); mOut[j.id]=mMedia(d)||'(done)'; } }
+  mRender(list);
+}
+$('#mGo').onclick=async()=>{
+  const r=await bridge.call('media.submit',{type:$('#mType').value,prompt:$('#mPrompt').value});
+  $('#mMsg').textContent=r.ok?`Queued ${r.id} (position ${r.position})`:(r.message||'failed'); $('#mMsg').className=r.ok?'ok':'bad'; mPoll();
+};
+setInterval(()=>{ if($('#tab-media').classList.contains('on')) mPoll(); }, 1500);

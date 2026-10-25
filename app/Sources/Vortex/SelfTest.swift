@@ -104,6 +104,27 @@ import AVFoundation
             try expect(k == nil && HubStore.shared.keyError.contains("owner"), "locked gateway created a key")
             return "refused: \(HubStore.shared.keyError)"
         }
+        await t("Desktop", "Win/Linux bridge: key → probe → agent → chat (public Vultr /v1)") {
+            guard let port = ProcessInfo.processInfo.environment["VORTEX_DESKTOP_BRIDGE"] else { throw err("set VORTEX_DESKTOP_BRIDGE=host:port") }
+            let hub = HubStore.shared
+            let name = "integration: desktop-e2e"
+            guard let k = await hub.createKey(name: name, models: [], rpm: 30) else { throw err("create failed: \(hub.keyError)") }
+            defer { Task { if let row = HubStore.shared.keys.first(where: { $0.name == name && !$0.revoked }) { _ = try? await Admin.call("DELETE", "/admin/keys/\(row.id)") } } }
+            func call(_ m: String, _ body: [String: Any]) async throws -> [String: Any] {
+                var r = URLRequest(url: URL(string: "http://\(port)/bridge/\(m)")!); r.httpMethod = "POST"; r.timeoutInterval = 240
+                r.setValue("application/json", forHTTPHeaderField: "Content-Type"); r.httpBody = try JSONSerialization.data(withJSONObject: body)
+                return (try JSONSerialization.jsonObject(with: try await URLSession.shared.data(for: r).0) as? [String: Any]) ?? [:]
+            }
+            _ = try await call("settings.save", ["apiKey": k])
+            let pr = try await call("settings.probe", [:]); let tv = try await call("agent.testVortex", [:])
+            let ch = try await call("chat.new", [:]); let cid = ch["id"] as? String ?? ""
+            let rep = try await call("chat.send", ["id": cid, "text": "Reply with exactly: DESKTOP_OK"])
+            _ = try await call("settings.save", ["apiKey": " "])
+            let reply = rep["reply"] as? String ?? "\(rep)"
+            try expect((pr["ok"] as? Bool) == true && reply.uppercased().contains("DESKTOP"), "probe \(pr) test \(tv) reply \(reply.prefix(200))")
+            if let row = hub.keys.first(where: { $0.name == name && !$0.revoked }) { _ = try? await Admin.call("DELETE", "/admin/keys/\(row.id)") }
+            return "probe \(pr["message"] ?? "") | testVortex \(tv["message"] ?? "") | reply \(reply.prefix(120))"
+        }
         await t("API keys", "create → use (model-scoped) → disable → revoke (HubStore)") {
             let hub = HubStore.shared
             // Owner unlocked → a normal key; locked → an integration-scoped key, which the gateway allows without unlock.
@@ -237,7 +258,7 @@ import AVFoundation
         }
         await t("Integrations", "connected count") { "\(integ.state.count) connected: " + integ.state.keys.sorted().joined(separator: ", ") }
 
-        for id in ["codex", "claude-code", "gemini-cli"] {
+        for id in ["codex", "claude-code", "gemini-cli", "continue", "copilot", "omniroute"] {
             guard let i = IntegrationCatalog.all.first(where: { $0.id == id }), let st = integ.state[id] else { continue }
             await t("Integrations", "re-Connect \(i.name): original backups kept, old key revoked, test OK") {
                 let userCfgs = [NSHomeDirectory() + "/.codex/config.toml", NSHomeDirectory() + "/.claude/settings.json", NSHomeDirectory() + "/.gemini/settings.json"]
@@ -278,6 +299,20 @@ import AVFoundation
             let a = try await AttachmentLoader.load(u); try expect(a.kind == "image" && a.dataURI != nil, "not an image")
             let r = try await ask("gemma3-12b-vision", [Message(role: "user", content: "What colour is this image? One word.", attachments: [a])], max: 10)
             try expect(r.lowercased().contains("red"), "said \(r)"); return "gemma3-12b-vision → \(r)"
+        }
+
+        // ---- media job queue (same code path as Hub → Media)
+        await t("Media", "speech job via queue with progress") {
+            let m = await MediaJobsModel()
+            await m.submit(type: "speech", prompt: "Vortex media self test.")
+            for _ in 0..<40 {
+                await m.refresh()
+                if let j = await m.jobs.first, j.status == "done", let f = await m.outputs[j.id] {
+                    return "done in \(String(format: "%.2f", j.seconds ?? 0))s → \(f.lastPathComponent)"
+                }
+                try await Task.sleep(nanoseconds: 500_000_000)
+            }
+            throw err("job not done: \(await m.message)")
         }
 
         // ---- plugins
@@ -491,6 +526,20 @@ import AVFoundation
             return try await Agent.run(p, history: [Message(role: "user", content: prompt)], tools: ToolRegistry.tools(for: model)) { _ in }
         }
         func used(_ log: [String], _ tool: String) -> Bool { log.contains { $0.contains(tool) } }
+        await t("Agents", "create agent, run task with tool call, delete") {
+            let st = AgentStore()
+            let id = "selftest-agent-\(Int(Date().timeIntervalSince1970))"
+            var ag = AgentProfile(id: id, name: "SelfTest Agent")
+            ag.provider = "vortex"; ag.model = "vortex"; ag.toolsOn = true; ag.pcControlOn = true
+            ag.systemPrompt = "You are a file assistant. Use tools to answer."
+            st.upsert(ag)
+            defer { st.delete(id) }
+            try expect(st.agents.contains { $0.id == id }, "agent not saved")
+            var p = st.chatParams(for: id, fallback: params); p.maxTokens = 300
+            let (a, l) = try await Agent.run(p, history: [Message(role: "system", content: ag.systemPrompt), Message(role: "user", content: "Read the file \(note.path) and tell me the secret word.")], tools: ToolRegistry.tools(for: p.model)) { _ in }
+            try expect(used(l, "pc_read_file") && a.uppercased().contains("PELICAN"), "log \(l) answer \(a.prefix(160))")
+            return "agent \(id) model \(p.model): tools \(l.prefix(3)) -> \(a.prefix(120))"
+        }
         await t("PC chat", "vortex lists a folder") {
             let (a, l) = try await pcChat("vortex", "List the files in the folder \(pcDir.path)")
             try expect(used(l, "pc_list_dir") && a.contains("note"), "log \(l) answer \(a.prefix(120))"); return a

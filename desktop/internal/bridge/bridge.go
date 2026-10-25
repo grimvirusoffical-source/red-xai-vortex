@@ -128,6 +128,12 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		return s.pluginIcon(str(in, "prompt"))
 	case "plugin.store":
 		return s.pluginStore()
+	case "media.submit":
+		return s.mediaSubmit(in)
+	case "media.job":
+		return s.mediaJob(str(in, "id"))
+	case "media.jobs":
+		return s.mediaJobs()
 	default:
 		return map[string]any{"ok": false, "error": "unknown method " + m}
 	}
@@ -262,7 +268,7 @@ func (s *Server) resolveEndpoint(agentID string) (base, key string) {
 				base = "https://openrouter.ai/api/v1"
 			case "ollama":
 				base = "http://127.0.0.1:11434/v1"
-			// custom / openai-compatible: use BaseURL from agent
+				// custom / openai-compatible: use BaseURL from agent
 			}
 		}
 		if k := keyring.Get("agent-key-" + a.ID); k != "" {
