@@ -527,6 +527,68 @@ import AVFoundation
             let (a, l) = try await pcChat("vortex", "Run the shell command: echo hi")
             try expect(l.contains(PCControl.offMarker + "shell"), "log \(l) answer \(a.prefix(120))"); return "button shown; reply: \(a.prefix(80))"
         }
+        await t("PC intent", "JF's plain requests are recognised") {
+            let cases: [(String, String)] = [("open safari", "pc_open_app"), ("what's on my screen", "pc_screenshot"), ("make a folder on desktop", "pc_shell"),
+                ("type hello", "pc_type_text"), ("can you close my TextEdit app i have open", "pc_quit_app"),
+                ("can you open my default browser and search up poodles?", "pc_open_url"), ("search my pc for my discord application and open the folder path", "pc_shell"),
+                ("hey lookup jjk and tell me recent news you can control pc to search", "pc_open_url")]
+            var bad: [String] = []
+            for (q, want) in cases { let g = Intent.guess(q); if g?.name != want || !Intent.isAction(q) { bad.append("\(q) → \(g?.name ?? "nil")") } }
+            try expect(Intent.guess("what type of dog is best") == nil && Intent.isEvasive("I'm sorry, but I don't have direct access to your computer."), "false positive / evasive")
+            try expect(bad.isEmpty, bad.joined(separator: "; ")); return "\(cases.count) requests map to the right tool"
+        }
+        func running(_ n: String) -> Bool { NSWorkspace.shared.runningApplications.contains { $0.localizedName == n } }
+        func quit(_ n: String) { NSWorkspace.shared.runningApplications.filter { $0.localizedName == n }.forEach { $0.terminate() } }
+        func jf(_ model: String, _ prompt: String, prior: [Message] = []) async throws -> (String, [String]) {
+            var p = params; p.model = model; p.maxTokens = 300
+            let sys = Message(role: "system", content: "You are Red-XAI Vortex, a helpful assistant.")
+            return try await Agent.run(p, history: [sys] + prior + [Message(role: "user", content: prompt)], tools: ToolRegistry.tools(for: model)) { _ in }
+        }
+        let refusal = [Message(role: "user", content: "you should have acsess to full control of my pc"),
+                       Message(role: "assistant", content: "I apologize for any confusion. While I don't have direct access to your computer, I can provide guidance on how to use the \"pc_open_url\" tool in the terminal.")]
+        await t("PC replay", "vortex: 'can you close my TextEdit app i have open'") {
+            _ = try await PCTools.runProcess("/usr/bin/open", ["-a", "TextEdit"], timeout: 20); try await Task.sleep(for: .seconds(2))
+            let (a, l) = try await jf("vortex", "can you close my TextEdit app i have open", prior: refusal)
+            try await Task.sleep(for: .seconds(2)); let still = running("TextEdit"); quit("TextEdit")
+            try expect(!still, "log \(l) answer \(a.prefix(120))"); return a
+        }
+        await t("PC replay", "vortex: 'open safari' after an earlier refusal") {
+            quit("Safari"); try await Task.sleep(for: .seconds(2))
+            let (a, l) = try await jf("vortex", "open safari", prior: refusal)
+            try await Task.sleep(for: .seconds(2)); try expect(running("Safari"), "log \(l) answer \(a.prefix(120))"); return a
+        }
+        await t("PC replay", "red-xai: 'can you open my default browser and search up poodles?'") {
+            let (a, l) = try await jf("red-xai", "can you open my default browser and search up poodles?")
+            try expect(l.contains { $0.contains("pc_open_url") && $0.lowercased().contains("poodle") }, "log \(l) answer \(a.prefix(120))"); return l.first ?? a
+        }
+        await t("PC replay", "vortex: 'hey lookup jjk and tell me recent news…'") {
+            let (a, l) = try await jf("vortex", "hey lookup jjk and tell me recent news you can control pc to search", prior: refusal)
+            try expect(l.contains { $0.contains("pc_open_url") && $0.lowercased().contains("jjk") }, "log \(l) answer \(a.prefix(120))"); return l.first ?? a
+        }
+        await t("PC replay", "vortex: 'search my pc for my discord application…'") {
+            let (a, l) = try await jf("vortex", "search my pc for my discord application and open the folder path")
+            try expect(l.contains { $0.contains("pc_shell") || $0.contains("pc_list_dir") }, "log \(l) answer \(a.prefix(120))"); return l.first ?? a
+        }
+        await t("PC replay", "red-xai: 'what's on my screen'") {
+            let (a, l) = try await jf("red-xai", "what's on my screen")
+            try expect(l.contains { $0.contains("pc_screenshot") }, "log \(l) answer \(a.prefix(120))"); return String(a.prefix(120))
+        }
+        await t("PC replay", "vortex: 'make a folder on desktop called VortexSelftestFolder'") {
+            let d = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop/VortexSelftestFolder")
+            try? FileManager.default.removeItem(at: d)
+            let (a, l) = try await jf("vortex", "make a folder on desktop called VortexSelftestFolder")
+            var isDir: ObjCBool = false; let ok = FileManager.default.fileExists(atPath: d.path, isDirectory: &isDir) && isDir.boolValue
+            try? FileManager.default.removeItem(at: d)
+            try expect(ok, "log \(l) answer \(a.prefix(120))"); return "folder created (then removed)"
+        }
+        await t("PC replay", "vortex: 'type hello' into TextEdit") {
+            let f = pcDir.appendingPathComponent("hello.txt"); try "".write(to: f, atomically: true, encoding: .utf8)
+            _ = try await PCTools.runProcess("/usr/bin/open", ["-a", "TextEdit", f.path], timeout: 20); try await Task.sleep(for: .seconds(3))
+            let (a, l) = try await jf("vortex", "type hello")
+            _ = try? await pcTool("pc_key").run(["keys": "cmd+s"]); try await Task.sleep(for: .seconds(1))
+            let got = (try? String(contentsOf: f, encoding: .utf8)) ?? ""; quit("TextEdit")
+            try expect(got.lowercased().contains("hello"), "log \(l) file \(got.prefix(40))"); return "typed: \(got.prefix(20))"
+        }
         await t("PC control", "action log written") {
             let s = (try? String(contentsOf: PCControl.logURL, encoding: .utf8)) ?? ""; try expect(s.contains("pc_shell"), "no log"); return PCControl.logURL.path
         }

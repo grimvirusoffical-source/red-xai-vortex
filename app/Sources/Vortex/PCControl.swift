@@ -37,7 +37,7 @@ enum PCKind: String, CaseIterable, Identifiable {
 }
 
 @MainActor final class PCControl: ObservableObject {
-    static let shared = PCControl()
+    static let shared: PCControl = { PCTools.startWatching(); return PCControl() }()
     @Published var active = false
     @Published var killed = UserDefaults.standard.bool(forKey: "pc.killed")
     /// Master switch (on by default). When on, vortex/red-xai always get the PC tools, no 🔧 needed;
@@ -170,6 +170,7 @@ enum PCTools {
         case .apps: return [
             tool(k, "pc_open_app", "Open (or bring forward) an app by name, e.g. Safari.", obj(["name": "string"], ["name"])) { a in
                 guard let n = a["name"] as? String, !n.isEmpty else { throw PCError.msg("missing name") }
+                if ["browser", "default browser", "web browser", "internet"].contains(n.lowercased()) { await MainActor.run { _ = NSWorkspace.shared.open(URL(string: "https://www.google.com")!) }; return "opened the default browser" }
                 return try await runProcess("/usr/bin/open", ["-a", n], timeout: 20).isEmpty ? "opened \(n)" : "could not open \(n)"
             },
             tool(k, "pc_list_apps", "List running apps.", obj([:], [])) { _ in
@@ -184,14 +185,14 @@ enum PCTools {
             }]
         case .input: return [
             tool(k, "pc_type_text", "Type text into the focused app.", obj(["text": "string"], ["text"]), destructive: true) { a in
-                try needAX(); let t = a["text"] as? String ?? ""
+                try needAX(); let t = a["text"] as? String ?? ""; target = await targetApp(); defer { target = nil }
                 for ch in t { let s = Array(String(ch).utf16)
                     for down in [true, false] { let e = CGEvent(keyboardEventSource: CGEventSource(stateID: .hidSystemState), virtualKey: 0, keyDown: down); e?.keyboardSetUnicodeString(stringLength: s.count, unicodeString: s); PCTools.send(e) }
                     try await Task.sleep(nanoseconds: 8_000_000) }
                 return "typed \(t.count) characters"
             },
             tool(k, "pc_key", "Press a key or shortcut, e.g. \"cmd+s\", \"return\", \"cmd+shift+t\".", obj(["keys": "string"], ["keys"]), destructive: true) { a in
-                try needAX(); let parts = (a["keys"] as? String ?? "").lowercased().split(separator: "+").map(String.init)
+                try needAX(); target = await targetApp(); defer { target = nil }; let parts = (a["keys"] as? String ?? "").lowercased().split(separator: "+").map(String.init)
                 var flags: CGEventFlags = []; var code: CGKeyCode?
                 for p in parts { switch p {
                     case "cmd", "command": flags.insert(.maskCommand); case "shift": flags.insert(.maskShift)
@@ -246,9 +247,26 @@ enum PCTools {
     }
 
     /// Deliver a synthetic key event straight to the frontmost app (more reliable than the HID tap).
+    /// The last app other than Vortex that was frontmost (where "type hello" should go).
+    nonisolated(unsafe) static var lastOther: NSRunningApplication?
+    nonisolated(unsafe) static var watcher: NSObjectProtocol?
+    static func startWatching() {
+        guard watcher == nil else { return }
+        if let f = NSWorkspace.shared.frontmostApplication, f.processIdentifier != getpid() { lastOther = f }
+        watcher = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { n in
+            if let a = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication, a.processIdentifier != getpid() { lastOther = a }
+        }
+    }
+    /// If Vortex itself is in front (the user just typed the request here), hand focus back to the app they were using.
+    static func targetApp() async -> pid_t? {
+        if let f = NSWorkspace.shared.frontmostApplication, f.processIdentifier != getpid() { return f.processIdentifier }
+        guard let o = lastOther, !o.isTerminated else { return nil }
+        o.activate(); try? await Task.sleep(nanoseconds: 400_000_000); return o.processIdentifier
+    }
+    nonisolated(unsafe) static var target: pid_t?
     static func send(_ e: CGEvent?) {
         guard let e else { return }
-        if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier { e.postToPid(pid) } else { e.post(tap: .cghidEventTap) }
+        if let pid = target ?? NSWorkspace.shared.frontmostApplication?.processIdentifier { e.postToPid(pid) } else { e.post(tap: .cghidEventTap) }
     }
     static func needAX() throws { if !CGPreflightPostEventAccess() { _ = CGRequestPostEventAccess() }; if !PCControl.accessibility(prompt: true) || !CGPreflightPostEventAccess() { throw PCError.msg("Accessibility permission is needed (System Settings → Privacy & Security → Accessibility → Red-XAI Vortex)") } }
 

@@ -85,7 +85,25 @@ final class ChatStore: ObservableObject {
                         self.status = "Streaming…"
                     }
                 }
-                let tools = await MainActor.run { ToolRegistry.tools(for: params.model) }
+                let lastText = hist.last(where: { $0.role == "user" })?.content ?? ""
+                var tools = await MainActor.run { ToolRegistry.tools(for: p.model) }
+                if Intent.isAction(lastText), !tools.contains(where: { $0.source.hasPrefix("pc:") }), !params.model.hasPrefix("local:") {
+                    let pc = PCControl.shared
+                    let on = await MainActor.run { () -> Bool in
+                        if pc.enabled && !pc.killed { return true }
+                        // First time a computer action is asked for with PC Control off: offer to turn it on (once).
+                        if pc.killed || UserDefaults.standard.bool(forKey: "pc.askedEnable") { return false }
+                        UserDefaults.standard.set(true, forKey: "pc.askedEnable")
+                        let ok = Confirm.ask("Let Vortex control this Mac?", "You asked for something on your computer. Turn on PC Control so Vortex can open apps, manage files, read the screen and more? Risky actions still ask first. You can change this in Settings → PC Control.")
+                        if ok { pc.setEnabled(true); pc.enable(PCKind.safe) }
+                        return ok
+                    }
+                    if on, !PCControl.eligible(p.model) {
+                        let from = p.model; p.model = "vortex"
+                        await MainActor.run { self?.status = "Using vortex for computer control (\(from) can't use PC tools)…" }
+                    }
+                    tools = await MainActor.run { ToolRegistry.tools(for: p.model) }
+                }
                 if !tools.isEmpty {
                     let (text, log) = try await Agent.run(p, history: hist, tools: tools) { st in Task { @MainActor in self?.status = st } }
                     await MainActor.run {
