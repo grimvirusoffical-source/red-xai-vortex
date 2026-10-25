@@ -3,7 +3,7 @@ import Darwin
 import Security
 
 enum Keychain {
-    static let service = "com.redxai.vortex" // kept so existing Keychain items keep working
+    static let service = "com.redxai.dolphino" // kept so existing Keychain items keep working // kept so existing Keychain items keep working
     static let account = "api-key"
     static func get() -> String? {
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
