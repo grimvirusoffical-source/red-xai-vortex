@@ -240,6 +240,10 @@ struct BubbleView: View {
             VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
                 if let who = message.model { Text(who).font(.caption.bold()).foregroundStyle(GroupColors.color(who)) }
                 if let a = message.attachments, !a.isEmpty { AttachmentChips(items: a) }
+                if let l = message.toolLog {
+                    let off = Array(Set(l.compactMap { $0.hasPrefix(PCControl.offMarker) ? PCKind(rawValue: String($0.dropFirst(PCControl.offMarker.count))) : nil }))
+                    ForEach(off) { PCTurnOnButton(kind: $0) }
+                }
                 if let l = message.toolLog, !l.isEmpty {
                     DisclosureGroup("\(l.count) tool call(s)") {
                         VStack(alignment: .leading, spacing: 2) { ForEach(Array(l.enumerated()), id: \.offset) { Text($0.element).font(.caption.monospaced()).textSelection(.enabled) } }

@@ -48,11 +48,11 @@ import AVFoundation
         NSApp.setActivationPolicy(.accessory)
         for w in NSApp.windows { w.miniaturize(nil) }
         let ud = UserDefaults.standard
-        let saved: [String: Any?] = Dictionary(uniqueKeysWithValues: ["pluginModes", "pluginsEnabled", "skillModes", "chatTools", "pc.killed"].map { ($0, ud.object(forKey: $0)) } + PCKind.allCases.map { ($0.key, ud.object(forKey: $0.key)) })
+        let saved: [String: Any?] = Dictionary(uniqueKeysWithValues: ["pluginModes", "pluginsEnabled", "skillModes", "chatTools", "pc.killed", "pc.enabled"].map { ($0, ud.object(forKey: $0)) } + PCKind.allCases.map { ($0.key, ud.object(forKey: $0.key)) })
         defer {
             for (k, v) in saved { if let v { ud.set(v, forKey: k) } else { ud.removeObject(forKey: k) } }
             PluginStore.shared.load(); SkillStore.shared.modes = ud.dictionary(forKey: "skillModes") as? [String: String] ?? [:]
-            PCControl.shared.killed = ud.bool(forKey: "pc.killed"); PCControl.shared.hide()
+            PCControl.shared.killed = ud.bool(forKey: "pc.killed"); PCControl.shared.enabled = ud.object(forKey: "pc.enabled") as? Bool ?? true; PCControl.shared.hide()
         }
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("vortex-selftest", isDirectory: true)
         try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
@@ -391,28 +391,144 @@ import AVFoundation
 
         // ---- PC control
         let pc = PCControl.shared
-        await t("PC control", "off by default; only vortex/red-xai") {
-            for k in PCKind.allCases { ud.removeObject(forKey: k.key) }
-            try expect(pc.tools(for: "vortex").isEmpty, "tools while off")
-            ud.set(true, forKey: PCKind.filesRead.key)
-            try expect(!pc.tools(for: "vortex").isEmpty && !pc.tools(for: "red-xai").isEmpty && pc.tools(for: "qwen2.5-14b").isEmpty, "eligibility")
-            return "off by default; qwen gets none"
+        Confirm.autoAnswer = true; defer { Confirm.autoAnswer = nil }
+        let pcDir = tmp.appendingPathComponent("pc", isDirectory: true)
+        try? FileManager.default.removeItem(at: pcDir); try? FileManager.default.createDirectory(at: pcDir, withIntermediateDirectories: true)
+        func pcTool(_ n: String) throws -> ToolSpec { guard let t = pc.tools(for: "vortex").first(where: { $0.name == n }) else { throw err("no tool \(n)") }; return t }
+        await t("PC control", "master switch; only vortex/red-xai; no 🔧 needed") {
+            pc.resume(); for k in PCKind.allCases { ud.removeObject(forKey: k.key) }
+            pc.setEnabled(false); try expect(pc.tools(for: "vortex").isEmpty, "tools while master off")
+            pc.setEnabled(true); ToolRegistry.chatToolsOn = false
+            let names = ToolRegistry.tools(for: "vortex").map(\.name)
+            try expect(names.contains("pc_shell") && !ToolRegistry.tools(for: "red-xai").isEmpty, "PC tools missing with 🔧 off")
+            try expect(pc.tools(for: "qwen2.5-14b").isEmpty, "qwen got PC tools")
+            ToolRegistry.chatToolsOn = true
+            return "\(names.count) PC tools offered to vortex/red-xai with 🔧 off; none for qwen"
         }
-        await t("PC control", "read tools run; destructive flagged") {
-            pc.resume(); for k in PCKind.allCases { ud.set(true, forKey: k.key) }
-            let ts = pc.tools(for: "vortex")
-            let r = try await ts.first { $0.name == "pc_list_dir" }!.run(["path": tmp.path]); try expect(r.contains("hello.swift"), r)
-            let destructive = Set(ts.filter(\.destructive).map(\.name))
-            let need: Set = ["pc_write_file", "pc_move_file", "pc_delete_file", "pc_shell", "pc_quit_app", "pc_type_text", "pc_key", "pc_click", "pc_clipboard_write"]
-            try expect(need.isSubset(of: destructive), "not flagged: \(need.subtracting(destructive))")
-            let cb = try await ts.first { $0.name == "pc_clipboard_read" }!.run([:])
-            return "\(ts.count) tools; list_dir ok; clipboard read \(cb.count) chars; \(destructive.count) destructive"
+        await t("PC control", "Enable all safe") {
+            pc.enable(PCKind.safe)
+            try expect(PCKind.safe.allSatisfy(pc.isOn) && !pc.isOn(.shell) && !pc.isOn(.input), "wrong set")
+            return PCKind.safe.map(\.rawValue).joined(separator: ", ")
+        }
+        pc.enable(PCKind.allCases)
+        let note = pcDir.appendingPathComponent("note.txt")
+        try? "The secret word is PELICAN.".write(to: note, atomically: true, encoding: .utf8)
+        await t("PC tools", "read & list files") {
+            let l = try await pcTool("pc_list_dir").run(["path": pcDir.path]); try expect(l.contains("note.txt"), l)
+            let r = try await pcTool("pc_read_file").run(["path": note.path]); try expect(r.contains("PELICAN"), r)
+            return "list + read ok"
+        }
+        await t("PC tools", "write / move / trash") {
+            let w = pcDir.appendingPathComponent("w.txt"), m = pcDir.appendingPathComponent("m.txt")
+            _ = try await pcTool("pc_write_file").run(["path": w.path, "content": "WRITE_OK"])
+            try expect((try? String(contentsOf: w, encoding: .utf8)) == "WRITE_OK", "write")
+            _ = try await pcTool("pc_move_file").run(["from": w.path, "to": m.path]); try expect(FileManager.default.fileExists(atPath: m.path), "move")
+            _ = try await pcTool("pc_delete_file").run(["path": m.path]); try expect(!FileManager.default.fileExists(atPath: m.path), "trash")
+            return "write, move, trash ok"
+        }
+        await t("PC tools", "shell") {
+            let r = try await pcTool("pc_shell").run(["command": "echo SHELL_$((40+2))"]); try expect(r.contains("SHELL_42"), r); return r
+        }
+        await t("PC tools", "open / list / quit apps") {
+            _ = try await pcTool("pc_open_app").run(["name": "Calculator"])
+            var up = false; for _ in 0..<30 where !up { try await Task.sleep(for: .milliseconds(300)); up = try await pcTool("pc_list_apps").run([:]).contains("Calculator") }
+            try expect(up, "Calculator not running")
+            let q = try await pcTool("pc_quit_app").run(["name": "Calculator"]); try await Task.sleep(for: .seconds(2))
+            try expect(!NSWorkspace.shared.runningApplications.contains { $0.localizedName == "Calculator" }, "still running: \(q)")
+            return "opened, listed, quit Calculator"
+        }
+        await t("PC tools", "clipboard read / write") {
+            let old = NSPasteboard.general.string(forType: .string)
+            defer { NSPasteboard.general.clearContents(); if let old { NSPasteboard.general.setString(old, forType: .string) } }
+            _ = try await pcTool("pc_clipboard_write").run(["text": "CLIP_OK"])
+            let r = try await pcTool("pc_clipboard_read").run([:]); try expect(r == "CLIP_OK", r); return "write + read ok (clipboard restored)"
+        }
+        await t("PC tools", "browser: open page + read front tab") {
+            if ProcessInfo.processInfo.environment["VORTEX_SKIP_BROWSER"] != nil { throw err("skipped (Automation consent pending)") }
+            _ = try await pcTool("pc_open_url").run(["url": "https://example.com/?vortex-selftest"])
+            var r = ""; for _ in 0..<20 { try await Task.sleep(for: .milliseconds(500)); r = try await pcTool("pc_browser_tab").run([:]); if r.contains("example.com") { break } }
+            try expect(r.contains("example.com"), "tab read: \(r)")
+            return r
+        }
+        await t("PC tools", "permissions: Accessibility + Screen Recording") {
+            let ax = PCControl.accessibility(prompt: false) && CGPreflightPostEventAccess(), sc = CGPreflightScreenCaptureAccess()
+            try expect(ax && sc, "NEEDS JF: " + [ax ? nil : "Accessibility", sc ? nil : "Screen Recording"].compactMap { $0 }.joined(separator: " + ") + " for \(Bundle.main.bundlePath)")
+            return "Accessibility ✓, Screen Recording ✓"
+        }
+        await t("PC tools", "keyboard & mouse (TextEdit)") {
+            let f = pcDir.appendingPathComponent("typed.txt"); try "".write(to: f, atomically: true, encoding: .utf8)
+            _ = try await PCTools.runProcess("/usr/bin/open", ["-a", "TextEdit", f.path], timeout: 20)
+            try await Task.sleep(for: .seconds(3))
+            let wins = (CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]) ?? []
+            if let w = wins.first(where: { $0[kCGWindowOwnerName as String] as? String == "TextEdit" }), let b = w[kCGWindowBounds as String] as? [String: Double] {
+                _ = try await pcTool("pc_click").run(["x": (b["X"] ?? 0) + (b["Width"] ?? 0) / 2, "y": (b["Y"] ?? 0) + (b["Height"] ?? 0) / 2])
+            }
+            _ = try? await PCTools.runProcess("/usr/bin/open", ["-a", "TextEdit"], timeout: 10)
+            try await Task.sleep(for: .milliseconds(800))
+            let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
+            _ = try await pcTool("pc_type_text").run(["text": "TYPED_OK"])
+            _ = try await pcTool("pc_key").run(["keys": "cmd+s"]); try await Task.sleep(for: .seconds(1))
+            var axText = "?"
+            if let te = NSWorkspace.shared.runningApplications.first(where: { $0.localizedName == "TextEdit" }) {
+                let app = AXUIElementCreateApplication(te.processIdentifier); var fo: CFTypeRef?
+                if AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &fo) == .success, let fo {
+                    var v: CFTypeRef?; _ = AXUIElementCopyAttributeValue(fo as! AXUIElement, kAXValueAttribute as CFString, &v); axText = (v as? String) ?? "nil" } }
+            let got = (try? String(contentsOf: f, encoding: .utf8)) ?? ""
+            NSWorkspace.shared.runningApplications.first { $0.localizedName == "TextEdit" }?.terminate()
+            try expect(got.contains("TYPED_OK"), "front app \(front); postEvent \(CGPreflightPostEventAccess()); TextEdit shows \(axText.prefix(40)); file has: \(got.prefix(60))")
+            return "clicked, typed and saved with cmd+s"
+        }
+        await t("PC tools", "screenshot + OCR") {
+            let r = try await pcTool("pc_screenshot").run([:]); try expect(r.contains("Text on screen") && !r.hasSuffix("(none found)"), String(r.prefix(200)))
+            return String(r.prefix(160))
         }
         await t("PC control", "kill switch blocks tools") {
             pc.kill(); try expect(pc.tools(for: "vortex").isEmpty, "tools after kill"); pc.resume(); return "blocked, then resumed"
         }
+        // Real chats through the app's Agent loop (text protocol + few-shot for llama.cpp models).
+        func pcChat(_ model: String, _ prompt: String) async throws -> (String, [String]) {
+            var p = params; p.model = model; p.maxTokens = 300
+            return try await Agent.run(p, history: [Message(role: "user", content: prompt)], tools: ToolRegistry.tools(for: model)) { _ in }
+        }
+        func used(_ log: [String], _ tool: String) -> Bool { log.contains { $0.contains(tool) } }
+        await t("PC chat", "vortex lists a folder") {
+            let (a, l) = try await pcChat("vortex", "List the files in the folder \(pcDir.path)")
+            try expect(used(l, "pc_list_dir") && a.contains("note"), "log \(l) answer \(a.prefix(120))"); return a
+        }
+        await t("PC chat", "vortex reads a file") {
+            let (a, l) = try await pcChat("vortex", "Read the file \(note.path) and tell me the secret word.")
+            try expect(used(l, "pc_read_file") && a.uppercased().contains("PELICAN"), "log \(l) answer \(a.prefix(120))"); return a
+        }
+        await t("PC chat", "red-xai writes a file") {
+            let f = pcDir.appendingPathComponent("made.txt")
+            let (a, l) = try await pcChat("red-xai", "Create a text file at \(f.path) containing exactly: MADE_OK")
+            try expect(((try? String(contentsOf: f, encoding: .utf8)) ?? "").contains("MADE_OK"), "log \(l) answer \(a.prefix(120))"); return "\(l.first ?? "")"
+        }
+        await t("PC chat", "red-xai opens an app") {
+            let (a, l) = try await pcChat("red-xai", "Open the Calculator app.")
+            try await Task.sleep(for: .seconds(2))
+            let up = NSWorkspace.shared.runningApplications.contains { $0.localizedName == "Calculator" }
+            NSWorkspace.shared.runningApplications.first { $0.localizedName == "Calculator" }?.terminate()
+            try expect(used(l, "pc_open_app") && up, "log \(l) answer \(a.prefix(120))"); return a
+        }
+        await t("PC chat", "vortex runs a shell command") {
+            let (a, l) = try await pcChat("vortex", "Run this shell command and tell me the output: echo VORTEX_$((6*7))")
+            try expect(used(l, "pc_shell") && a.contains("VORTEX_42"), "log \(l) answer \(a.prefix(120))"); return a
+        }
+        await t("PC chat", "vortex reads the clipboard") {
+            let old = NSPasteboard.general.string(forType: .string)
+            defer { NSPasteboard.general.clearContents(); if let old { NSPasteboard.general.setString(old, forType: .string) } }
+            NSPasteboard.general.clearContents(); NSPasteboard.general.setString("BANANA_77", forType: .string)
+            let (a, l) = try await pcChat("vortex", "What text is on my clipboard right now?")
+            try expect(used(l, "pc_clipboard_read") && a.contains("BANANA_77"), "log \(l) answer \(a.prefix(120))"); return a
+        }
+        await t("PC chat", "type off → Turn on button") {
+            pc.set(.shell, false); defer { pc.set(.shell, true) }
+            let (a, l) = try await pcChat("vortex", "Run the shell command: echo hi")
+            try expect(l.contains(PCControl.offMarker + "shell"), "log \(l) answer \(a.prefix(120))"); return "button shown; reply: \(a.prefix(80))"
+        }
         await t("PC control", "action log written") {
-            PCControl.logAction("selftest"); let s = (try? String(contentsOf: PCControl.logURL, encoding: .utf8)) ?? ""; try expect(s.contains("selftest"), "no log"); return PCControl.logURL.path
+            let s = (try? String(contentsOf: PCControl.logURL, encoding: .utf8)) ?? ""; try expect(s.contains("pc_shell"), "no log"); return PCControl.logURL.path
         }
 
         // ---- model library webpage

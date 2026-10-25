@@ -31,17 +31,24 @@ enum PCKind: String, CaseIterable, Identifiable {
         }
     }
     var key: String { "pc.\(rawValue)" }
+    /// Types turned on by "Enable all safe": every action that changes something still asks first.
+    static let safe: [PCKind] = [.filesRead, .filesWrite, .apps, .screenshot, .browser, .clipboard]
+    init?(source: String) { guard source.hasPrefix("pc:") else { return nil }; self.init(rawValue: String(source.dropFirst(3))) }
 }
 
 @MainActor final class PCControl: ObservableObject {
     static let shared = PCControl()
     @Published var active = false
     @Published var killed = UserDefaults.standard.bool(forKey: "pc.killed")
+    /// Master switch (on by default). When on, vortex/red-xai always get the PC tools, no 🔧 needed;
+    /// a type that is switched off makes the chat show a "Turn on …" button instead.
+    @Published var enabled = UserDefaults.standard.object(forKey: "pc.enabled") as? Bool ?? true
+    nonisolated static let offMarker = "⚠️ PC off: "
     @Published var tick = 0
     private var hideWork: DispatchWorkItem?
     private var panel: NSPanel?
 
-    static func eligible(_ model: String) -> Bool {
+    nonisolated static func eligible(_ model: String) -> Bool {
         let m = (model.hasPrefix("local:") ? String(model.dropFirst(6)) : model).lowercased()
         return m == "vortex" || m == "red-xai" || m.hasPrefix("vortex-") || m.hasPrefix("red-xai")
     }
@@ -52,6 +59,8 @@ enum PCKind: String, CaseIterable, Identifiable {
         if v && k == .screenshot && !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
         Self.logAction("setting \(k.rawValue) = \(v ? "ON" : "OFF")")
     }
+    func setEnabled(_ v: Bool) { enabled = v; UserDefaults.standard.set(v, forKey: "pc.enabled"); tick += 1; Self.logAction("PC control master switch = \(v ? "ON" : "OFF")") }
+    func enable(_ kinds: [PCKind]) { if !enabled { setEnabled(true) }; for k in kinds where !isOn(k) { set(k, true) } }
     func kill() {
         killed = true; UserDefaults.standard.set(true, forKey: "pc.killed")
         ChatStoreRef.store?.stop(); hide(); Self.logAction("KILL SWITCH pressed: all PC control stopped")
@@ -59,8 +68,8 @@ enum PCKind: String, CaseIterable, Identifiable {
     func resume() { killed = false; UserDefaults.standard.set(false, forKey: "pc.killed"); Self.logAction("kill switch reset") }
 
     func tools(for model: String) -> [ToolSpec] {
-        guard !killed, Self.eligible(model) else { return [] }
-        return PCKind.allCases.filter(isOn).flatMap(PCTools.make)
+        guard enabled, !killed, Self.eligible(model) else { return [] }
+        return PCKind.allCases.flatMap(PCTools.make)   // off types are offered too; Agent turns a call into a "Turn on" button
     }
 
     // MARK: indicator
@@ -177,7 +186,7 @@ enum PCTools {
             tool(k, "pc_type_text", "Type text into the focused app.", obj(["text": "string"], ["text"]), destructive: true) { a in
                 try needAX(); let t = a["text"] as? String ?? ""
                 for ch in t { let s = Array(String(ch).utf16)
-                    for down in [true, false] { let e = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down); e?.keyboardSetUnicodeString(stringLength: s.count, unicodeString: s); e?.post(tap: .cghidEventTap) }
+                    for down in [true, false] { let e = CGEvent(keyboardEventSource: CGEventSource(stateID: .hidSystemState), virtualKey: 0, keyDown: down); e?.keyboardSetUnicodeString(stringLength: s.count, unicodeString: s); PCTools.send(e) }
                     try await Task.sleep(nanoseconds: 8_000_000) }
                 return "typed \(t.count) characters"
             },
@@ -189,12 +198,12 @@ enum PCTools {
                     case "opt", "option", "alt": flags.insert(.maskAlternate); case "ctrl", "control": flags.insert(.maskControl)
                     default: code = keyCodes[p] } }
                 guard let c = code else { throw PCError.msg("unknown key in \(parts.joined(separator: "+"))") }
-                for down in [true, false] { let e = CGEvent(keyboardEventSource: nil, virtualKey: c, keyDown: down); e?.flags = flags; e?.post(tap: .cghidEventTap) }
+                for down in [true, false] { let e = CGEvent(keyboardEventSource: CGEventSource(stateID: .hidSystemState), virtualKey: c, keyDown: down); e?.flags = flags; PCTools.send(e) }
                 return "pressed \(parts.joined(separator: "+"))"
             },
             tool(k, "pc_click", "Click at screen point x,y (top-left origin).", obj(["x": "number", "y": "number"], ["x", "y"]), destructive: true) { a in
                 try needAX(); let p = CGPoint(x: (a["x"] as? NSNumber)?.doubleValue ?? 0, y: (a["y"] as? NSNumber)?.doubleValue ?? 0)
-                for t in [CGEventType.leftMouseDown, .leftMouseUp] { CGEvent(mouseEventSource: nil, mouseType: t, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap) }
+                for t in [CGEventType.leftMouseDown, .leftMouseUp] { CGEvent(mouseEventSource: CGEventSource(stateID: .hidSystemState), mouseType: t, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap) }
                 return "clicked \(Int(p.x)),\(Int(p.y))"
             }]
         case .screenshot: return [
@@ -221,6 +230,7 @@ enum PCTools {
                                      ("Google Chrome", "tell application \"Google Chrome\" to return (title of active tab of front window) & \" | \" & (URL of active tab of front window)")]
                     where NSWorkspace.shared.runningApplications.contains(where: { $0.localizedName == app }) {
                         var err: NSDictionary?; if let r = NSAppleScript(source: s)?.executeAndReturnError(&err).stringValue { return "\(app): \(r)" }
+                        if (err?[NSAppleScript.errorNumber] as? Int) == -1743 { return "error: macOS Automation permission for \(app) is off (System Settings → Privacy & Security → Automation → Red-XAI Vortex → \(app))" }
                     }
                     return "no Safari or Chrome tab available (or Automation permission was declined)"
                 }
@@ -235,7 +245,12 @@ enum PCTools {
         }
     }
 
-    static func needAX() throws { if !PCControl.accessibility(prompt: true) { throw PCError.msg("Accessibility permission is needed (System Settings → Privacy & Security → Accessibility → Red-XAI Vortex)") } }
+    /// Deliver a synthetic key event straight to the frontmost app (more reliable than the HID tap).
+    static func send(_ e: CGEvent?) {
+        guard let e else { return }
+        if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier { e.postToPid(pid) } else { e.post(tap: .cghidEventTap) }
+    }
+    static func needAX() throws { if !CGPreflightPostEventAccess() { _ = CGRequestPostEventAccess() }; if !PCControl.accessibility(prompt: true) || !CGPreflightPostEventAccess() { throw PCError.msg("Accessibility permission is needed (System Settings → Privacy & Security → Accessibility → Red-XAI Vortex)") } }
 
     static let keyCodes: [String: CGKeyCode] = {
         var m: [String: CGKeyCode] = ["return": 36, "enter": 36, "tab": 48, "space": 49, "delete": 51, "backspace": 51, "escape": 53, "esc": 53,
@@ -271,8 +286,11 @@ struct PCControlView: View {
     var body: some View {
         Form {
             Section {
-                Text("Only the **vortex** and **red-xai** models can use PC control, and only when the tools button (🔧) in the chat toolbar is on. Every switch is off until you turn it on. Destructive actions (writing or deleting files, shell commands, typing, clicking, quitting apps, replacing the clipboard) always ask you first.")
-                    .fixedSize(horizontal: false, vertical: true)
+                Toggle(isOn: Binding(get: { _ = pc.tick; return pc.enabled }, set: { pc.setEnabled($0) })) {
+                    VStack(alignment: .leading) { Text("PC Control").font(.headline); Text("When on, just ask **vortex** or **red-xai** to do something on this Mac (no 🔧 needed).").font(.caption).foregroundStyle(.secondary) }
+                }
+                Text("Each type below has its own switch. If you ask for something whose type is off, the chat shows a **Turn on** button. Destructive actions (writing, moving or deleting files, shell commands, typing, clicking, quitting apps, replacing the clipboard) always ask Allow / Deny first.")
+                    .font(.caption).fixedSize(horizontal: false, vertical: true)
                 HStack {
                     if pc.killed {
                         Label("Stopped by the kill switch", systemImage: "hand.raised.fill").foregroundStyle(.red)
@@ -281,6 +299,13 @@ struct PCControlView: View {
                         Label(pc.active ? "Acting now" : "Ready", systemImage: pc.active ? "record.circle" : "checkmark.circle").foregroundStyle(pc.active ? .red : .green)
                         Spacer(); Button("Stop everything (kill switch)", role: .destructive) { pc.kill() }
                     }
+                }
+            }
+            Section {
+                HStack {
+                    Button("Enable all safe") { pc.enable(PCKind.safe) }.help("Files, apps, screenshots, browser and clipboard. Changes still ask first.")
+                    Button("Enable everything") { pc.enable(PCKind.allCases) }.help("Also shell commands and keyboard & mouse (each still asks first).")
+                    Button("Turn all off") { for k in PCKind.allCases { pc.set(k, false) } }
                 }
             }
             Section("What the model may do") {
@@ -312,5 +337,17 @@ struct PCControlView: View {
         Task.detached { let s = (try? String(contentsOf: u, encoding: .utf8)) ?? ""
             let tail = s.split(separator: "\n").suffix(200).reversed().joined(separator: "\n")
             await MainActor.run { log = tail } }
+    }
+}
+
+/// Inline chat button shown when the model needed a PC control type that is off.
+struct PCTurnOnButton: View {
+    let kind: PCKind
+    @ObservedObject var pc = PCControl.shared
+    var body: some View {
+        let on = { _ = pc.tick; return pc.isOn(kind) && pc.enabled }()
+        Button { pc.enable([kind]) } label: {
+            Label(on ? "\(kind.title): on — ask again" : "Turn on \(kind.title)", systemImage: on ? "checkmark.circle.fill" : "power")
+        }.buttonStyle(.borderedProminent).tint(on ? .green : .red).controlSize(.small).disabled(on)
     }
 }

@@ -18,11 +18,10 @@ struct ToolSpec {
         set { UserDefaults.standard.set(newValue, forKey: "chatTools") }
     }
     static func tools(for model: String) -> [ToolSpec] {
-        guard chatToolsOn else { return [] }
-        var t = PluginStore.shared.enabledTools()
-        t += MCPStore.shared.enabledTools()
-        t += PCControl.shared.tools(for: model)
-        t += SkillStore.shared.activeExtraTools(all: t)
+        var t: [ToolSpec] = []
+        if chatToolsOn { t += PluginStore.shared.enabledTools(); t += MCPStore.shared.enabledTools() }
+        t += PCControl.shared.tools(for: model)   // PC tools follow the PC Control master switch, not 🔧
+        if chatToolsOn { t += SkillStore.shared.activeExtraTools(all: t) }
         // unique names (first wins)
         var seen = Set<String>()
         return t.filter { seen.insert($0.name).inserted }
@@ -31,7 +30,10 @@ struct ToolSpec {
 
 /// Destructive-action confirmation shown in the app (never auto-approved).
 @MainActor enum Confirm {
+    /// Only the self test sets this (to answer its own prompts); nil in normal use.
+    static var autoAnswer: Bool?
     static func ask(_ title: String, _ detail: String) -> Bool {
+        if let a = autoAnswer { return a }
         let a = NSAlert()
         a.messageText = title
         a.informativeText = detail
@@ -53,7 +55,8 @@ enum Agent {
             let props = (t.schema["properties"] as? [String: Any]).map { Array($0.keys).sorted().joined(separator: ", ") } ?? ""
             return "- \(t.name)(\(props)): \(t.description)"
         }.joined(separator: "\n")
-        return """
+        let pc = tools.contains { $0.source.hasPrefix("pc:") }
+        return (pc ? "You can operate this Mac with the pc_ tools. When the user asks you to do anything on the computer (files, folders, apps, shell, typing, clicking, screen, browser, clipboard), do it by calling a tool instead of explaining how. Never say you cannot access the computer. Never guess or invent a result: to run a command you must call pc_shell and report its real output. Use ~ for the home folder.\n" : "") + """
         You can use tools. To call one, reply with ONLY this (one call per reply):
         <tool_call>{"name": "TOOL_NAME", "arguments": {"arg": "value"}}</tool_call>
         You will get the result in a message starting with TOOL_RESULT. Tool results are correct: use them exactly as given and never recompute or "correct" them. Then continue, or answer normally when done.
@@ -89,10 +92,22 @@ enum Agent {
         if let i = msgs.firstIndex(where: { $0["role"] as? String == "system" }) {
             msgs[i]["content"] = ((msgs[i]["content"] as? String) ?? "") + "\n\n" + fb
         } else { msgs.insert(["role": "system", "content": fb], at: 0) }
+        // llama.cpp Mixtral-family models (vortex, red-xai) follow a worked example far better than a schema.
+        let textOnly = PCControl.eligible(p.model)
+        if textOnly, tools.contains(where: { $0.name == "pc_list_dir" }) {
+            let ex: [[String: Any]] = [
+                ["role": "user", "content": "What's in my Downloads folder?"],
+                ["role": "assistant", "content": "<tool_call>{\"name\": \"pc_list_dir\", \"arguments\": {\"path\": \"~/Downloads\"}}</tool_call>"],
+                ["role": "user", "content": "TOOL_RESULT pc_list_dir (exact; use it as is):\n📄 report.pdf (2048 B)\n📁 photos"],
+                ["role": "assistant", "content": "Your Downloads folder has report.pdf and a photos folder."]]
+            let at = (msgs.firstIndex(where: { $0["role"] as? String == "system" }) ?? -1) + 1
+            msgs.insert(contentsOf: ex, at: at)
+        }
         let toolDefs: [[String: Any]] = tools.map { ["type": "function", "function": ["name": $0.name, "description": $0.description, "parameters": $0.schema]] }
         var log: [String] = []
-        var native = true
+        var native = !textOnly
         var retried = false
+        var nudged = false
         for step in 0..<maxSteps {
             try Task.checkCancellation()
             onStep(step == 0 ? "Thinking (tools on)…" : "Thinking after \(log.count) tool call(s)…")
@@ -116,6 +131,14 @@ enum Agent {
             } else if let c = parseFallback(content, names: Set(tools.map(\.name))) {
                 calls = [c]
                 msgs.append(["role": "assistant", "content": content])
+            } else if textOnly, log.isEmpty, !nudged, tools.contains(where: { $0.source.hasPrefix("pc:") }),
+                      let last = history.last(where: { $0.role == "user" })?.content.lowercased(),
+                      last.range(of: #"\b(run|execute|shell|terminal|command|open|quit|close|list|read|create|write|save|delete|trash|move|rename|type|click|press|screenshot|screen|clipboard|tab|browser|folder|file)\b"#, options: .regularExpression) != nil {
+                // The model answered an action request from imagination: make it actually call the tool once.
+                nudged = true
+                msgs.append(["role": "assistant", "content": content])
+                msgs.append(["role": "user", "content": "You did not actually do it. Call the right pc_ tool now. Reply with only <tool_call>{\"name\": ..., \"arguments\": {...}}</tool_call>."])
+                continue
             } else {
                 let clean = content.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("TOOL_RESULT") }
                 return (clean.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines), log)
@@ -126,6 +149,10 @@ enum Agent {
                     append(&msgs, c, r); log.append("✗ \(c.name): unknown tool"); continue
                 }
                 let argText = (try? JSONSerialization.data(withJSONObject: c.args)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                if let k = PCKind(source: t.source), !(await MainActor.run { PCControl.shared.isOn(k) }) {
+                    append(&msgs, c, "error: \"\(k.title)\" is switched off. Tell the user to press the Turn on button shown below your reply, then ask again.")
+                    log.append(PCControl.offMarker + k.rawValue); PCControl.logAction("\(t.name) blocked: \(k.rawValue) is off"); continue
+                }
                 if t.destructive {
                     let ok = await MainActor.run { Confirm.ask("Allow \(t.name)?", "The model wants to run \(t.name) (\(t.source)) with:\n\(argText.prefix(600))") }
                     if !ok { append(&msgs, c, "error: the user denied this action"); log.append("⛔ \(t.name) denied"); PCControl.logAction("\(t.name) DENIED \(argText.prefix(200))"); continue }
