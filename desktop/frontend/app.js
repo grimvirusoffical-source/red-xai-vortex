@@ -20,6 +20,7 @@ async function refresh(){
     $('#conn').textContent = s.connected ? 'connected' : 'offline';
     $('#conn').className = 'pill '+(s.connected?'ok':'bad');
     if(s.baseURL) $('#baseURL').value = s.baseURL;
+    if('autoUpdate' in s) $('#autoUpdate').checked = s.autoUpdate;
     state.agents = s.agents||[];
     state.models = s.models||['vortex'];
     state.chats = s.chats||[];
@@ -105,7 +106,7 @@ $('#refreshStore').onclick=async()=>{
   if(!list.length) $('#pluginOut').textContent = JSON.stringify(r,null,2);
 };
 $('#saveSettings').onclick=async()=>{
-  const r=await bridge.call('settings.save',{baseURL:$('#baseURL').value, apiKey:$('#apiKey').value});
+  const r=await bridge.call('settings.save',{baseURL:$('#baseURL').value, apiKey:$('#apiKey').value, autoUpdate:$('#autoUpdate').checked});
   $('#apiKey').value=''; $('#setMsg').textContent=r.message||'Saved'; $('#setMsg').className=r.ok?'ok':'bad'; refresh();
 };
 $('#probe').onclick=async()=>{ const r=await bridge.call('settings.probe',{}); $('#setMsg').textContent=r.message||''; $('#setMsg').className=r.ok?'ok':'bad'; };
@@ -168,3 +169,31 @@ $('#gCallMe').onclick=async()=>{const r=await bridge.call('redx.call',{flow:gFlo
 $('#fSignOut').onclick=async e=>{e.preventDefault();await bridge.call('redx.logout');location.reload();};
 $('#fTerms').onclick=async e=>{e.preventDefault();const t=await fetch('terms.md').then(r=>r.text());const w=window.open('','_blank');if(w){w.document.body.innerHTML='<pre style="white-space:pre-wrap"></pre>';w.document.querySelector('pre').textContent=t;}else alert(t);};
 gate();
+
+// ---- Notifications (gateway feed) ----
+const N={seen:new Set(),primed:false};
+async function nRefresh(){
+  let r; try{ r=await bridge.call('notif.list'); }catch(e){ return; }
+  if(!r||!Array.isArray(r.data)) return;
+  const u=r.unread||0;
+  $('#nTabBtn').textContent='🔔 Notifications'+(u?` (${u})`:'');
+  $('#nCount').textContent=u?`${u} unread`:'';
+  document.title=(u?`(${u}) `:'')+'Red-XAI Vortex';
+  const box=$('#nList'); if(r.data.length) box.innerHTML='';
+  for(const n of r.data){
+    const d=document.createElement('div'); d.className='card'; d.style.opacity=n.read?.7:1;
+    const t=document.createElement('b'); t.textContent=n.title; if(n.read) t.style.fontWeight='normal';
+    const b=document.createElement('div'); b.className='muted'; b.textContent=n.body||'';
+    const w=document.createElement('small'); w.textContent=new Date(n.ts*1000).toLocaleString();
+    d.append(t,b,w);
+    if(!n.read){ const k=document.createElement('button'); k.textContent='Mark read'; k.onclick=async()=>{await bridge.call('notif.read',{ids:[n.id]});nRefresh();}; d.append(' ',k); }
+    box.append(d);
+    if(!n.read && !N.seen.has(n.id)){ N.seen.add(n.id);
+      if(N.primed && 'Notification' in window && Notification.permission==='granted') new Notification(n.title,{body:n.body||''}); }
+  }
+  N.primed=true;
+}
+$('#nRefresh').onclick=nRefresh;
+$('#nAll').onclick=async()=>{await bridge.call('notif.read',{all:true});nRefresh();};
+if('Notification' in window && Notification.permission==='default') Notification.requestPermission();
+nRefresh(); setInterval(nRefresh,45000);

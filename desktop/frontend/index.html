@@ -62,6 +62,7 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
     <button data-tab="integrations">Integrations</button>
     <button data-tab="media">Media</button>
     <button data-tab="plugins">Plugins</button>
+    <button data-tab="notifications" id="nTabBtn">🔔 Notifications</button>
     <button data-tab="settings">Settings</button>
     <a class="ghost" href="https://45.77.105.187/vortex/donate" target="_blank" style="margin-left:8px;color:#e5484d">♥ Donate</a>
   </div>
@@ -153,6 +154,11 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
       <pre id="pluginOut" style="color:var(--muted);white-space:pre-wrap"></pre>
     </div>
   </section>
+  <section class="panel" id="tab-notifications" style="grid-column:1/-1">
+    <h2>Notifications <small id="nCount"></small></h2>
+    <p><button id="nRefresh">Refresh</button> <button id="nAll">Mark all read</button></p>
+    <div id="nList"><p class="muted">No notifications yet. Cloud PC requests, agent replies, finished media and merges, and updates show up here.</p></div>
+  </section>
   <section class="panel" id="tab-settings" style="grid-column:1/-1">
     <div class="card">
       <h3>Connection</h3>
@@ -160,6 +166,7 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
       <input id="baseURL" placeholder="https://ai.red-xai.com/v1 or http://127.0.0.1:18091/v1"/>
       <label>API key (stored in OS keychain)</label>
       <input id="apiKey" type="password" placeholder="redx_ai_…"/>
+      <label><input type="checkbox" id="autoUpdate" checked style="width:auto"/> Auto-update from GitHub Releases (checks on launch and every 4 hours, SHA256-verified)</label>
       <div class="row" style="margin-top:10px">
         <button class="primary" id="saveSettings">Save</button>
         <button class="ghost" id="probe">Test connection</button>

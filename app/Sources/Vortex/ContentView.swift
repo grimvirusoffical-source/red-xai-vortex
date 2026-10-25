@@ -300,7 +300,23 @@ struct OpenHubToolbar: View {
     @Environment(\.openWindow) var openWindow
     var body: some View {
         Button { ModelBrowserServer.shared.open() } label: { Image(systemName: "safari") }.help("Browse Models (opens in your browser)")
+        NotifBell()
         Button { openWindow(id: "hub") } label: { Image(systemName: "books.vertical") }.help("Model Library, Merges, Servers, Providers & API Keys")
             .onAppear { HubNav.opener = { openWindow(id: "hub") } }
+    }
+}
+
+struct NotifBell: View {
+    @ObservedObject var n = NotificationStore.shared
+    var body: some View {
+        Button { HubNav.open("notifications") } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: n.unread > 0 ? "bell.badge" : "bell")
+                if n.unread > 0 {
+                    Text("\(min(n.unread, 99))").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+                        .padding(.horizontal, 3).background(Capsule().fill(.red)).offset(x: 8, y: -6)
+                }
+            }
+        }.help("Notifications")
     }
 }

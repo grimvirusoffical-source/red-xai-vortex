@@ -250,6 +250,7 @@ struct HubView: View {
                 MediaJobsView().tabItem { Label("Media", systemImage: "film.stack") }.tag("media")
                 PCControlView().tabItem { Label("PC Control", systemImage: "desktopcomputer") }.tag("pc")
                 IntegrationsView().tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }.tag("integrations")
+                NotificationsView().tabItem { Label(NotificationStore.shared.unread > 0 ? "Notifications (\(NotificationStore.shared.unread))" : "Notifications", systemImage: "bell") }.tag("notifications")
                 HelpView().tabItem { Label("Help", systemImage: "questionmark.circle") }.tag("help")
             }
             if !hub.error.isEmpty {

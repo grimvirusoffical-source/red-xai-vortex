@@ -1,10 +1,10 @@
 package store
 
 import (
-	"strings"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -35,8 +35,9 @@ type Msg struct {
 }
 
 type Settings struct {
-	BaseURL  string `json:"baseURL"`
-	ActiveID string `json:"activeAgent"`
+	BaseURL      string `json:"baseURL"`
+	ActiveID     string `json:"activeAgent"`
+	NoAutoUpdate bool   `json:"noAutoUpdate"`
 }
 
 type Store struct {
@@ -57,7 +58,7 @@ func Open() *Store {
 		s.Agents = []Agent{{
 			ID: "vortex-default", Name: "Vortex", Provider: "vortex", Model: "vortex",
 			SystemPrompt: "You are Vortex, the Red-XAI Vortex assistant: sharp, friendly and direct.",
-			ToolsOn: true, PCControlOn: true, Created: time.Now(), Updated: time.Now(),
+			ToolsOn:      true, PCControlOn: true, Created: time.Now(), Updated: time.Now(),
 		}}
 		s.save()
 	}

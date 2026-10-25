@@ -150,9 +150,25 @@ enum API {
             "repeat_penalty": p.repeatPenalty, "max_tokens": p.maxTokens, "timings_per_token": false]
         if p.seed >= 0 { body["seed"] = p.seed }
         r.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (bytes, resp) = try await URLSession.shared.bytes(for: r)
-        if let h = resp as? HTTPURLResponse, h.statusCode != 200 {
-            throw NSError(domain: "Vortex", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: "Server returned HTTP \(h.statusCode)"])
+        // Retry while the server swaps models (5xx during load/unload).
+        var attempt = 0
+        var bytes: URLSession.AsyncBytes
+        while true {
+            let (b, resp) = try await URLSession.shared.bytes(for: r)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if code == 200 { bytes = b; break }
+            var raw = Data()
+            for try await x in b { raw.append(x); if raw.count > 4096 { break } }
+            let m = ((try? JSONSerialization.jsonObject(with: raw) as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
+            if code >= 500 && attempt < 2 {
+                attempt += 1
+                try await Task.sleep(nanoseconds: UInt64(6 * attempt) * 1_000_000_000)
+                continue
+            }
+            let friendly = code >= 500
+                ? "Vortex is loading this model on the server (it retried \(attempt + 1)×). Please send again in a few seconds."
+                : (m ?? "Server returned HTTP \(code)")
+            throw NSError(domain: "Vortex", code: code, userInfo: [NSLocalizedDescriptionKey: friendly])
         }
         var tps: Double?
         for try await line in bytes.lines {

@@ -252,12 +252,21 @@ enum Agent {
         var body: [String: Any] = ["model": p.model, "messages": messages, "temperature": p.temperature, "max_tokens": p.maxTokens, "stream": false]
         if !tools.isEmpty { body["tools"] = tools }
         r.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (d, resp) = try await URLSession.shared.data(for: r)
-        let j = (try? JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? [:]
-        if let h = resp as? HTTPURLResponse, h.statusCode >= 300 {
-            let m = ((j["error"] as? [String: Any])?["message"] as? String) ?? "HTTP \(h.statusCode)"
-            throw NSError(domain: "Vortex", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: m])
+        var attempt = 0
+        while true {
+            let (d, resp) = try await URLSession.shared.data(for: r)
+            let j = (try? JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? [:]
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if code < 300 { return j }
+            if code >= 500 && attempt < 2 {   // model loading/unloading on the server
+                attempt += 1
+                try await Task.sleep(nanoseconds: UInt64(6 * attempt) * 1_000_000_000)
+                continue
+            }
+            let m = code >= 500
+                ? "Vortex is loading this model on the server (it retried \(attempt + 1)×). Please send again in a few seconds."
+                : (((j["error"] as? [String: Any])?["message"] as? String) ?? "HTTP \(code)")
+            throw NSError(domain: "Vortex", code: code, userInfo: [NSLocalizedDescriptionKey: m])
         }
-        return j
     }
 }

@@ -70,13 +70,16 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 	case "status":
 		models, connected := s.listModels()
 		return map[string]any{
-			"ok": true, "connected": connected, "baseURL": s.St.Settings.BaseURL,
+			"ok": true, "connected": connected, "baseURL": s.St.Settings.BaseURL, "autoUpdate": !s.St.Settings.NoAutoUpdate,
 			"agents": s.St.Agents, "models": models, "chats": chatSummaries(s.St.Chats),
 		}
 	case "settings.save":
 		st := s.St.Settings
 		if u, _ := in["baseURL"].(string); u != "" {
 			st.BaseURL = strings.TrimRight(u, "/")
+		}
+		if au, ok := in["autoUpdate"].(bool); ok {
+			st.NoAutoUpdate = !au
 		}
 		if k, _ := in["apiKey"].(string); k != "" {
 			_ = keyring.Set("vortex-api-key", strings.TrimSpace(k))
@@ -134,6 +137,10 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		return s.mediaJob(str(in, "id"))
 	case "media.jobs":
 		return s.mediaJobs()
+	case "notif.list":
+		return s.gw("GET", "/notifications", nil)
+	case "notif.read":
+		return s.gw("POST", "/notifications/read", in)
 	default:
 		if strings.HasPrefix(m, "gate.") || strings.HasPrefix(m, "redx.") {
 			return s.redx(m, in)
@@ -211,15 +218,27 @@ func (s *Server) chatSend(in map[string]any) map[string]any {
 	}
 	body := map[string]any{"model": model, "messages": msgs, "temperature": 0.4, "max_tokens": 1024}
 	raw, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", base+"/chat/completions", bytes.NewReader(raw))
-	req.Header.Set("Content-Type", "application/json")
-	if key != "" {
-		req.Header.Set("Authorization", "Bearer "+key)
-	}
-	cli := &http.Client{Timeout: 120 * time.Second}
-	res, err := cli.Do(req)
-	if err != nil {
-		return map[string]any{"error": err.Error()}
+	cli := &http.Client{Timeout: 600 * time.Second}
+	var res *http.Response
+	for attempt := 0; ; attempt++ {
+		req, _ := http.NewRequest("POST", base+"/chat/completions", bytes.NewReader(raw))
+		req.Header.Set("Content-Type", "application/json")
+		if key != "" {
+			req.Header.Set("Authorization", "Bearer "+key)
+		}
+		r, err := cli.Do(req)
+		if err != nil {
+			return map[string]any{"error": err.Error()}
+		}
+		if r.StatusCode < 500 {
+			res = r
+			break
+		}
+		r.Body.Close()
+		if attempt >= 2 { // the server is loading/unloading models
+			return map[string]any{"error": "Vortex is loading this model on the server (retried 3×). Please send again in a few seconds."}
+		}
+		time.Sleep(time.Duration(6*(attempt+1)) * time.Second)
 	}
 	defer res.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
