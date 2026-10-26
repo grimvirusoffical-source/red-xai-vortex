@@ -25,6 +25,7 @@ type Server struct {
 	ln             net.Listener
 	mux            *http.ServeMux
 	baseCredential func(string) string // tests can isolate credential access
+	quickAuth      vortexQuickAuth
 	pcMu           sync.Mutex
 	pcEpoch        uint64
 	pcRevision     uint64

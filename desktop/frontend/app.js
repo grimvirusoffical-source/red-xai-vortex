@@ -159,17 +159,19 @@ $('#makePlugin').onclick=async()=>{ $('#makeMsg').textContent='Generating…';
   $('#makeMsg').textContent=r.json?'Done. Pick an icon, review the JSON, then upload.':(r.error||'');
   if(r.json) $('#pluginOut').value=r.json; };
 // Inline RedX sign-in: resolves true when signed in, false on Cancel.
-function rxSignIn(){ return new Promise(done=>{ let flow=''; const m=$('#rxModal');
-  const reset=()=>{flow='';$('#rxCreds').style.display='';$('#rxCode').style.display='none';$('#rxGo').textContent='Sign in';$('#rxMsg').textContent='';$('#rxPass').value='';$('#rxOtp').value='';};
+function rxSignIn(){ return new Promise(done=>{ let flow='',method='totp'; const m=$('#rxModal');
+  const reset=()=>{flow='';method='totp';$('#rxCreds').style.display='';$('#rxCode').style.display='none';$('#rxCallMe').style.display='none';$('#rxGo').textContent='Sign in';$('#rxMsg').textContent='';$('#rxPass').value='';$('#rxOtp').value='';};
   reset(); m.style.display='flex';
   $('#rxCancel').onclick=()=>{ m.style.display='none'; reset(); done(false); };
   $('#rxGo').onclick=async()=>{ $('#rxMsg').textContent='';
-    const r=flow?await bridge.call('redx.2fa',{flow,method:'totp',code:$('#rxOtp').value})
+    const r=flow?await bridge.call('redx.2fa',{flow,method,code:$('#rxOtp').value})
                :await bridge.call('redx.login',{login:$('#rxUser').value,password:$('#rxPass').value});
     if(!r.ok){ $('#rxMsg').textContent=r.error||'Sign-in failed.'; return; }
-    if(r.next==='2fa'){ flow=r.flow; $('#rxCreds').style.display='none'; $('#rxCode').style.display=''; $('#rxGo').textContent='Verify'; return; }
+    if(r.next==='2fa'){ flow=r.flow; method=r.methods?.totp?'totp':'call'; $('#rxCreds').style.display='none'; $('#rxCode').style.display=''; $('#rxCallMe').style.display=r.methods?.call?'':'none'; $('#rxGo').textContent='Verify'; return; }
     if(r.next==='2fa_setup'){ $('#rxMsg').textContent='Finish two-factor setup at red-xai.com, then sign in again.'; return; }
-    m.style.display='none'; reset(); done(true); }; }); }
+    m.style.display='none'; reset(); done(true); };
+  $('#rxCallMe').onclick=async()=>{ const r=await bridge.call('redx.call',{flow}); if(r.ok){method='call';$('#rxMsg').textContent='Calling you now. Enter the code you hear.';} else $('#rxMsg').textContent=r.message||'Call failed.'; };
+}); }
 async function withSignIn(call,msgEl){ let r=await call(); if(r.needSignIn){ if(!await rxSignIn()){ msgEl.textContent='You must sign in to Red-XAI first to upload.'; msgEl.className='bad'; return null; } r=await call(); } return r; }
 $('#uploadPlugin').onclick=async()=>{ const el=$('#upMsg'); el.className='muted';
   if(!$('#pluginOut').value.trim()){ el.textContent='Generate a plugin first.'; return; }
@@ -316,7 +318,41 @@ setInterval(()=>{ if($('#tab-media').classList.contains('on')) mPoll(); }, 2000)
 
 // ---- ToS + RedX sign-in gate (required on every launch; re-prompts when terms change)
 const TERMS_VERSION='2026-10-25';
-let gFlow='';
+let gFlow='',gMethod='totp',quickTimer=0,quickChecking=false;
+function quickStopUI(){
+  if(quickTimer) clearInterval(quickTimer);
+  quickTimer=0;quickChecking=false;
+  $('#gQuick').disabled=false;
+  $('#gApproval').style.display='none';
+}
+$('#gQuick').onclick=async()=>{
+  $('#gQuick').disabled=true;$('#gMsg').textContent='Starting secure Red-XAI approval…';
+  const r=await bridge.call('redx.quick.start').catch(()=>({ok:false,error:'Could not reach Red-XAI quick login.'}));
+  if(!r.ok){quickStopUI();$('#gMsg').textContent=r.error||'Quick login unavailable.';return;}
+  let url;
+  try {
+    url=new URL(r.url);
+    if(url.origin!=='https://red-xai.com'||!['/redxai-connect','/redxai-connect/','/redxai-connectx'].includes(url.pathname)) throw Error('Unsafe approval URL');
+  } catch(e) {quickStopUI();await bridge.call('redx.quick.cancel');$('#gMsg').textContent='Red-XAI returned an invalid approval link.';return;}
+  $('#gApprovalCode').textContent=r.code;
+  $('#gApprovalLink').href=url.href;
+  $('#gApproval').style.display='';
+  $('#gMsg').textContent='Open the approval link and approve Vortex using the displayed code.';
+  quickTimer=setInterval(async()=>{
+    if(quickChecking)return;
+    quickChecking=true;
+    try {
+      const v=await bridge.call('redx.quick.poll');
+      if(v.signedIn){quickStopUI();$('#gMsg').textContent='';await gate();}
+      else if(!v.ok){quickStopUI();$('#gMsg').textContent=v.error||'Approval ended. Try again.';}
+    } catch(e){quickStopUI();$('#gMsg').textContent='Could not check approval. Try again.';}
+    finally{quickChecking=false;}
+  },Math.max(2000,Math.min(10000,(Number(r.interval)||3)*1000)));
+};
+$('#gApprovalCancel').onclick=async()=>{
+  quickStopUI();await bridge.call('redx.quick.cancel').catch(()=>{});
+  $('#gMsg').textContent='Approval cancelled.';
+};
 async function gate(){
   const show=id=>['gTerms','gLogin','gWait'].forEach(x=>$('#'+x).style.display=x===id?'':'none');
   show('gWait');
@@ -335,13 +371,13 @@ $('#gGo').onclick=async()=>{
   $('#gMsg').textContent='';
   let r;
   if(!gFlow) r=await bridge.call('redx.login',{login:$('#gUser').value,password:$('#gPass').value});
-  else r=await bridge.call('redx.2fa',{flow:gFlow,method:'totp',code:$('#gOtp').value});
+  else r=await bridge.call('redx.2fa',{flow:gFlow,method:gMethod,code:$('#gOtp').value});
   if(!r.ok){$('#gMsg').textContent=r.error||'Sign-in failed.';return;}
-  if(r.next==='2fa'){gFlow=r.flow;$('#gCreds').style.display='none';$('#gCode').style.display='';$('#gGo').textContent='Verify';return;}
+  if(r.next==='2fa'){gFlow=r.flow;gMethod=r.methods?.totp?'totp':'call';$('#gCreds').style.display='none';$('#gCode').style.display='';$('#gCallMe').style.display=r.methods?.call?'':'none';$('#gGo').textContent='Verify';return;}
   if(r.next==='2fa_setup'){$('#gMsg').textContent='Finish two-factor setup at red-xai.com, then sign in again.';return;}
   gFlow=''; gate();
 };
-$('#gCallMe').onclick=async()=>{const r=await bridge.call('redx.call',{flow:gFlow});$('#gMsg').textContent=r.ok?'Calling you now — enter the code you hear.':(r.message||'Call failed.');};
+$('#gCallMe').onclick=async()=>{const r=await bridge.call('redx.call',{flow:gFlow});if(r.ok)gMethod='call';$('#gMsg').textContent=r.ok?'Calling you now — enter the code you hear.':(r.message||'Call failed.');};
 $('#fSignOut').onclick=async e=>{e.preventDefault();await bridge.call('redx.logout');location.reload();};
 $('#fTerms').onclick=async e=>{e.preventDefault();const t=await fetch('terms.md').then(r=>r.text());const w=window.open('','_blank');if(w){w.document.body.innerHTML='<pre style="white-space:pre-wrap"></pre>';w.document.querySelector('pre').textContent=t;}else alert(t);};
 gate();
