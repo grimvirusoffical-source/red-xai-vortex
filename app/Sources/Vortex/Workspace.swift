@@ -137,6 +137,35 @@ enum BaseClient {
         guard let url = c.url else { throw WorkspaceStore.error("Invalid Base address.") }
         return url
     }
+    static func validateIdentity(pinned: String?, received: String) throws {
+        guard !received.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, received.count <= 512 else { throw WorkspaceStore.error("The hosted Base returned an invalid identity.") }
+        guard pinned == nil || pinned == received else { throw WorkspaceStore.error("The hosted Base identity changed. Verify the host before disconnecting and reconnecting it.") }
+    }
+    static func documentCitation(_ raw: String) throws -> String? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        guard let url = URLComponents(string: value), url.scheme == "https", let host = url.host, !host.isEmpty, url.user == nil, url.password == nil, url.url != nil else {
+            throw WorkspaceStore.error("Use an HTTPS document citation without embedded credentials.")
+        }
+        func credentialField(_ name: String) -> Bool {
+            let normalized = name.lowercased().filter { $0.isLetter || $0.isNumber }
+            return ["token", "secret", "password", "signature", "credential", "apikey"].contains(where: normalized.contains)
+                || ["key", "sig", "auth", "authorization", "jwt", "bearer", "accesskey", "resourcekey", "oauthcode"].contains(normalized)
+                || normalized.hasPrefix("xamz") || normalized.hasPrefix("xgoog")
+        }
+        let queryHasCredentials = (url.queryItems ?? []).contains { credentialField($0.name) }
+        var fragmentHasCredentials = false
+        if let fragment = url.fragment {
+            var fields = URLComponents(); fields.query = fragment
+            fragmentHasCredentials = (fields.queryItems ?? []).contains { item in
+                credentialField(item.name.split(separator: ":", maxSplits: 1).first.map(String.init) ?? item.name)
+            }
+        }
+        guard !queryHasCredentials, !fragmentHasCredentials else {
+            throw WorkspaceStore.error("Remove credentials from the document citation. Token, secret, password, signature and authorization fields must not be sent to a model.")
+        }
+        return value
+    }
     static func fetch(_ url: URL, token: String, limit: Int = 8 * 1024 * 1024) async throws -> Data {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 15; config.timeoutIntervalForResource = 30
@@ -321,12 +350,14 @@ enum BaseClient {
         let ids = state.memories.filter { $0.worldID == id }.map(\.id)
         ids.forEach(removeMemory); state.worlds.removeAll { $0.id == id }; save()
     }
-    func addBaseText(_ id: UUID, name: String, text: String, documentURL: String) {
-        guard let i = state.bases.firstIndex(where: { $0.id == id }), !state.bases[i].isRemote else { return }
-        let citation: String
-        if let url = URL(string: documentURL), url.scheme == "https", url.user == nil, url.password == nil { citation = "Source citation: " + documentURL + "\n\n" } else { citation = "" }
-        let value = String((citation + text).prefix(100_000))
-        state.bases[i].sources.append(WorkspaceAsset(name: name.isEmpty ? "Text source" : name, kind: "text", text: value, bytes: value.utf8.count)); save()
+    @discardableResult func addBaseText(_ id: UUID, name: String, text: String, documentURL: String) -> Bool {
+        guard let i = state.bases.firstIndex(where: { $0.id == id }), !state.bases[i].isRemote else { return false }
+        do {
+            let citation = try BaseClient.documentCitation(documentURL).map { "Source citation: " + $0 + "\n\n" } ?? ""
+            let value = String((citation + text).prefix(100_000))
+            state.bases[i].sources.append(WorkspaceAsset(name: name.isEmpty ? "Text source" : name, kind: "text", text: value, bytes: value.utf8.count)); save()
+            return true
+        } catch { errorMessage = error.localizedDescription; return false }
     }
     func newLocalBase(_ name: String) { state.bases.append(XAIBase(name: name.isEmpty ? "Untitled Base" : name)); save() }
     func importBaseFiles(_ baseID: UUID, urls: [URL]) async {
@@ -354,6 +385,7 @@ enum BaseClient {
             guard let token = BaseCredentials.get(id) else { throw Self.error("No connection token. Disconnect and reconnect this Base with a valid read token.") }
             let manifest = try await BaseClient.manifest(endpoint: BaseClient.endpoint(address), token: token)
             guard let i = state.bases.firstIndex(where: { $0.id == id }), state.bases[i].connected else { return }
+            try BaseClient.validateIdentity(pinned: state.bases[i].remoteID, received: manifest.id)
             state.bases[i].remoteID = manifest.id; state.bases[i].revision = manifest.revision
             state.bases[i].sources = manifest.sources.map { WorkspaceAsset(name: String($0.name.prefix(500)), kind: ["text", "image", "audio", "video", "document"].contains($0.kind ?? "") ? $0.kind! : "document", mimeType: $0.mimeType, text: $0.text.map { String($0.prefix(100_000)) }, bytes: max(0, $0.bytes ?? 0)) }
             state.bases[i].status = "Available"; state.bases[i].detail = "Authenticated read access. Media remains on its host; add host-generated transcripts or captions for text models."

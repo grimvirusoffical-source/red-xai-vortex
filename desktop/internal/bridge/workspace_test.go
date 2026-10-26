@@ -236,3 +236,46 @@ func TestChatCompletionUsesOnlyEnabledWorkspaceContext(t *testing.T) {
 		t.Fatal("tool-oriented run omitted selected workspace context")
 	}
 }
+
+func TestPersonalityImportsAcrossClientsCreateIndependentCopies(t *testing.T) {
+	s := workspaceServer(t)
+	const existingID = "B0B20677-07D6-4EFA-B09E-84638AD83246"
+	mustWorkspaceUpdate(t, s, func(w *store.Workspace) {
+		w.Personalities = []store.Personality{{ID: existingID, Name: "Existing personality", Instructions: "Keep my original settings"}}
+	})
+	fixtures := []struct{ name, raw, instructions, description string }{
+		{"native raw with conflicting ID", `{"id":"B0B20677-07D6-4EFA-B09E-84638AD83246","name":"Native roleplay","prompt":"Keep characters consistent"}`, "Keep characters consistent", ""},
+		{"native raw without ID", `{"name":"Native coding","prompt":"Explain the evidence for each fix"}`, "Explain the evidence for each fix", ""},
+		{"Go versioned wrapper", `{"format":"vortex-personality","version":1,"personality":{"id":"B0B20677-07D6-4EFA-B09E-84638AD83246","name":"Go personality","description":"Shared with native","instructions":"Use precise code references"}}`, "Use precise code references", "Shared with native"},
+		{"canonical instructions take precedence", `{"name":"Both formats","instructions":"Canonical instructions","prompt":"Legacy alias"}`, "Canonical instructions", ""},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			before := len(s.St.WorkspaceSnapshot().Personalities)
+			result := s.workspaceAction(map[string]any{"action": "personality.import", "json": fixture.raw})
+			if result["ok"] != true {
+				t.Fatal(result)
+			}
+			personalities := s.St.WorkspaceSnapshot().Personalities
+			if len(personalities) != before+1 {
+				t.Fatal("import overwrote an existing personality")
+			}
+			imported := personalities[len(personalities)-1]
+			if imported.ID == "" || imported.ID == existingID || imported.Instructions != fixture.instructions || imported.Description != fixture.description {
+				t.Fatalf("cross-client import lost fields: %+v", imported)
+			}
+			if personalities[0].Name != "Existing personality" || personalities[0].Instructions != "Keep my original settings" {
+				t.Fatal("existing personality changed")
+			}
+			exported := s.workspaceAction(map[string]any{"action": "personality.export", "id": imported.ID})
+			var document struct {
+				Format      string            `json:"format"`
+				Version     int               `json:"version"`
+				Personality store.Personality `json:"personality"`
+			}
+			if err := json.Unmarshal([]byte(exported["json"].(string)), &document); err != nil || document.Format != "vortex-personality" || document.Version != 1 || document.Personality.Instructions != fixture.instructions {
+				t.Fatal("canonical export changed")
+			}
+		})
+	}
+}

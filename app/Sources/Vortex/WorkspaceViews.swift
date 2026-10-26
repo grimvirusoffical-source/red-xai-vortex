@@ -172,7 +172,7 @@ struct BasesWorkspaceView: View {
                             TextField("Google Docs or document URL (optional citation)", text: $documentURL)
                             TextEditor(text: $sourceText).frame(height: 100)
                             Text("Paste an exported document, transcript, or caption. Private document links are citations; this app does not sign in to Google or fetch them automatically.").font(.caption2).foregroundStyle(.secondary)
-                            Button("Add source") { workspace.addBaseText(base.id, name: sourceName, text: sourceText, documentURL: documentURL); sourceName = ""; sourceText = ""; documentURL = "" }.disabled(sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            Button("Add source") { if workspace.addBaseText(base.id, name: sourceName, text: sourceText, documentURL: documentURL) { sourceName = ""; sourceText = ""; documentURL = "" } }.disabled(sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
                     }
                 }

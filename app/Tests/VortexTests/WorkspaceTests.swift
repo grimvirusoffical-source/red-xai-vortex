@@ -59,6 +59,30 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertNoThrow(try BaseClient.endpoint("http://[::1]:7792"))
         for raw in ["http://192.0.2.1", "http://localhost.attacker.test", "https://user:token@example.com", "https://example.com?token=secret", "file:///tmp/base", "https://example.com/#token"] { XCTAssertThrowsError(try BaseClient.endpoint(raw), raw) }
     }
+    func testRemoteBaseIdentityIsPinnedAfterFirstConnection() throws {
+        XCTAssertNoThrow(try BaseClient.validateIdentity(pinned: nil, received: "base-original"))
+        XCTAssertNoThrow(try BaseClient.validateIdentity(pinned: "base-original", received: "base-original"))
+        XCTAssertThrowsError(try BaseClient.validateIdentity(pinned: "base-original", received: "base-replacement"))
+        XCTAssertThrowsError(try BaseClient.validateIdentity(pinned: nil, received: ""))
+    }
+    func testDocumentCitationsRejectCredentialFieldsAndAllowGoogleSharingLinks() throws {
+        let normal = "https://docs.google.com/document/d/example/edit?usp=sharing#heading=h.example"
+        XCTAssertEqual(try BaseClient.documentCitation(normal), normal)
+        XCTAssertNil(try BaseClient.documentCitation("  "))
+        for value in ["https://example.com/doc?token=PRIVATE", "https://example.com/doc?secret=PRIVATE", "https://example.com/doc?api_key=PRIVATE", "https://example.com/doc?signature=PRIVATE", "https://example.com/doc?access_token=PRIVATE", "https://example.com/doc?%74oken=PRIVATE", "https://example.com/doc#access_token=PRIVATE", "https://example.com/doc#api_key=PRIVATE", "https://user:PRIVATE@example.com/doc"] {
+            XCTAssertThrowsError(try BaseClient.documentCitation(value)) { error in XCTAssertFalse(error.localizedDescription.contains("PRIVATE")) }
+        }
+    }
+    @MainActor func testRejectedDocumentCitationPreservesExistingSourceAndShowsError() throws {
+        let store = try temporaryStore(); store.newLocalBase("Source library")
+        let id = try XCTUnwrap(store.state.bases.first?.id)
+        XCTAssertTrue(store.addBaseText(id, name: "Saved document", text: "KEEP_ORIGINAL", documentURL: "https://docs.google.com/document/d/example/edit?usp=sharing"))
+        let original = store.state.bases[0].sources
+        XCTAssertFalse(store.addBaseText(id, name: "Rejected draft", text: "DRAFT_CONTENT", documentURL: "https://example.com/doc?token=PRIVATE"))
+        XCTAssertEqual(store.state.bases[0].sources, original)
+        XCTAssertFalse(store.errorMessage.isEmpty); XCTAssertFalse(store.errorMessage.contains("PRIVATE"))
+        XCTAssertTrue(store.addBaseText(id, name: "No citation", text: "PLAIN_TEXT", documentURL: ""))
+    }
     func testHostManifestUsesNumericRevision() throws {
         let data = Data(#"{"id":"base-id","name":"Hosted","revision":3,"sources":[{"id":"source-id","name":"note.txt","kind":"text","bytes":4,"text":"note"}]}"#.utf8)
         let manifest = try JSONDecoder().decode(BaseClient.Manifest.self, from: data)

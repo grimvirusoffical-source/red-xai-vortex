@@ -413,7 +413,14 @@ func validateSource(src store.Source) error {
 		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil {
 			return errors.New("source URL must be an HTTP(S) document URL without credentials")
 		}
-		for key := range u.Query() {
+		values := u.Query()
+		// OAuth-style fragments can carry credentials too. They are never a
+		// document permission grant and do not belong in saved source metadata.
+		fragment, _ := url.ParseQuery(strings.ReplaceAll(u.Fragment, "?", "&"))
+		for key, entries := range fragment {
+			values[key] = append(values[key], entries...)
+		}
+		for key := range values {
 			k := strings.ToLower(key)
 			if strings.Contains(k, "token") || strings.Contains(k, "secret") || strings.Contains(k, "password") || strings.Contains(k, "signature") || k == "key" || k == "api_key" || k == "apikey" || k == "auth" {
 				return errors.New("source URLs must not contain access credentials; import document text instead")
@@ -451,21 +458,33 @@ func (s *Server) workspaceAction(in map[string]any) map[string]any {
 			return workspaceError(errors.New("personality file exceeds 128 KiB"))
 		}
 		var wrapper struct {
-			Format      string            `json:"format"`
-			Version     int               `json:"version"`
-			Personality store.Personality `json:"personality"`
+			Format      string          `json:"format"`
+			Version     int             `json:"version"`
+			Personality json.RawMessage `json:"personality"`
 		}
 		if err := json.Unmarshal([]byte(raw), &wrapper); err != nil {
 			return workspaceError(errors.New("invalid personality JSON"))
 		}
-		p := wrapper.Personality
-		if wrapper.Format == "" {
-			if err := json.Unmarshal([]byte(raw), &p); err != nil {
-				return workspaceError(err)
+		payload := []byte(raw)
+		if wrapper.Format != "" {
+			if wrapper.Format != "vortex-personality" || wrapper.Version != 1 {
+				return workspaceError(errors.New("unsupported personality format"))
 			}
-		} else if wrapper.Format != "vortex-personality" || wrapper.Version != 1 {
-			return workspaceError(errors.New("unsupported personality format"))
+			payload = wrapper.Personality
 		}
+		var imported struct {
+			store.Personality
+			Prompt string `json:"prompt"` // native client export before the shared wrapper
+		}
+		if err := json.Unmarshal(payload, &imported); err != nil {
+			return workspaceError(errors.New("invalid personality JSON"))
+		}
+		p := imported.Personality
+		if p.Instructions == "" {
+			p.Instructions = imported.Prompt
+		}
+		// Import always creates a copy. A file's ID must never replace an existing
+		// personality or change the settings of chats that use it.
 		p.ID = ""
 		return s.workspaceSave(map[string]any{"kind": "personality", "value": p})
 	case "attachment.add":
@@ -563,6 +582,8 @@ func (s *Server) workspaceAction(in map[string]any) map[string]any {
 
 // JSON plus an exact origin check prevents a visited site from changing local
 // workspace state or selecting local repository files through cross-site requests.
+type workspacePhoneSessionKey struct{}
+
 func workspaceRequestAllowed(r *http.Request) bool {
 	if r.Method != http.MethodPost {
 		return false
@@ -576,7 +597,8 @@ func workspaceRequestAllowed(r *http.Request) bool {
 		host = h
 	}
 	ip := net.ParseIP(host)
-	if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
+	phoneSession, _ := r.Context().Value(workspacePhoneSessionKey{}).(bool)
+	if !phoneSession && !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
 		return false
 	}
 	if site := r.Header.Get("Sec-Fetch-Site"); site == "cross-site" {
