@@ -13,11 +13,18 @@ if [[ "$(uname -s)" == Darwin ]]; then
   python3 - <<'PY'
 import pathlib, shutil, subprocess, tempfile
 source = pathlib.Path('app').resolve()
+def copy_bytes(source, destination):
+    # shutil.copyfile uses macOS fcopyfile, which can time out on file-provider
+    # managed sources. Plain reads/writes also avoid copying extended attributes.
+    with open(source, 'rb') as incoming, open(destination, 'wb') as outgoing:
+        while block := incoming.read(1024 * 1024):
+            outgoing.write(block)
+    return destination
 with tempfile.TemporaryDirectory(prefix='vortex-native-check-') as directory:
     target = pathlib.Path(directory)
-    shutil.copyfile(source / 'Package.swift', target / 'Package.swift')
+    copy_bytes(source / 'Package.swift', target / 'Package.swift')
     for name in ('Sources', 'Tests'):
-        shutil.copytree(source / name, target / name, copy_function=shutil.copyfile)
+        shutil.copytree(source / name, target / name, copy_function=copy_bytes)
     subprocess.run(['swift', 'test', '--package-path', str(target), '-j', '2'], check=True)
 PY
 else
