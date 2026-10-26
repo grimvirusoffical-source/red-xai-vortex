@@ -31,6 +31,11 @@ func TestDocumentNormalizationAndCredentialBoundaries(t *testing.T) {
 			t.Fatalf("accepted %s", raw)
 		}
 	}
+	for _, key := range []string{"authorization", "jwt", "sig", "access_key", "resourcekey", "X-Amz-Credential", "X-Goog-Algorithm", "API.Key", "oauth_code", "session_id"} {
+		if _, e = NormalizeURL("https://example.com/doc?" + key + "=fixture-private"); e == nil {
+			t.Fatalf("credential query field accepted: %s", key)
+		}
+	}
 	for _, raw := range []string{"127.0.0.1", "::1", "192.168.1.1", "10.0.0.1", "169.254.169.254", "0.0.0.0", "fe80::1", "224.0.0.1", "100.64.0.1", "198.18.0.1", "240.0.0.1", "2001:db8::1", "2002:a00:1::"} {
 		if publicIP(net.ParseIP(raw)) {
 			t.Fatalf("private destination %s", raw)

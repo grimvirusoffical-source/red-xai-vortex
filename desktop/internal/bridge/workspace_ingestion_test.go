@@ -57,3 +57,14 @@ func TestIngestionConfigurationRejectsExecutableOrMissingModel(t *testing.T) {
 		t.Fatal("missing Base accepted")
 	}
 }
+
+func TestSavedDocumentCitationRejectsCredentialAliases(t *testing.T) {
+	for _, key := range []string{"authorization", "jwt", "sig", "access_key", "resourcekey", "X-Amz-Credential", "API.Key"} {
+		for _, separator := range []string{"?", "#"} {
+			source := store.Source{Name: "Document", URL: "https://example.com/doc" + separator + key + "=fixture-private"}
+			if validateSource(source) == nil {
+				t.Fatalf("saved credential citation accepted: %s", key)
+			}
+		}
+	}
+}

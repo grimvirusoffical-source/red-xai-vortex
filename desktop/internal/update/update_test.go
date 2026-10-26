@@ -49,3 +49,19 @@ func TestUnsignedBuildStillRefusesUpdate(t *testing.T) {
 		t.Fatal("unsigned build accepted an update")
 	}
 }
+
+func TestSignedVersionRejectsReplayAndUnsignedTagMismatch(t *testing.T) {
+	if err := validateSignedVersion([]byte(`{"version":"2.11"}`), "v2.11", "2.10"); err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range []struct{ manifest, tag, installed string }{
+		{`{"version":"2.8"}`, "v3.0", "2.10"},
+		{`{"version":"2.8"}`, "v2.8", "2.10"},
+		{`{"version":"2.10"}`, "v2.10", "2.10"},
+		{`{}`, "v2.11", "2.10"},
+	} {
+		if validateSignedVersion([]byte(fixture.manifest), fixture.tag, fixture.installed) == nil {
+			t.Fatalf("accepted replay or mismatched signed version: %+v", fixture)
+		}
+	}
+}

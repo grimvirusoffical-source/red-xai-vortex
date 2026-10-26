@@ -146,6 +146,9 @@ func Apply(r *Release) error {
 	if err := Verifier(mb, sb, assetName(), data); err != nil {
 		return errors.New("update rejected: " + err.Error())
 	}
+	if err := validateSignedVersion(mb, r.Tag, Version); err != nil {
+		return err
+	}
 	exe, err := exePath()
 	if err != nil {
 		return err
@@ -214,6 +217,22 @@ func Apply(r *Release) error {
 		return err
 	}
 	_ = os.Chmod(exe, 0755)
+	return nil
+}
+
+// The release tag is unsigned metadata. Bind it to the authenticated manifest
+// before changing any installed files, and reject replayed older releases.
+func validateSignedVersion(manifest []byte, tag, installed string) error {
+	var document struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(manifest, &document) != nil {
+		return errors.New("update rejected: invalid signed version")
+	}
+	normalized := strings.TrimPrefix(strings.TrimSpace(document.Version), "v")
+	if normalized == "" || normalized != strings.TrimPrefix(strings.TrimSpace(tag), "v") || !Newer(normalized, installed) {
+		return errors.New("update rejected: signed version must match the requested release and be newer than this build")
+	}
 	return nil
 }
 

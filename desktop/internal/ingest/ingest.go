@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -98,14 +99,38 @@ func TextHTML(raw string) string {
 	}
 	return Clip(strings.Join(lines, "\n"), MaxText)
 }
+
+// CredentialQueryKey applies the same normalized field policy to fetched and
+// manually saved document citations. Values are never included in errors.
+func CredentialQueryKey(key string) bool {
+	k := strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, key)
+	for _, part := range []string{"token", "secret", "password", "signature", "credential", "apikey"} {
+		if strings.Contains(k, part) {
+			return true
+		}
+	}
+	switch k {
+	case "key", "sig", "auth", "authorization", "jwt", "bearer", "accesskey", "resourcekey", "oauthcode", "code", "session", "sessionid", "sid", "ticket":
+		return true
+	}
+	return strings.HasPrefix(k, "xamz") || strings.HasPrefix(k, "xgoog")
+}
 func NormalizeURL(raw string) (string, error) {
 	u, e := url.Parse(strings.TrimSpace(raw))
 	if e != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
 		return "", errors.New("document sources require an HTTPS URL without embedded credentials")
 	}
-	for key := range u.Query() {
-		k := strings.ToLower(key)
-		if strings.Contains(k, "token") || strings.Contains(k, "password") || strings.Contains(k, "secret") || strings.Contains(k, "signature") || k == "key" || k == "api_key" || k == "auth" {
+	query, queryError := url.ParseQuery(u.RawQuery)
+	if queryError != nil {
+		return "", errors.New("invalid document query fields")
+	}
+	for key := range query {
+		if CredentialQueryKey(key) {
 			return "", errors.New("put document access tokens in the separate credential field")
 		}
 	}

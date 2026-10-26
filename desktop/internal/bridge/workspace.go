@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/ingest"
 	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/keyring"
 	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/store"
 )
@@ -425,16 +426,21 @@ func validateSource(src store.Source) error {
 		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil {
 			return errors.New("source URL must be an HTTP(S) document URL without credentials")
 		}
-		values := u.Query()
+		values, queryError := url.ParseQuery(u.RawQuery)
+		if queryError != nil {
+			return errors.New("invalid source URL query fields")
+		}
 		// OAuth-style fragments can carry credentials too. They are never a
 		// document permission grant and do not belong in saved source metadata.
-		fragment, _ := url.ParseQuery(strings.ReplaceAll(u.Fragment, "?", "&"))
+		fragment, fragmentError := url.ParseQuery(strings.ReplaceAll(u.Fragment, "?", "&"))
+		if fragmentError != nil {
+			return errors.New("invalid source URL fragment fields")
+		}
 		for key, entries := range fragment {
 			values[key] = append(values[key], entries...)
 		}
 		for key := range values {
-			k := strings.ToLower(key)
-			if strings.Contains(k, "token") || strings.Contains(k, "secret") || strings.Contains(k, "password") || strings.Contains(k, "signature") || k == "key" || k == "api_key" || k == "apikey" || k == "auth" {
+			if ingest.CredentialQueryKey(key) {
 				return errors.New("source URLs must not contain access credentials; import document text instead")
 			}
 		}
