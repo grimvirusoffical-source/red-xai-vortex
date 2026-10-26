@@ -169,6 +169,18 @@ func Apply(r *Release) error {
 	if _, err := os.Stat(newExe); err != nil {
 		return errors.New("package does not contain " + filepath.Base(exe))
 	}
+	// rsx-runtime (bundled Python for secure chat): best-effort swap; if files are
+	// in use (Windows) the previous runtime stays until the next update.
+	if fi, err := os.Stat(filepath.Join(stage, "rsx-runtime")); err == nil && fi.IsDir() {
+		old := filepath.Join(dir, "rsx-runtime")
+		_ = os.RemoveAll(old + ".old")
+		_ = os.Rename(old, old+".old")
+		if err := os.Rename(filepath.Join(stage, "rsx-runtime"), old); err != nil {
+			_ = os.Rename(old+".old", old)
+		} else {
+			_ = os.RemoveAll(old + ".old")
+		}
+	}
 	// frontend: swap directory
 	if fi, err := os.Stat(filepath.Join(stage, "frontend")); err == nil && fi.IsDir() {
 		old := filepath.Join(dir, "frontend")
