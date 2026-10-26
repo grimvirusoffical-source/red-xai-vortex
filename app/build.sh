@@ -104,13 +104,22 @@ cat > build/vortex.entitlements <<'ENTITLEMENTS'
 <key>com.apple.security.automation.apple-events</key><true/>
 </dict></plist>
 ENTITLEMENTS
+# The local model helper loads its existing Homebrew OpenSSL libraries. Keep that
+# compatibility exception while enabling the hardened runtime required by notarization.
+cat > build/llama.entitlements <<'LLAMA_ENTITLEMENTS'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>com.apple.security.cs.disable-library-validation</key><true/>
+</dict></plist>
+LLAMA_ENTITLEMENTS
 # File-provider metadata must not enter signatures. This touches only the staged output bundle.
 xattr -cr "$APP"
 while IFS= read -r -d '' binary; do
   case "$(file -b "$binary")" in
     *Mach-O*)
       if [ "$(basename "$binary")" = "llama-server" ]; then
-        codesign --force "${TIMESTAMP[@]}" --preserve-metadata=entitlements --sign "$SIGN_ID" "$binary"
+        codesign --force --options runtime "${TIMESTAMP[@]}" --entitlements build/llama.entitlements --sign "$SIGN_ID" "$binary"
       else
         codesign --force --options runtime "${TIMESTAMP[@]}" --preserve-metadata=entitlements --sign "$SIGN_ID" "$binary"
       fi;;
