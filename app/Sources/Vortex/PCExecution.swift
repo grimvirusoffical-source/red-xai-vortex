@@ -187,8 +187,11 @@ enum PCAlwaysAllowGrant {
     static var url: URL { PCControl.baseDir.appendingPathComponent(".pc-always-allow") }
     static func allowed(killed: Bool, grantPresent: Bool) -> Bool { !killed && grantPresent }
     static func present(at url: URL = Self.url) -> Bool {
-        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else { return false }
-        return values.isRegularFile == true && values.isSymbolicLink != true
+        // URL resource values can cache a previously existing grant after unlink.
+        // Read the current inode directly, and never follow a grant symlink.
+        var info = stat()
+        guard Darwin.lstat(url.path, &info) == 0 else { return false }
+        return (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG)
     }
     static func set(_ enabled: Bool, at url: URL = Self.url) throws {
         if enabled {

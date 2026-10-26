@@ -20,6 +20,12 @@ final class RuntimeControlTests: XCTestCase {
         try PCAlwaysAllowGrant.set(true, at: grant); XCTAssertTrue(PCAlwaysAllowGrant.present(at: grant))
         try PCAlwaysAllowGrant.set(false, at: grant); XCTAssertFalse(PCAlwaysAllowGrant.present(at: grant))
         try PCAlwaysAllowGrant.set(false, at: grant)
+        let target = folder.appendingPathComponent("target")
+        try Data("fixture".utf8).write(to: target)
+        try FileManager.default.createSymbolicLink(at: grant, withDestinationURL: target)
+        XCTAssertFalse(PCAlwaysAllowGrant.present(at: grant), "Grant symlinks must never authorize control")
+        try PCAlwaysAllowGrant.set(false, at: grant)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: target.path), "Revocation removes only the symlink")
     }
     func testStopRevokesRunningAndQueuedTokensEvenAfterReset() throws {
         let state = PCExecutionState(), token = try state.issue()
@@ -86,6 +92,14 @@ final class RuntimeControlTests: XCTestCase {
         XCTAssertNil(MediaSpec.parseRequest("How do I generate an image?"))
         XCTAssertNil(MediaSpec.parseRequest("Write code to create an image"))
         XCTAssertNil(MediaSpec.parseRequest("Do not generate an image of a fox"))
+        XCTAssertNil(MediaSpec.parseRequest("Generate an image prompt for a golden fox"))
+        XCTAssertNil(MediaSpec.parseRequest("Create an image editor in JavaScript"))
+        XCTAssertNil(MediaSpec.parseRequest("Make a music player for my app"))
+        XCTAssertNil(MediaSpec.parseRequest("Create a video generation script in Python"))
+        XCTAssertEqual(MediaSpec.parseRequest("Generate an image of a music player on a desk")?.type, "image")
+        XCTAssertNil(MediaSpec.parseRequest("Create an image    editor in JavaScript"))
+        XCTAssertEqual(MediaSpec.parseRequest("Create an image of prompt cards on a table")?.type, "image")
+        XCTAssertEqual(MediaSpec.parseRequest("/image editor interface")?.type, "image")
     }
     func testComputerIntentDoesNotActOnQuestionsNegationOrMultiStepRequests() {
         XCTAssertNil(Intent.guess("How do I open Safari?"))

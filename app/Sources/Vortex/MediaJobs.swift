@@ -75,7 +75,7 @@ struct MediaSpec: Codable, Equatable {
     /// Parses "/image a fox --size 768x512 --quality high --style \"oil paint\" --format jpeg".
     static func parseRequest(_ text: String) -> MediaSpec? {
         if let command = parse(text) { return command }
-        let pattern = #"^(?:(?:please|can you|could you|would you)\s+)*(?:generate|create|make|draw|render|paint)\s+(?:me\s+)?(?:(?:a|an|some|short)\s+)*(image|picture|photo|illustration|artwork|video|clip|music|song|sound effect|sound|speech|voiceover)\s+(?:(?:of|showing|about|for|that says|saying)\s+)?(.+)$"#
+        let pattern = #"^(?:(?:please|can you|could you|would you)\s+)*(?:generate|create|make|draw|render|paint)\s+(?:me\s+)?(?:(?:a|an|some|short)\s+)*(image|picture|photo|illustration|artwork|video|clip|music|song|sound effect|sound|speech|voiceover)\s+(?!\s*(?:prompt|editor|player|(?:generation\s+)?(?:code|script))\b)(?:(?:of|showing|about|for|that says|saying)\s+)?(.+)$"#
         guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]),
               let match = re.firstMatch(in: text.trimmingCharacters(in: .whitespacesAndNewlines), range: NSRange(location: 0, length: (text.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).length)) else { return nil }
         let source = text.trimmingCharacters(in: .whitespacesAndNewlines) as NSString
