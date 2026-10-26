@@ -168,6 +168,16 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		return s.pluginMake(str(in, "description"))
 	case "plugin.upload":
 		return s.pluginUpload(str(in, "json"))
+	case "plugin.mine":
+		return s.pluginReq("GET", "?mine=1", nil, true)
+	case "plugin.update":
+		return s.pluginReq("PUT", "/"+str(in, "id"), in["patch"], true)
+	case "plugin.delete":
+		return s.pluginReq("DELETE", "/"+str(in, "id"), nil, true)
+	case "plugin.install":
+		return s.pluginInstall(str(in, "id"))
+	case "plugin.installed":
+		return s.pluginInstalled()
 	case "plugin.icon":
 		return s.pluginIcon(str(in, "prompt"))
 	case "plugin.store":
@@ -496,104 +506,8 @@ func (s *Server) integration(id string) map[string]any {
 	}
 }
 
-func (s *Server) pluginMake(desc string) map[string]any {
-	if desc == "" {
-		return map[string]any{"error": "describe the plugin"}
-	}
-	// Lightweight local stub; Mac app uses the live model. Desktop writes a scaffold.
-	id := "plugin-" + fmt.Sprintf("%d", time.Now().Unix()%100000)
-	doc := map[string]any{
-		"id": id, "name": "Generated Plugin", "version": "1.0.0",
-		"description": desc, "author": "you", "icon": "",
-		"tools": []map[string]any{{
-			"name": "run", "description": desc, "kind": "shell",
-			"command": "echo", "args": []string{"ok"},
-		}},
-	}
-	b, _ := json.MarshalIndent(doc, "", "  ")
-	return map[string]any{"json": string(b)}
-}
-
-func (s *Server) pluginUpload(raw string) map[string]any {
-	if strings.TrimSpace(raw) == "" {
-		return map[string]any{"ok": false, "message": "No plugin JSON to upload"}
-	}
-	storeURL := os.Getenv("VORTEX_PLUGIN_STORE")
-	if storeURL == "" {
-		storeURL = "https://ai.red-xai.com/plugins/v1/plugins"
-	}
-	req, _ := http.NewRequest("POST", storeURL, strings.NewReader(raw))
-	req.Header.Set("Content-Type", "application/json")
-	if tok := keyring.Get("redx-session"); tok != "" {
-		req.Header.Set("X-RedX-Session", tok)
-	}
-	cli := &http.Client{Timeout: 30 * time.Second}
-	res, err := cli.Do(req)
-	if err != nil {
-		return map[string]any{"ok": false, "message": err.Error()}
-	}
-	defer res.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<16))
-	if res.StatusCode == 401 {
-		return map[string]any{"ok": false, "message": "Sign in with RedX to upload plugins."}
-	}
-	if res.StatusCode >= 300 {
-		return map[string]any{"ok": false, "message": fmt.Sprintf("Upload failed HTTP %d", res.StatusCode)}
-	}
-	return map[string]any{"ok": true, "message": "Uploaded. " + string(b)}
-}
-
-func (s *Server) pluginStore() map[string]any {
-	storeURL := os.Getenv("VORTEX_PLUGIN_STORE")
-	if storeURL == "" {
-		storeURL = "https://ai.red-xai.com/plugins/v1/plugins"
-	}
-	res, err := http.Get(storeURL)
-	if err != nil {
-		return map[string]any{"plugins": []any{}, "error": err.Error()}
-	}
-	defer res.Body.Close()
-	var body map[string]any
-	json.NewDecoder(res.Body).Decode(&body)
-	return body
-}
-
 func str(m map[string]any, k string) string {
 	v, _ := m[k].(string)
 	return v
 }
 
-// pluginIcon asks the Vortex gateway for a square icon (OpenAI images API). The UI fits it to 256x256.
-func (s *Server) pluginIcon(prompt string) map[string]any {
-	if prompt == "" {
-		prompt = "plugin"
-	}
-	base := s.St.Settings.BaseURL
-	key := keyring.Get("vortex-api-key")
-	body, _ := json.Marshal(map[string]any{"model": "vortex-image", "prompt": "flat app icon, centered, dark background, red accent: " + prompt, "size": "256x256", "n": 1, "response_format": "b64_json"})
-	req, _ := http.NewRequest("POST", base+"/images/generations", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	if key != "" {
-		req.Header.Set("Authorization", "Bearer "+key)
-	}
-	res, err := (&http.Client{Timeout: 180 * time.Second}).Do(req)
-	if err != nil {
-		return map[string]any{"ok": false, "message": err.Error()}
-	}
-	defer res.Body.Close()
-	var out struct {
-		Data []struct {
-			B64 string `json:"b64_json"`
-			URL string `json:"url"`
-		} `json:"data"`
-	}
-	b, _ := io.ReadAll(io.LimitReader(res.Body, 16<<20))
-	json.Unmarshal(b, &out)
-	if len(out.Data) == 0 || (out.Data[0].B64 == "" && out.Data[0].URL == "") {
-		return map[string]any{"ok": false, "message": fmt.Sprintf("image generation failed (HTTP %d)", res.StatusCode)}
-	}
-	if out.Data[0].B64 != "" {
-		return map[string]any{"ok": true, "dataURL": "data:image/png;base64," + out.Data[0].B64}
-	}
-	return map[string]any{"ok": true, "dataURL": out.Data[0].URL}
-}

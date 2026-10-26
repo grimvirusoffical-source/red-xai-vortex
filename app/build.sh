@@ -20,6 +20,7 @@ W=~/Projects/redx-node/llama.cpp/build/bin/ggml-rpc-server
 if [ -x "$W" ]; then cp "$W" "$APP/Contents/Resources/ggml-rpc-server"
   codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP/Contents/Resources/ggml-rpc-server" 2>&1 | tail -1; fi
 # in-app Help: the docs/ guides
+cp redx-256.png "$APP/Contents/Resources/" 2>/dev/null || true
 mkdir -p "$APP/Contents/Resources/Help"; cp help/*.md "$APP/Contents/Resources/Help/" 2>/dev/null || cp ../docs/*.md "$APP/Contents/Resources/Help/" 2>/dev/null || true
 # server installer for one-click Servers > Install
 [ -f server/install.sh ] && cp server/install.sh "$APP/Contents/Resources/install.sh"

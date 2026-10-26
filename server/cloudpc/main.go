@@ -497,6 +497,35 @@ func main() {
 		}
 		gwp.ServeHTTP(w, r)
 	})
+	// Plugin store (127.0.0.1:8095). /plugins/ is the public API for the apps (RedX session via
+	// X-RedX-Session header). /vortex/store-api/ is the same API for the signed-in web "My plugins"
+	// page: it injects the web session's RedX token and requires X-Requested-With on writes (CSRF).
+	psURL, _ := url.Parse(env("CPC_PLUGINSTORE", "http://127.0.0.1:8095"))
+	psp := httputil.NewSingleHostReverseProxy(psURL)
+	m.Handle("/plugins/", http.StripPrefix("/plugins", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil && r.Method != "GET" {
+			http.Error(w, `{"error":"use https"}`, http.StatusUpgradeRequired)
+			return
+		}
+		r.Header.Del("Cookie")
+		psp.ServeHTTP(w, r)
+	})))
+	m.Handle("/vortex/store-api/", http.StripPrefix("/vortex/store-api", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, s := getSess(r)
+		if s == nil {
+			http.Error(w, `{"error":"You must sign in to Red-XAI first."}`, 401)
+			return
+		}
+		if r.Method != "GET" && r.Header.Get("X-Requested-With") != "vortex" {
+			http.Error(w, `{"error":"bad request"}`, 403)
+			return
+		}
+		r.Header.Del("Cookie")
+		mu.Lock()
+		r.Header.Set("X-RedX-Session", s.rxs)
+		mu.Unlock()
+		psp.ServeHTTP(w, r)
+	})))
 	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/vortex/", 302) })
 	h := sec(m)
 	go func() {

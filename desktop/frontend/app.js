@@ -107,30 +107,78 @@ function fitIcon(src){ return new Promise((ok,bad)=>{ const im=new Image(); im.c
     ok({url:c.toDataURL('image/png'),w:im.width,h:im.height}); }; im.onerror=bad; im.src=src; }); }
 async function setIcon(src,why){ const f=await fitIcon(src); iconURL=f.url; $('#iconPrev').src=f.url;
   $('#iconMsg').textContent=(f.w===ICON&&f.h===ICON)?why+': 256×256 ✓':why+`: ${f.w}×${f.h} → auto-fitted to 256×256`; }
-async function defaultIcon(){ return (await fitIcon('logo.png')).url; }
+async function defaultIcon(){ return (await fitIcon('redx-256.png')).url; }
 function withIcon(js,url){ try{ const d=JSON.parse(js); d.icon=url; return JSON.stringify(d,null,2);}catch(e){ return js; } }
-$('#iconFile').onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>setIcon(r.result,'Uploaded'); r.readAsDataURL(f); };
+function noIcon(js){ try{ const d=JSON.parse(js); delete d.icon; return JSON.stringify(d,null,2);}catch(e){ return js; } }
+function readFile(f){ return new Promise(ok=>{ const r=new FileReader(); r.onload=()=>ok(r.result); r.readAsDataURL(f); }); }
+$('#iconUp').onclick=()=>$('#iconFile').click();
+$('#iconFile').onchange=async e=>{ const f=e.target.files[0]; if(f) await setIcon(await readFile(f),'Uploaded'); e.target.value=''; };
+$('#iconSkip').onclick=async()=>{ iconURL=null; $('#iconPrev').src='redx-256.png'; $('#iconMsg').textContent='Using the default red X icon.'; };
 $('#aiIcon').onclick=async()=>{ $('#iconMsg').textContent='Generating icon…';
   const r=await bridge.call('plugin.icon',{prompt:$('#maker').value});
-  if(r.ok) await setIcon(r.dataURL,'AI icon'); else $('#iconMsg').textContent=r.message||'failed'; };
-$('#makePlugin').onclick=async()=>{
+  if(r.ok) await setIcon(r.dataURL,'AI icon'); else $('#iconMsg').textContent=(r.message||'failed')+' — upload one or skip to use the red X.'; };
+$('#makePlugin').onclick=async()=>{ $('#makeMsg').textContent='Generating…';
   const r=await bridge.call('plugin.make',{description:$('#maker').value});
-  $('#pluginOut').textContent = r.json ? withIcon(r.json, iconURL||await defaultIcon()) : (r.error||'');
-};
-$('#uploadPlugin').onclick=async()=>{
-  const js=withIcon($('#pluginOut').textContent, iconURL||await defaultIcon());
-  const r=await bridge.call('plugin.upload',{json:js});
-  $('#pluginOut').textContent = (r.message||'') + '\n' + js;
-};
-function iconSrc(i){ return (typeof i==='string' && /^(data:image|https:)/.test(i)) ? i : 'logo.png'; }
-$('#refreshStore').onclick=async()=>{
-  const r=await bridge.call('plugin.store',{}); const list=r.plugins||[];
-  $('#storeList').innerHTML=''; list.forEach(p=>{ const d=document.createElement('div'); d.className='card';
-    d.innerHTML='<img width="48" height="48" style="border-radius:10px;float:left;margin-right:8px"/><b></b><div style="color:var(--muted);font-size:12px"></div>';
-    d.querySelector('img').src=iconSrc(p.icon); d.querySelector('b').textContent=p.name||p.id||'Plugin';
-    d.querySelector('div').textContent=p.description||''; $('#storeList').appendChild(d); });
-  if(!list.length) $('#pluginOut').textContent = JSON.stringify(r,null,2);
-};
+  $('#makeMsg').textContent=r.json?'Done. Pick an icon, review the JSON, then upload.':(r.error||'');
+  if(r.json) $('#pluginOut').value=r.json; };
+// Inline RedX sign-in: resolves true when signed in, false on Cancel.
+function rxSignIn(){ return new Promise(done=>{ let flow=''; const m=$('#rxModal');
+  const reset=()=>{flow='';$('#rxCreds').style.display='';$('#rxCode').style.display='none';$('#rxGo').textContent='Sign in';$('#rxMsg').textContent='';$('#rxPass').value='';$('#rxOtp').value='';};
+  reset(); m.style.display='flex';
+  $('#rxCancel').onclick=()=>{ m.style.display='none'; reset(); done(false); };
+  $('#rxGo').onclick=async()=>{ $('#rxMsg').textContent='';
+    const r=flow?await bridge.call('redx.2fa',{flow,method:'totp',code:$('#rxOtp').value})
+               :await bridge.call('redx.login',{login:$('#rxUser').value,password:$('#rxPass').value});
+    if(!r.ok){ $('#rxMsg').textContent=r.error||'Sign-in failed.'; return; }
+    if(r.next==='2fa'){ flow=r.flow; $('#rxCreds').style.display='none'; $('#rxCode').style.display=''; $('#rxGo').textContent='Verify'; return; }
+    if(r.next==='2fa_setup'){ $('#rxMsg').textContent='Finish two-factor setup at red-xai.com, then sign in again.'; return; }
+    m.style.display='none'; reset(); done(true); }; }); }
+async function withSignIn(call,msgEl){ let r=await call(); if(r.needSignIn){ if(!await rxSignIn()){ msgEl.textContent='You must sign in to Red-XAI first to upload.'; msgEl.className='bad'; return null; } r=await call(); } return r; }
+$('#uploadPlugin').onclick=async()=>{ const el=$('#upMsg'); el.className='muted';
+  if(!$('#pluginOut').value.trim()){ el.textContent='Generate a plugin first.'; return; }
+  const js=withIcon($('#pluginOut').value, iconURL||await defaultIcon()); el.textContent='Uploading…';
+  const r=await withSignIn(()=>bridge.call('plugin.upload',{json:js}),el); if(!r) return;
+  if(r.ok){ el.className='ok'; el.textContent=`Published "${r.plugin.name}" as ${r.plugin.author}.`; loadMine(); loadStore(); }
+  else { el.className='bad'; el.textContent=r.message||'Upload failed.'; } };
+let STORE='';
+function iconSrc(p){ if(p.hasIcon&&p.icon&&STORE) return STORE+'/'+p.icon+'?v='+encodeURIComponent(p.updated||''); return 'redx-256.png'; }
+function pCard(p){ const d=document.createElement('div'); d.className='card';
+  d.innerHTML='<div style="display:flex;gap:8px;align-items:center"><img width="48" height="48" style="border-radius:10px"/><div><b></b><div class="muted by" style="font-size:12px"></div></div></div><div class="muted ds" style="font-size:12px;margin:6px 0"></div><div class="muted st" style="font-size:12px"></div><div class="row act" style="margin-top:6px"></div>';
+  const im=d.querySelector('img'); im.onerror=()=>{im.onerror=null;im.src='redx-256.png';}; im.src=iconSrc(p);
+  d.querySelector('b').textContent=p.name||p.id; d.querySelector('.by').textContent='by '+(p.author||p.uploader||'?')+' · v'+(p.version||'1.0.0');
+  d.querySelector('.ds').textContent=p.description||''; d.querySelector('.st').textContent=(p.installs||0)+' install'+(p.installs===1?'':'s');
+  return d; }
+let installed=new Set();
+async function loadStore(){ $('#storeMsg').textContent='Loading…';
+  const r=await bridge.call('plugin.store',{}); STORE=r.storeBase||STORE; const list=r.plugins||[];
+  installed=new Set(((await bridge.call('plugin.installed',{})).ids)||[]);
+  $('#storeList').innerHTML=''; list.forEach(p=>{ const d=pCard(p); const b=document.createElement('button');
+    b.textContent=installed.has(p.id)?'Reinstall':'Install';
+    b.onclick=async()=>{ b.disabled=true; const x=await bridge.call('plugin.install',{id:p.id}); b.disabled=false;
+      $('#storeMsg').textContent=x.message||''; if(x.ok) loadStore(); };
+    d.querySelector('.act').appendChild(b); $('#storeList').appendChild(d); });
+  $('#storeMsg').textContent=r.ok===false?(r.message||'Store unreachable'):(list.length?list.length+' plugins':'No plugins yet.'); }
+async function loadMine(){ const el=$('#myMsg'); el.className='muted'; el.textContent='Loading…';
+  const r=await withSignIn(()=>bridge.call('plugin.mine',{}),el); if(!r) return;
+  if(r.ok===false){ el.textContent=r.message||''; return; } STORE=r.storeBase||STORE;
+  $('#myWho').textContent=r.username?('· '+r.username):''; const list=r.plugins||[];
+  $('#myList').innerHTML=''; list.forEach(p=>{ const d=pCard(p); const act=d.querySelector('.act');
+    const e=document.createElement('button'); e.textContent='Edit'; const x=document.createElement('button'); x.textContent='Unpublish'; act.append(e,x);
+    x.onclick=async()=>{ if(!confirm(`Unpublish "${p.name||p.id}" and delete it from the store?`)) return;
+      const r=await withSignIn(()=>bridge.call('plugin.delete',{id:p.id}),el); if(r){ el.textContent=r.ok?'Unpublished '+p.id:(r.message||''); loadMine(); loadStore(); } };
+    e.onclick=()=>{ act.innerHTML=''; const f=document.createElement('div');
+      f.innerHTML='<input class="n" placeholder="Name"/><input class="v" placeholder="Version" style="margin-top:4px"/><textarea class="ds" rows="3" style="margin-top:4px;width:100%"></textarea><label class="muted" style="font-size:12px">New icon <input type="file" class="ic" accept="image/*"/></label><div class="row"><button class="primary s">Save</button><button class="ghost c">Cancel</button></div>';
+      f.querySelector('.n').value=p.name||''; f.querySelector('.v').value=p.version||''; f.querySelector('.ds').value=p.description||'';
+      f.querySelector('.c').onclick=loadMine;
+      f.querySelector('.s').onclick=async()=>{ const patch={name:f.querySelector('.n').value,version:f.querySelector('.v').value,description:f.querySelector('.ds').value};
+        const ic=f.querySelector('.ic').files[0]; if(ic) patch.icon=(await fitIcon(await readFile(ic))).url;
+        const r=await withSignIn(()=>bridge.call('plugin.update',{id:p.id,patch}),el); if(r){ el.textContent=r.ok?'Saved '+p.id:(r.message||''); if(r.ok){loadMine();loadStore();} } };
+      act.appendChild(f); };
+    $('#myList').appendChild(d); });
+  const tot=list.reduce((a,p)=>a+(p.installs||0),0);
+  el.textContent=list.length?`${list.length} published · ${tot} total installs`:'You have not published any plugins yet.'; }
+$('#refreshStore').onclick=loadStore; $('#refreshMine').onclick=loadMine;
+document.querySelector('[data-tab="plugins"]').addEventListener('click',()=>{ loadStore(); loadMine(); });
 $('#saveSettings').onclick=async()=>{
   const r=await bridge.call('settings.save',{baseURL:$('#baseURL').value, apiKey:$('#apiKey').value, autoUpdate:$('#autoUpdate').checked});
   $('#apiKey').value=''; $('#setMsg').textContent=r.message||'Saved'; $('#setMsg').className=r.ok?'ok':'bad'; refresh();
@@ -212,7 +260,7 @@ async function nRefresh(){
     const b=document.createElement('div'); b.className='muted'; b.textContent=n.body||'';
     const w=document.createElement('small'); w.textContent=new Date(n.ts*1000).toLocaleString();
     d.append(t,b,w);
-    if(!n.read){ const k=document.createElement('button'); k.textContent='Mark read'; k.onclick=async()=>{await bridge.call('notif.read',{ids:[n.id]});nRefresh();}; d.append(' ',k); }
+    { const k=document.createElement('button'); k.textContent='Dismiss'; k.onclick=async()=>{await bridge.call('notif.read',{ids:[n.id]});nRefresh();}; d.append(' ',k); }
     box.append(d);
     if(!n.read && !N.seen.has(n.id)){ N.seen.add(n.id);
       if(N.primed && 'Notification' in window && Notification.permission==='granted') new Notification(n.title,{body:n.body||''}); }

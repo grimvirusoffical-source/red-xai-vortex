@@ -186,27 +186,42 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
   </section>
   <section class="panel" id="tab-plugins" style="grid-column:1/-1">
     <div class="card">
-      <h3>Plugins & Skill Maker</h3>
-      <textarea id="maker" rows="3" placeholder="Describe a plugin or skill…"></textarea>
-      <div class="row" style="margin-top:8px">
-        <button class="primary" id="makePlugin">Generate plugin</button>
-        <button class="ghost" id="aiIcon">AI icon</button>
-        <button class="ghost" id="uploadPlugin">Upload to store (RedX sign-in)</button>
-        <button class="ghost" id="refreshStore">Refresh store</button>
-      </div>
+      <h3>Make a plugin</h3>
+      <textarea id="maker" rows="3" placeholder="Describe a plugin or skill… e.g. 'Summarize any web page into 5 bullets'"></textarea>
+      <div class="row" style="margin-top:8px"><button class="primary" id="makePlugin">1 · Generate plugin</button><span id="makeMsg" class="muted"></span></div>
       <div id="iconBox" style="display:flex;gap:12px;align-items:center;margin:10px 0">
-        <img id="iconPrev" src="logo.png" width="64" height="64" alt="Plugin icon" style="border-radius:12px"/>
-        <div><label>Plugin icon <input type="file" id="iconFile" accept="image/png,image/jpeg,image/webp"/></label>
-        <div style="color:var(--muted);font-size:12px">Required: 256 × 256 px square PNG. Other sizes are auto-cropped to square and resized. No upload = Red-XAI logo.</div>
+        <img id="iconPrev" src="redx-256.png" width="64" height="64" alt="Plugin icon" style="border-radius:12px"/>
+        <div><div><b>2 · Icon</b> <button class="ghost" id="iconUp">Upload image</button> <button class="ghost" id="aiIcon">Generate with AI</button> <button class="ghost" id="iconSkip">Skip (red X)</button>
+        <input type="file" id="iconFile" accept="image/png,image/jpeg,image/webp" style="display:none"/></div>
+        <div class="muted" style="font-size:12px">Any image is auto-fitted to a 256 × 256 PNG. Skipping uses the Red-XAI red X.</div>
         <div id="iconMsg" style="font-size:12px"></div></div>
       </div>
-      <div id="storeList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px"></div>
-      <pre id="pluginOut" style="color:var(--muted);white-space:pre-wrap"></pre>
+      <textarea id="pluginOut" rows="8" spellcheck="false" style="width:100%;font-family:monospace;font-size:12px" placeholder="Generated plugin JSON (editable)"></textarea>
+      <div class="row" style="margin-top:8px"><button class="primary" id="uploadPlugin">3 · Upload to store</button><span id="upMsg"></span></div>
+    </div>
+    <div class="card">
+      <h3>My plugins <small id="myWho" class="muted"></small></h3>
+      <div class="row"><button class="ghost" id="refreshMine">Refresh</button><span id="myMsg" class="muted"></span></div>
+      <div id="myList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;margin-top:8px"></div>
+    </div>
+    <div class="card">
+      <h3>Plugin store</h3>
+      <div class="row"><button class="ghost" id="refreshStore">Refresh store</button><span id="storeMsg" class="muted"></span></div>
+      <div id="storeList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-top:8px"></div>
+    </div>
+    <div id="rxModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:60;align-items:center;justify-content:center">
+      <div class="card" style="width:340px">
+        <h3>Sign in to Red-XAI</h3><p class="muted" style="font-size:12px">Plugins are published under your RedX username.</p>
+        <div id="rxCreds"><input id="rxUser" placeholder="Username or email"/><input id="rxPass" type="password" placeholder="Password" style="margin-top:8px"/></div>
+        <div id="rxCode" style="display:none"><input id="rxOtp" placeholder="6-digit code"/></div>
+        <div class="row" style="margin-top:10px"><button class="ghost" id="rxCancel">Cancel</button><button class="primary" id="rxGo">Sign in</button></div>
+        <p id="rxMsg" class="bad"></p>
+      </div>
     </div>
   </section>
   <section class="panel" id="tab-notifications" style="grid-column:1/-1">
     <h2>Notifications <small id="nCount"></small></h2>
-    <p><button id="nRefresh">Refresh</button> <button id="nAll">Mark all read</button></p>
+    <p><button id="nRefresh">Refresh</button> <button id="nAll">Clear all</button></p>
     <div id="nList"><p class="muted">No notifications yet. Cloud PC requests, agent replies, finished media and merges, and updates show up here.</p></div>
   </section>
   <section class="panel" id="tab-settings" style="grid-column:1/-1">

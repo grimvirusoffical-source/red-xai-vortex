@@ -187,29 +187,75 @@ enum PluginCatalog {
         return m
     }
 
-    /// Publish a plugin to the Vultr Plugin Store (requires RedX session).
-    func uploadToStore(_ p: PluginManifest) async {
-        let base = UserDefaults.standard.string(forKey: "pluginStoreURL") ?? "https://ai.red-xai.com/plugins/v1/plugins"
-        guard let url = URL(string: base) else { message = "Bad plugin store URL"; return }
-        var req = URLRequest(url: url); req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let tok = Keychain.get(account: "redx-session"), !tok.isEmpty {
-            req.setValue(tok, forHTTPHeaderField: "X-RedX-Session")
-        } else if let tok = UserDefaults.standard.string(forKey: "redxSession"), !tok.isEmpty {
-            req.setValue(tok, forHTTPHeaderField: "X-RedX-Session")
+    // MARK: Plugin Store (Vultr) — upload / My plugins / install
+    @Published var storeList: [StorePlugin] = []
+    @Published var myList: [StorePlugin] = []
+    @Published var myUser = ""
+    @Published var needSignIn = false
+    private var pending: (() async -> Void)?
+
+    /// Runs a store call; on NeedSignIn shows the inline RedX sheet and retries after sign-in.
+    func gated(_ f: @escaping () async throws -> Void) async {
+        do { try await f() }
+        catch is StoreNet.NeedSignIn { pending = { [weak self] in await self?.gated(f) }; needSignIn = true }
+        catch { message = "Store: \(error.localizedDescription)" }
+    }
+    func signInFinished(_ ok: Bool) {
+        needSignIn = false
+        if ok, let p = pending { pending = nil; Task { await p() } } else { pending = nil; message = StoreNet.signInMsg }
+    }
+    func uploadToStore(_ p: PluginManifest, iconDataURL: String?) async {
+        await gated { [self] in
+            var d = (try JSONSerialization.jsonObject(with: JSONEncoder().encode(p))) as? [String: Any] ?? [:]
+            d.removeValue(forKey: "author")   // the store sets author = your RedX username
+            d["icon"] = iconDataURL ?? StoreNet.fit256(StoreNet.defaultIcon())?.0
+            let r = try await StoreNet.req("POST", "", body: d)
+            let pl = StorePlugin((r["plugin"] as? [String: Any]) ?? [:])
+            message = "Published \(pl.name) as \(pl.author)."
+            await refreshStore(); await refreshMine()
         }
-        let enc = JSONEncoder(); enc.outputFormatting = [.sortedKeys]
+    }
+    func refreshStore() async {
+        do { let r = try await StoreNet.req("GET", "", auth: false); storeList = ((r["plugins"] as? [[String: Any]]) ?? []).map(StorePlugin.init) }
+        catch { message = "Store unreachable: \(error.localizedDescription)" }
+    }
+    func refreshMine() async {
+        await gated { [self] in
+            let r = try await StoreNet.req("GET", "?mine=1")
+            myUser = r["username"] as? String ?? ""; myList = ((r["plugins"] as? [[String: Any]]) ?? []).map(StorePlugin.init)
+        }
+    }
+    func editStore(_ id: String, _ patch: [String: Any]) async {
+        await gated { [self] in _ = try await StoreNet.req("PUT", "/\(id)", body: patch); message = "Saved \(id)."; await refreshMine(); await refreshStore() }
+    }
+    func unpublish(_ id: String) async {
+        await gated { [self] in _ = try await StoreNet.req("DELETE", "/\(id)"); message = "Unpublished \(id)."; await refreshMine(); await refreshStore() }
+    }
+    func installFromStore(_ id: String) async {
         do {
-            req.httpBody = try enc.encode(p)
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-            if code == 401 { message = "Sign in with RedX to upload plugins."; return }
-            guard (200..<300).contains(code) else {
-                message = "Upload failed (HTTP \(code))."; return
-            }
-            _ = data
-            message = "Uploaded \(p.name) to the Plugin Store."
-        } catch { message = "Upload failed: \(error.localizedDescription)" }
+            let r = try await StoreNet.req("GET", "/\(id)", auth: false)
+            var d = r; d.removeValue(forKey: "icon"); d["icon"] = "puzzlepiece"
+            if d["author"] == nil { d["author"] = d["uploader"] ?? "Red-XAI" }
+            if d["version"] == nil { d["version"] = "1.0.0" }
+            for k in ["hasIcon", "installs", "published", "updated", "uploader"] { d.removeValue(forKey: k) }
+            let m = try JSONDecoder().decode(PluginManifest.self, from: JSONSerialization.data(withJSONObject: d))
+            try install(m)
+            _ = try? await StoreNet.req("POST", "/\(id)/install", auth: false)
+            message = "Installed \(m.name)."; await refreshStore()
+        } catch { message = "Install failed: \(error.localizedDescription)" }
+    }
+    func genIcon(_ prompt: String) async throws -> NSImage {
+        let srv = ServerStore.shared.active
+        let base = srv?.chatURL ?? (UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL)
+        let key = Keychain.get() ?? srv.map { ServerStore.shared.key(for: $0) } ?? ""
+        guard let u = URL(string: base + "/images/generations") else { throw err("Bad server URL") }
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = 180
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type"); if !key.isEmpty { r.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
+        r.httpBody = try JSONSerialization.data(withJSONObject: ["model": "vortex-image", "prompt": "flat app icon, centered, dark background, red accent: " + prompt, "size": "256x256", "n": 1, "response_format": "b64_json"])
+        let (d, _) = try await URLSession.shared.data(for: r)
+        let j = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any]
+        guard let b = ((j?["data"] as? [[String: Any]])?.first?["b64_json"] as? String), let data = Data(base64Encoded: b), let img = NSImage(data: data) else { throw err("Image generation failed") }
+        return img
     }
 
 }
@@ -376,6 +422,14 @@ struct PluginsView: View {
     @Local var makerText = ""
     @Local var making = false
     @Local var draft: PluginManifest?
+    @Local var iconImg: NSImage?
+    @Local var iconData: String?
+    @Local var iconNote = ""
+    @Local var editing: String?
+    @Local var eName = ""
+    @Local var eVer = ""
+    @Local var eDesc = ""
+    @Local var eIcon: String?
     @AppStorage("chatTools") var chatTools = true
     var body: some View {
         ScrollView {
@@ -422,9 +476,20 @@ struct PluginsView: View {
                             let enc: String = { let e = JSONEncoder(); e.outputFormatting = [.prettyPrinted, .sortedKeys]; return (try? e.encode(d)).flatMap { String(data: $0, encoding: .utf8) } ?? "" }()
                             ScrollView { Text(enc).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(height: 220)
                                 .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary))
+                            HStack(spacing: 10) {
+                                Image(nsImage: iconImg ?? StoreNet.defaultIcon()).resizable().frame(width: 48, height: 48).clipShape(RoundedRectangle(cornerRadius: 10))
+                                Text("Icon:").bold()
+                                Button("Upload image…") {
+                                    let p = NSOpenPanel(); p.allowedContentTypes = [.png, .jpeg, .image]
+                                    p.begin { if $0 == .OK, let u = p.url, let i = NSImage(contentsOf: u), let f = StoreNet.fit256(i) { iconData = f.0; iconImg = NSImage(data: Data(base64Encoded: String(f.0.dropFirst(22))) ?? Data()); iconNote = f.1 } }
+                                }
+                                Button("Generate with AI") { iconNote = "Generating…"; Task { do { let i = try await ps.genIcon(d.description); if let f = StoreNet.fit256(i) { iconData = f.0; iconImg = i; iconNote = "AI icon: " + f.1 } } catch { iconNote = "\(error.localizedDescription) — upload one or skip to use the red X." } } }
+                                Button("Skip (red X)") { iconData = nil; iconImg = nil; iconNote = "Using the default red X." }
+                                Text(iconNote).font(.caption).foregroundStyle(.secondary)
+                            }
                             HStack {
                                 Button("Install") { do { try ps.install(d); draft = nil } catch { ps.message = "Install failed: \(error.localizedDescription)" } }.buttonStyle(.borderedProminent)
-                                Button("Upload to store") { Task { await ps.uploadToStore(d) } }
+                                Button("Upload to store") { Task { await ps.uploadToStore(d, iconDataURL: iconData) } }
                                 Button("Test first tool") {
                                     Task { do { let t = d.tools[0]; let r = try await PluginRunner.run(t, [:]); ps.message = "Test: \(r.prefix(200))" } catch { ps.message = "Test failed: \(error.localizedDescription)" } }
                                 }
@@ -433,7 +498,75 @@ struct PluginsView: View {
                         }
                     }.padding(6)
                 }
+                GroupBox("My plugins" + (ps.myUser.isEmpty ? "" : " · \(ps.myUser)")) {
+                    VStack(alignment: .leading) {
+                        HStack { Button("Refresh") { Task { await ps.refreshMine() } }
+                            Text(ps.myList.isEmpty ? "You have not published any plugins yet." : "\(ps.myList.count) published · \(ps.myList.reduce(0) { $0 + $1.installs }) total installs").font(.caption).foregroundStyle(.secondary) }
+                        ForEach(ps.myList) { p in
+                            HStack(alignment: .top) {
+                                StoreIcon(p: p)
+                                if editing == p.id {
+                                    VStack(alignment: .leading) {
+                                        TextField("Name", text: $eName); TextField("Version", text: $eVer); TextField("Description", text: $eDesc, axis: .vertical).lineLimit(2...4)
+                                        HStack {
+                                            Button("New icon…") { let o = NSOpenPanel(); o.allowedContentTypes = [.image]; o.begin { if $0 == .OK, let u = o.url, let i = NSImage(contentsOf: u) { eIcon = StoreNet.fit256(i)?.0 } } }
+                                            if eIcon != nil { Text("icon ready (256×256)").font(.caption) }
+                                            Button("Save") { var patch: [String: Any] = ["name": eName, "version": eVer, "description": eDesc]; if let i = eIcon { patch["icon"] = i }
+                                                editing = nil; Task { await ps.editStore(p.id, patch) } }.buttonStyle(.borderedProminent)
+                                            Button("Cancel") { editing = nil }
+                                        }
+                                    }
+                                } else {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(p.name).bold() + Text("  v\(p.version) · by \(p.author)").font(.caption).foregroundColor(.secondary)
+                                        Text(p.description).font(.caption).foregroundStyle(.secondary)
+                                        Text("\(p.installs) install\(p.installs == 1 ? "" : "s")").font(.caption2)
+                                    }
+                                    Spacer()
+                                    Button("Edit") { editing = p.id; eName = p.name; eVer = p.version; eDesc = p.description; eIcon = nil }
+                                    Button("Unpublish", role: .destructive) { Task { await ps.unpublish(p.id) } }
+                                }
+                            }
+                            Divider()
+                        }
+                    }.padding(6)
+                }
+                GroupBox("Plugin Store") {
+                    VStack(alignment: .leading) {
+                        Button("Refresh store") { Task { await ps.refreshStore() } }
+                        if ps.storeList.isEmpty { Text("No plugins in the store yet.").foregroundStyle(.secondary) }
+                        ForEach(ps.storeList) { p in
+                            HStack(alignment: .top) {
+                                StoreIcon(p: p)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(p.name).bold() + Text("  v\(p.version) · by \(p.author)").font(.caption).foregroundColor(.secondary)
+                                    Text(p.description).font(.caption).foregroundStyle(.secondary)
+                                    Text("\(p.installs) install\(p.installs == 1 ? "" : "s")").font(.caption2)
+                                }
+                                Spacer()
+                                Button(ps.installed.contains { $0.id == p.id } ? "Reinstall" : "Install") { Task { await ps.installFromStore(p.id) } }
+                            }
+                            Divider()
+                        }
+                    }.padding(6)
+                }
             }.padding(20)
         }
+        .task { await ps.refreshStore(); if !(Keychain.get(account: "redx-session") ?? "").isEmpty { await ps.refreshMine() } }
+        .sheet(isPresented: Binding(get: { ps.needSignIn }, set: { if !$0 && ps.needSignIn { ps.signInFinished(false) } })) {
+            RedXSignInSheet { ok in ps.signInFinished(ok) }
+        }
+    }
+}
+
+struct StoreIcon: View {
+    let p: StorePlugin
+    @Local var img: NSImage?
+    var body: some View {
+        Image(nsImage: img ?? StoreNet.defaultIcon()).resizable().frame(width: 40, height: 40).clipShape(RoundedRectangle(cornerRadius: 8))
+            .task(id: p.updated) {
+                guard let u = StoreNet.iconURL(p), let r = try? await VultrTLS.session.data(from: u), let i = NSImage(data: r.0) else { return }
+                img = i
+            }
     }
 }
