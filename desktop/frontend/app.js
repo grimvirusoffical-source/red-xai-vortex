@@ -120,6 +120,7 @@ $('#send').onclick=async()=>{
   const r=await bridge.call('chat.send',{id:state.active, text, agent:$('#agentPick').value, model:$('#modelPick').value, modelExplicit:state.modelExplicit});
   if(r.replies&&r.replies.length){ a.remove(); r.replies.forEach(x=>addMsg('assistant',x.content,x.name)); }
   else { a.textContent=''; renderMessageContent(a,r.reply || r.error || '(no reply)'); }
+  await window.VortexWorkspace?.afterTurn(r).catch(e=>{ const el=$('#wsTurnNotice');if(el)el.textContent='Reply received. Workspace status could not be refreshed: '+e.message; });
   log.scrollTop=log.scrollHeight; refresh();
   }catch(e){addMsg('assistant','The message could not be completed: '+e.message);}
   finally{$('#send').disabled=false;$('#send').textContent='Send ↗';window.VortexWorkspace?.sync();}

@@ -107,6 +107,7 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
       <span class="pill" id="conn">offline</span>
     </div>
     <div id="wsChatContext" class="context-strip"></div>
+    <div id="wsTurnNotice" role="status" aria-live="polite"></div>
     <div id="chatEmpty" class="chat-empty"><div class="empty-orbit" aria-hidden="true">✳</div><p class="eyebrow">A PLACE FOR YOUR NEXT IDEA</p><h2>What shall we make possible?</h2><p>Think it through. Build something. Create a whole new world.<br/>Your models, tools, and conversations are all here.</p><div class="starter-grid"><button data-starter="Help me plan a project. Ask about the goal and suggest a practical first step."><span>↗</span><b>Start a project</b><small>Bring an idea into focus</small></button><button data-starter="Help me debug some code. Ask me for the relevant code, expected behavior, and error output."><span>⌘</span><b>Build &amp; debug</b><small>Work through code together</small></button><button data-starter="Help me create an immersive roleplay world with characters, lore, and a compelling opening scene."><span>✧</span><b>Imagine a world</b><small>Make room for a story</small></button></div></div>
     <div id="chatlog"></div>
     <div class="row chat-composer" style="margin-top:8px">
@@ -285,5 +286,6 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
 </footer>
 <script src="app.js"></script>
 <script src="workspace.js"></script>
+<script src="workspace-tools.js"></script>
 </body>
 </html>
