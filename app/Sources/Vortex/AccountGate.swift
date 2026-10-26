@@ -64,7 +64,7 @@ import Foundation
     func finish(_ tok: String) async {
         guard !tok.isEmpty else { msg = "Sign-in failed."; return }
         Keychain.set(tok, account: "redx-session"); await check()
-        if !signedIn { msg = "Sign-in could not be verified." }
+        if !signedIn { msg = "Sign-in could not be verified." } else { await MainActor.run { PhoneHost.sync() } }
     }
     func signOut() async {
         if let t = Keychain.get(account: "redx-session"), !t.isEmpty { _ = await call("logout", session: t, body: [:]) }

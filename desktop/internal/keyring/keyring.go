@@ -35,8 +35,9 @@ func Set(account, value string) error {
 }
 
 func Get(account string) string {
-	if account == "vortex-api-key" { // host app (macOS) hands the key over via env
-		if v := os.Getenv("VORTEX_API_KEY"); v != "" {
+	// The macOS host app keeps secrets in the Keychain and hands them to its bundled helpers via env.
+	if e := map[string]string{"vortex-api-key": "VORTEX_API_KEY", "redx-session": "VORTEX_REDX_SESSION"}[account]; e != "" {
+		if v := os.Getenv(e); v != "" {
 			return v
 		}
 	}

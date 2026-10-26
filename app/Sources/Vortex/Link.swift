@@ -256,6 +256,8 @@ struct LinkSettingsBox: View {
         let p = Process(); p.executableURL = bin; p.arguments = ["-phone", "-no-update"]
         var env = ProcessInfo.processInfo.environment
         env["VORTEX_API_KEY"] = key
+        // RedX sign-in lives in the macOS Keychain; the phone server needs it too or the phone page asks to sign in again.
+        if let t = Keychain.get(account: "redx-session"), !t.isEmpty { env["VORTEX_REDX_SESSION"] = t }
         env["VORTEX_SECURE"] = RedXLink.secure ? "1" : "0"
         env["VORTEX_FRONTEND"] = res.appendingPathComponent("frontend").path
         env["VORTEX_LINK_LISTEN"] = "127.0.0.1:18193"
