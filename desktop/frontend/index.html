@@ -39,6 +39,7 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
 @media (max-width:760px){header{flex-wrap:wrap;gap:6px;padding:8px}header .tabs{margin-left:0;overflow-x:auto;width:100%;flex-wrap:nowrap}header .tabs button{white-space:nowrap}
 main{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #1e2733;max-height:30vh}.msg{max-width:95%}#chatlog{height:calc(100vh - 340px)}
 input,select,textarea{font-size:16px}.panel{padding:10px}}
+.media-card{border:1px solid #333;border-radius:10px;padding:8px;margin:4px 0;max-width:560px}
 </style>
 </head>
 <body>
@@ -99,7 +100,7 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
     </div>
     <div id="chatlog"></div>
     <div class="row" style="margin-top:8px">
-      <textarea id="prompt" rows="2" placeholder="Message Vortex…"></textarea>
+      <textarea id="prompt" rows="2" placeholder="Message Vortex… (or /image, /speech, /music, /sfx, /video to generate media)"></textarea>
       <button class="primary" id="send">Send</button>
     </div>
     <div class="row composer" id="composer" style="margin-top:6px;gap:12px;flex-wrap:wrap;font-size:13px">
@@ -180,9 +181,19 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
   </section>
   <section class="panel" id="tab-media" style="grid-column:1/-1">
     <div class="card">
-      <h3>Media jobs</h3>
-      <div class="row"><select id="mType"><option value="image">Image</option><option value="speech">Speech</option><option value="music">Music</option><option value="sfx">Sound effect</option><option value="video">Short video</option></select>
-      <input id="mPrompt" style="flex:1" placeholder="Prompt (or text to speak)…"><button class="primary" id="mGo">Queue</button></div>
+      <h3>Media</h3>
+      <div class="row"><select id="mType"><option value="image">Image</option><option value="speech">Speech (TTS)</option><option value="music">Music</option><option value="sfx">Sound effect</option><option value="video">Short video</option></select>
+      <input id="mPrompt" style="flex:1" placeholder="Prompt (or text to speak)…"><button class="primary" id="mGo">Generate</button></div>
+      <div class="row mspec" style="margin-top:6px;flex-wrap:wrap;gap:6px">
+        <input id="mStyle" placeholder="Style (e.g. watercolor, photorealistic, anime)" style="flex:1;min-width:180px">
+        <select id="mQuality" title="Quality"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="high">High</option></select>
+        <span data-for="image"><select id="mSize" title="Pixel size"><option>512x512</option><option>768x768</option><option>1024x1024</option><option>768x512</option><option>512x768</option><option>1024x576</option><option>576x1024</option><option>256x256</option></select>
+          <select id="mFormat" title="Format"><option value="png">PNG</option><option value="jpeg">JPEG</option></select></span>
+        <span data-for="music sfx"><input id="mDur" type="number" min="1" max="30" step="1" value="8" style="width:70px" title="Duration (s): music 1–30, sound effect 1–10"> s</span>
+        <span data-for="speech"><input id="mSpeed" type="number" min="0.5" max="2" step="0.1" value="1" style="width:70px" title="Speed 0.5–2"> ×</span>
+        <span data-for="video"><input id="mFrames" type="number" min="8" max="24" step="1" value="16" style="width:70px" title="Frames 8–24 at 8 fps, 256×256 MP4"> frames</span>
+      </div>
+      <p class="muted" style="margin:4px 0 0">Formats: images PNG or JPEG (256–1024 px per side); audio WAV; video MP4 256×256 @ 8 fps. In any chat you can also type <code>/image a red fox --size 768x512 --quality high --style watercolor --format jpeg</code> (also <code>/speech</code>, <code>/music --duration 12</code>, <code>/sfx</code>, <code>/video --frames 24</code>).</p>
       <div id="mMsg" class="muted" style="margin-top:6px"></div>
       <div id="mJobs" style="margin-top:10px"></div>
     </div>

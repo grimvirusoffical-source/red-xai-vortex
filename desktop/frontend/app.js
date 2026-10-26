@@ -67,7 +67,10 @@ $('#partyGo').onclick=async()=>{
 };
 function addMsg(role,content,name){ const d=document.createElement('div'); d.className='msg '+role;
   if(name){ const w=document.createElement('span'); w.className='who'; w.textContent=name; d.appendChild(w); }
-  d.appendChild(document.createTextNode(content)); $('#chatlog').appendChild(d); return d; }
+  const mm=/^\[\[media:([A-Za-z0-9_-]+)\]\]$/.exec(String(content||'').trim());
+  if(mm){ const box=document.createElement('div'); box.textContent='Generating…'; d.appendChild(box); fillMedia(box, mm[1], state.active); }
+  else d.appendChild(document.createTextNode(content));
+  $('#chatlog').appendChild(d); return d; }
 async function loadChat(){
   loadComposer();
   const c = await bridge.call('chat.get',{id:state.active});
@@ -82,6 +85,10 @@ $('#send').onclick=async()=>{
   const text=$('#prompt').value.trim(); if(!text) return;
   $('#prompt').value='';
   if(!state.active){ const c=await bridge.call('chat.new',{}); state.active=c.id; }
+  const ms=parseMediaCmd(text);
+  if(ms){ ms.chatID=state.active; const r=await bridge.call('media.submit',ms);
+    if(!r.ok){ addMsg('user',text); addMsg('assistant','Media: '+(r.message||'failed')); return; }
+    await loadChat(); refresh(); return; }
   const log=$('#chatlog');
   const u=document.createElement('div'); u.className='msg user'; u.textContent=text; log.appendChild(u);
   const a=document.createElement('div'); a.className='msg assistant'; a.textContent=state.kind==='party'?'Agents are replying in turn…':'…'; log.appendChild(a);
@@ -189,31 +196,93 @@ $('#saveSettings').onclick=async()=>{
 $('#probe').onclick=async()=>{ const r=await bridge.call('settings.probe',{}); $('#setMsg').textContent=r.message||''; $('#setMsg').className=r.ok?'ok':'bad'; };
 refresh(); setInterval(refresh, 15000);
 
-// Media job queue with live progress
-const mOut={};
+// ---- Media: exact-spec generation, in-chat generation, viewer (Download / Regenerate / Redesign)
+const mDone={};
+function fmtBytes(n){ return n>1048576?(n/1048576).toFixed(1)+' MB':(n/1024).toFixed(0)+' KB'; }
+function mInfo(d){ const i=d.info||{}, sp=d.spec||{}, p=[];
+  if(i.width) p.push(`${i.width}×${i.height}px`);
+  p.push(i.format||(sp.format||'').toUpperCase());
+  if(sp.type==='image') p.push(`${sp.quality} quality (${i.steps||'?'} steps${i.jpegQuality?`, JPEG q${i.jpegQuality}`:''})`); else if(sp.quality) p.push(sp.quality+' quality');
+  if(i.duration) p.push((+i.duration).toFixed(1)+'s');
+  if(i.sampleRate) p.push(`${i.sampleRate} Hz ${i.bitDepth}-bit ${i.channels>1?'stereo':'mono'}`);
+  if(i.fps) p.push(`${i.frames} frames @ ${i.fps} fps`);
+  if(i.style||sp.style) p.push('style: '+(i.style||sp.style));
+  if(i.bytes) p.push(fmtBytes(i.bytes));
+  return p.filter(Boolean).join(' · '); }
+function mPlayer(d){ const x=d.result; if(!x||!x.b64) return ''; const u=`data:${x.mime};base64,${x.b64}`;
+  if(x.mime.startsWith('image')) return `<img src="${u}" style="max-width:100%;max-height:420px;border-radius:8px;display:block">`;
+  if(x.mime.startsWith('audio')) return `<audio controls src="${u}" style="width:100%"></audio>`;
+  if(x.mime.startsWith('video')) return `<video controls loop autoplay muted playsinline src="${u}" style="max-width:100%;border-radius:8px"></video>`; return ''; }
+function mCard(d, chatID){
+  const sp=d.spec||{}, id=esc(d.id);
+  if(d.status!=='done'){
+    const pct=d.progress||0, pos=d.position?` · #${d.position} in queue`:'';
+    if(d.status==='failed'||d.status==='error') return `<div class="media-card"><b>${esc(sp.type||d.type||'media')}</b> <span class="bad">failed ${esc(d.error||'')}</span></div>`;
+    return `<div class="media-card"><b>${esc(sp.type||d.type||'media')}</b> <span class="muted">${esc(d.status||'queued')}${pos}</span> <span class="muted">${esc(sp.prompt||'')}</span>
+      <div style="background:#222;height:6px;border-radius:3px;margin-top:4px"><div style="width:${pct}%;height:6px;background:#e0263a;border-radius:3px"></div></div></div>`; }
+  const x=d.result||{}; const href=x.b64?`data:${x.mime};base64,${x.b64}`:'#';
+  const isImg=sp.type==='image';
+  return `<div class="media-card" data-media="${id}" data-chat="${esc(chatID||'')}">${mPlayer(d)}
+    <div class="muted" style="margin-top:6px;font-size:12px"><b>${esc(sp.type)}</b> · ${esc(mInfo(d))}</div>
+    <div class="muted" style="font-size:12px">“${esc(sp.prompt||'')}”</div>
+    <div class="row" style="margin-top:6px;gap:6px">
+      <a class="btn ghost" href="${href}" download="${esc(d.filename||'vortex-media')}"><button class="ghost">Download</button></a>
+      <button class="ghost" data-mact="regen">Regenerate</button>
+      <button class="ghost" data-mact="redesign">Redesign</button></div>
+    <div class="mredesign" style="display:none;margin-top:6px">
+      <input data-k="prompt" value="${esc(sp.prompt||'')}" placeholder="Prompt" style="width:100%">
+      <div class="row" style="gap:6px;margin-top:4px;flex-wrap:wrap">
+        <input data-k="style" value="${esc(sp.style||'')}" placeholder="Style" style="flex:1;min-width:120px">
+        <select data-k="quality">${['draft','standard','high'].map(q=>`<option ${q===sp.quality?'selected':''}>${q}</option>`).join('')}</select>
+        ${isImg?`<input data-k="size" value="${esc(sp.size||'')}" placeholder="WxH" style="width:100px">
+        <select data-k="format">${['png','jpeg'].map(q=>`<option ${q===sp.format?'selected':''}>${q}</option>`).join('')}</select>`:''}
+        ${sp.type==='music'||sp.type==='sfx'?`<input data-k="duration" type="number" value="${sp.duration||''}" style="width:70px" title="seconds">`:''}
+        ${sp.type==='video'?`<input data-k="frames" type="number" value="${sp.frames||16}" style="width:70px" title="frames">`:''}
+        ${sp.type==='speech'?`<input data-k="speed" type="number" step="0.1" value="${sp.speed||1}" style="width:70px" title="speed">`:''}
+        <button class="primary" data-mact="redesignGo">Generate redesign</button></div></div>
+    <div class="mmsg muted" style="font-size:12px"></div></div>`; }
+async function mAgain(card, act){
+  const id=card.dataset.media, chatID=card.dataset.chat||'', msg=card.querySelector('.mmsg');
+  let r;
+  if(act==='regen') r=await bridge.call('media.regenerate',{id,chatID});
+  else { const ch={id,chatID}; card.querySelectorAll('.mredesign [data-k]').forEach(e=>{ const k=e.dataset.k; ch[k]=(k==='duration'||k==='speed'||k==='frames')?+e.value:e.value; }); r=await bridge.call('media.redesign',ch); }
+  if(!r.ok){ msg.textContent=r.message||'failed'; msg.className='mmsg bad'; return; }
+  msg.textContent=`Queued ${r.id}`+(chatID?' — it appears below in this chat.':' — see the list above.');
+  if(chatID) loadChat(); else mPoll(); }
+document.addEventListener('click',e=>{ const b=e.target.closest('[data-mact]'); if(!b) return; const card=b.closest('.media-card'); const a=b.dataset.mact;
+  if(a==='redesign'){ const f=card.querySelector('.mredesign'); f.style.display=f.style.display==='none'?'block':'none'; return; }
+  mAgain(card, a==='regen'?'regen':'redesign'); });
+// In-chat media placeholders [[media:ID]] poll until finished.
+async function fillMedia(el, id, chatID){
+  for(let n=0;n<900;n++){ const d=await bridge.call('media.job',{id}); if(!el.isConnected) return;
+    el.innerHTML=mCard(d, chatID); if(d.status==='done'||d.status==='failed'||d.status==='error'||d.ok===false) return;
+    await new Promise(r=>setTimeout(r,2000)); } }
+// Parse "/image prompt --size 768x512 --quality high --style \"oil paint\" --format jpeg"
+function parseMediaCmd(text){
+  const m=text.match(/^\/(image|img|speech|tts|say|music|sfx|sound|video)\b\s*([\s\S]*)$/i); if(!m) return null;
+  const type={img:'image',tts:'speech',say:'speech',sound:'sfx'}[m[1].toLowerCase()]||m[1].toLowerCase();
+  const spec={type}; let rest=m[2];
+  rest=rest.replace(/--(size|quality|style|format|duration|speed|frames)\s+("([^"]*)"|'([^']*)'|(\S+))/gi,(_,k,__,a,b,c)=>{ const v=a??b??c; k=k.toLowerCase();
+    spec[k]=(k==='duration'||k==='speed'||k==='frames')?+v:v; return ''; });
+  spec.prompt=rest.trim(); return spec; }
 function mRender(list){
-  $('#mJobs').innerHTML=(list||[]).map(j=>{
-    const pct=j.progress||0, st=j.status, pos=j.position?` · #${j.position} in queue`:'';
-    const secs=j.seconds?` · ${(+j.seconds).toFixed(1)}s`:'';
-    const res=mOut[j.id]?`<div style="margin-top:6px">${mOut[j.id]}</div>`:'';
-    return `<div class="card" data-job="${j.id}"><b>${j.type}</b> <span class="muted">${st}${pos}${secs}</span>
-      <div style="background:#222;height:6px;border-radius:3px;margin-top:4px"><div style="width:${pct}%;height:6px;background:#e0263a;border-radius:3px"></div></div>${res}</div>`}).join('')||'<span class="muted">No jobs yet.</span>';
-}
-function mMedia(r){const x=r.result;if(!x||!x.b64)return '';const u=`data:${x.mime};base64,${x.b64}`;
-  if(x.mime.startsWith('image'))return `<img src="${u}" style="max-width:256px">`;
-  if(x.mime.startsWith('audio'))return `<audio controls src="${u}"></audio>`;
-  if(x.mime.startsWith('video'))return `<video controls loop src="${u}" style="max-width:256px"></video>`;return '';}
+  $('#mJobs').innerHTML=(list||[]).map(j=>`<div class="card" data-job="${esc(j.id)}">${mDone[j.id]||mCard(j)}</div>`).join('')||'<span class="muted">No media yet.</span>'; }
 async function mPoll(){
   const r=await bridge.call('media.jobs',{}); if(!r.ok){return;}
   const list=r.jobs||r.data||[];
-  for(const j of list){ if(j.status==='done'&&!mOut[j.id]){ const d=await bridge.call('media.job',{id:j.id}); mOut[j.id]=mMedia(d)||'(done)'; } }
-  mRender(list);
-}
+  for(const j of list){ if(j.status==='done'&&!mDone[j.id]){ const d=await bridge.call('media.job',{id:j.id}); if(d.status==='done') mDone[j.id]=mCard(d); } }
+  if(document.activeElement && document.activeElement.closest && document.activeElement.closest('#mJobs')) return; // don't clobber an open Redesign form
+  mRender(list); }
+function mSpecFromForm(){ const t=$('#mType').value, sp={type:t,prompt:$('#mPrompt').value,style:$('#mStyle').value,quality:$('#mQuality').value};
+  if(t==='image'){ sp.size=$('#mSize').value; sp.format=$('#mFormat').value; }
+  if(t==='music'||t==='sfx') sp.duration=+$('#mDur').value; if(t==='speech') sp.speed=+$('#mSpeed').value; if(t==='video') sp.frames=+$('#mFrames').value; return sp; }
+function mShowFields(){ const t=$('#mType').value; $$('.mspec [data-for]').forEach(e=>e.style.display=e.dataset.for.split(' ').includes(t)?'':'none'); }
+$('#mType').onchange=mShowFields; mShowFields();
 $('#mGo').onclick=async()=>{
-  const r=await bridge.call('media.submit',{type:$('#mType').value,prompt:$('#mPrompt').value});
+  const r=await bridge.call('media.submit',mSpecFromForm());
   $('#mMsg').textContent=r.ok?`Queued ${r.id} (position ${r.position})`:(r.message||'failed'); $('#mMsg').className=r.ok?'ok':'bad'; mPoll();
 };
-setInterval(()=>{ if($('#tab-media').classList.contains('on')) mPoll(); }, 1500);
+setInterval(()=>{ if($('#tab-media').classList.contains('on')) mPoll(); }, 2000);
 
 // ---- ToS + RedX sign-in gate (required on every launch; re-prompts when terms change)
 const TERMS_VERSION='2026-10-25';

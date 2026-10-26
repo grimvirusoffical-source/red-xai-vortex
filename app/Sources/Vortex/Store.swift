@@ -57,7 +57,7 @@ final class ChatStore: ObservableObject {
         // Trim history to fit the context budget (approx. 4 chars per token, leave room for the reply).
         var budget = max(512, (contextTokens - params.maxTokens)) * 4 - systemPrompt.count
         var hist: [Message] = []
-        for m in chats[i].messages.reversed() { budget -= m.promptChars; if budget < 0 && !hist.isEmpty { break }; hist.insert(m, at: 0) }
+        for m in chats[i].messages.reversed() where !m.content.hasPrefix("[[media:") { budget -= m.promptChars; if budget < 0 && !hist.isEmpty { break }; hist.insert(m, at: 0) }
         if !systemPrompt.isEmpty { hist.insert(Message(role: "system", content: systemPrompt), at: 0) }
         chats[i].messages.append(Message(role: "assistant", content: ""))
         chats[i].updated = Date(); streaming = true; status = "Thinking…"

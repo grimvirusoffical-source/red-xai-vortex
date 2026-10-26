@@ -201,6 +201,10 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		return s.mediaJob(str(in, "id"))
 	case "media.jobs":
 		return s.mediaJobs()
+	case "media.regenerate":
+		return s.mediaAgain(in, false)
+	case "media.redesign":
+		return s.mediaAgain(in, true)
 	case "run.start":
 		return s.startRun(str(in, "agentID"), str(in, "task"), str(in, "chatID"))
 	case "run.list":

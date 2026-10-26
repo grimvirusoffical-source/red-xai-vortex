@@ -206,6 +206,10 @@ struct ChatView: View {
     }
     func send() {
         var t = input; let a = pending; input = ""; pending = []; attachError = ""
+        if a.isEmpty, let ms = MediaSpec.parse(t) {
+            if store.selection == nil { store.newChat() }
+            let cid = store.selection; Task { await MediaLibrary.shared.submit(ms, chat: store, chatID: cid) }; return
+        }
         skills.applySlash(&t)
         if t.isEmpty && a.isEmpty { store.status = skills.always.isEmpty ? "No always-on skills" : "Always on: " + skills.always.map(\.name).joined(separator: ", "); return }
         var p = params
@@ -282,7 +286,9 @@ struct BubbleView: View {
                     }.font(.caption).foregroundStyle(.secondary)
                 }
                 Group {
-                    if message.content.isEmpty { TypingIndicator() } else { rendered }
+                    if message.content.isEmpty { TypingIndicator() }
+                    else if let mid = MediaCard.mediaID(message.content) { MediaCard(id: mid, chat: ChatStoreRef.store) }
+                    else { rendered }
                 }
                 .font(.system(size: fontSize))
                 .textSelection(.enabled)

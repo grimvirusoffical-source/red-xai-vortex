@@ -303,16 +303,15 @@ import AVFoundation
 
         // ---- media job queue (same code path as Hub → Media)
         await t("Media", "speech job via queue with progress") {
-            let m = await MediaJobsModel()
-            await m.submit(type: "speech", prompt: "Vortex media self test.")
-            for _ in 0..<40 {
-                await m.refresh()
-                if let j = await m.jobs.first, j.status == "done", let f = await m.outputs[j.id] {
-                    return "done in \(String(format: "%.2f", j.seconds ?? 0))s → \(f.lastPathComponent)"
+            var sp = MediaSpec(); sp.type = "speech"; sp.prompt = "Vortex media self test."
+            guard let id = await MediaLibrary.shared.submit(sp) else { throw err("submit: \(await MediaLibrary.shared.message)") }
+            for _ in 0..<80 {
+                if let it = await MediaLibrary.shared.items[id], it.done, let f = it.url {
+                    return "done → \(f.lastPathComponent) · \(it.summary)"
                 }
                 try await Task.sleep(nanoseconds: 500_000_000)
             }
-            throw err("job not done: \(await m.message)")
+            throw err("job not done: \(await MediaLibrary.shared.message)")
         }
 
         // ---- plugins
