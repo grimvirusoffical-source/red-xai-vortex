@@ -42,6 +42,7 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
 .media-card{border:1px solid #333;border-radius:10px;padding:8px;margin:4px 0;max-width:560px}
 </style>
 <link rel="stylesheet" href="workspace.css"/>
+<link rel="stylesheet" href="royal-shell.css"/>
 </head>
 <body>
 <div id="gate" style="position:fixed;inset:0;background:#0b0f14;z-index:50;display:flex;align-items:center;justify-content:center;overflow:auto">
@@ -62,26 +63,43 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
     <div id="gWait">Checking your sign-in…</div>
   </div>
 </div>
-<header>
-  <img id="logo" alt="Red-XAI Vortex" src="logo.png" width="32" height="32"/>
-  <h1>Red-XAI Vortex</h1>
+<div class="royal-windowbar" role="toolbar" aria-label="Workspace and local PC control">
+  <div class="royal-window-actions">
+    <div class="royal-gems" role="group" aria-label="Workspace view controls">
+      <button id="royalFocus" class="royal-gem ruby" type="button" aria-label="Focus current view" aria-pressed="false" title="Focus current view · Escape restores navigation"><span class="gem-stone" aria-hidden="true"><span>×</span></span></button>
+      <button id="royalMinimize" class="royal-gem amber" type="button" aria-label="Toggle conversations sidebar" aria-expanded="true" aria-controls="chatside" title="Toggle conversations sidebar"><span class="gem-stone" aria-hidden="true"><span>−</span></span></button>
+      <button id="royalFullscreen" class="royal-gem emerald" type="button" aria-label="Enter browser fullscreen" title="Enter browser fullscreen"><span class="gem-stone" aria-hidden="true"><span>+</span></span></button>
+    </div>
+    <button id="royalSidebarToggle" class="royal-sidebar-toggle" type="button" aria-label="Toggle conversations sidebar" aria-expanded="true" aria-controls="chatside"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3" width="15" height="14" rx="2"/><path d="M7 3v14"/></svg><span>Conversations</span></button>
+    <label class="royal-palette-picker"><span>Theme</span><select id="royalPalette" aria-label="Color theme"><option value="gold">Gold</option><option value="purple">Purple</option><option value="light">Light</option><option value="red">Black &amp; red</option></select></label>
+  </div>
+  <div class="royal-brand"><img id="logo" alt="" src="logo.png" width="28" height="28"/><h1><span>RED-XAI</span>VORTEX</h1></div>
+  <div class="royal-controlbar" aria-label="Local PC control">
+    <label class="royal-policy-switch" title="Always allow local PC actions without an approval for each action. You can stop control at any time."><input type="checkbox" id="royalControlMode" disabled/><span class="royal-switch-track" aria-hidden="true"></span><span>Always allow<small>LOCAL PC CONTROL</small></span></label>
+    <span id="royalControlStatus" role="status" aria-live="polite">Checking…</span>
+    <button id="royalControlStop" class="royal-stop-control" type="button" title="Stop local PC control immediately"><span aria-hidden="true">■</span> Stop control</button>
+  </div>
+</div>
+<header class="royal-navigation" aria-label="Vortex navigation">
+  <span class="royal-nav-caption">YOUR WORKSPACE</span>
   <div class="tabs">
-    <button class="on" data-tab="chat">Chat</button>
-    <button data-tab="workspace">Workspace</button>
-    <button data-tab="agents">Agents</button>
-    <button data-tab="activity" id="actTabBtn">Activity</button>
-    <button data-tab="integrations">Integrations</button>
-    <button data-tab="media">Media</button>
-    <button data-tab="plugins">Plugins</button>
-    <button data-tab="notifications" id="nTabBtn">🔔 Notifications</button>
-    <button data-tab="settings">Settings</button>
+    <button class="on" data-tab="chat"><span class="royal-nav-icon" aria-hidden="true">◌</span>Chat</button>
+    <button data-tab="workspace"><span class="royal-nav-icon" aria-hidden="true">▦</span>Workspace</button>
+    <button data-tab="agents"><span class="royal-nav-icon" aria-hidden="true">◇</span>Agents</button>
+    <button data-tab="activity" id="actTabBtn"><span class="royal-nav-icon" aria-hidden="true">⌁</span>Activity</button>
+    <button data-tab="integrations"><span class="royal-nav-icon" aria-hidden="true">⌘</span>Integrations</button>
+    <button data-tab="media"><span class="royal-nav-icon" aria-hidden="true">▧</span>Media</button>
+    <button data-tab="plugins"><span class="royal-nav-icon" aria-hidden="true">⊞</span>Plugins</button>
+    <button data-tab="notifications" id="nTabBtn"><span class="royal-nav-icon" aria-hidden="true">♧</span>Notifications</button>
+    <button data-tab="settings"><span class="royal-nav-icon" aria-hidden="true">⚙</span>Settings</button>
     <a class="ghost" href="https://45.77.105.187/vortex/donate" target="_blank" style="margin-left:8px;color:#e5484d">♥ Donate</a>
   </div>
   <span class="pill" id="status">starting…</span>
 </header>
 <main>
+  <button id="royalSidebarScrim" class="royal-sidebar-scrim" type="button" aria-label="Close conversations sidebar" tabindex="-1" hidden></button>
   <aside id="chatside">
-    <div class="sidebar-label">YOUR SPACE</div>
+    <div class="sidebar-label"><span aria-hidden="true">◇</span> YOUR COLLECTION</div>
     <button class="primary" id="newchat" style="margin-bottom:6px">+ New chat</button>
     <button id="newparty" style="margin-bottom:10px">+ Party chat</button>
     <label class="sr-only" for="chatSearch">Search conversations</label>
@@ -100,7 +118,7 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
     <div class="sidehead">Party chats</div><div id="partyList"></div>
   </aside>
   <section class="panel on" id="tab-chat">
-    <div class="chat-heading"><div><span class="eyebrow">VORTEX / CONVERSATION</span><h2 id="chatTitle">A little curiosity goes a long way.</h2></div><button class="ghost" id="wsChatSetup">Context &amp; memory</button></div>
+    <div class="chat-heading"><div><span class="eyebrow">A SPACE TO THINK BIGGER</span><h2 id="chatTitle">Your next idea starts here.</h2></div><button class="ghost" id="wsChatSetup"><span aria-hidden="true">◇</span> Context &amp; memory</button></div>
     <div class="row chat-models" style="margin-bottom:8px">
       <select id="agentPick" style="max-width:220px"></select>
       <select id="modelPick" style="max-width:220px"></select>
@@ -108,7 +126,7 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
     </div>
     <div id="wsChatContext" class="context-strip"></div>
     <div id="wsTurnNotice" role="status" aria-live="polite"></div>
-    <div id="chatEmpty" class="chat-empty"><div class="empty-orbit" aria-hidden="true">✳</div><p class="eyebrow">A PLACE FOR YOUR NEXT IDEA</p><h2>What shall we make possible?</h2><p>Think it through. Build something. Create a whole new world.<br/>Your models, tools, and conversations are all here.</p><div class="starter-grid"><button data-starter="Help me plan a project. Ask about the goal and suggest a practical first step."><span>↗</span><b>Start a project</b><small>Bring an idea into focus</small></button><button data-starter="Help me debug some code. Ask me for the relevant code, expected behavior, and error output."><span>⌘</span><b>Build &amp; debug</b><small>Work through code together</small></button><button data-starter="Help me create an immersive roleplay world with characters, lore, and a compelling opening scene."><span>✧</span><b>Imagine a world</b><small>Make room for a story</small></button></div></div>
+    <div id="chatEmpty" class="chat-empty"><div class="empty-orbit" aria-hidden="true"><svg viewBox="0 0 120 120"><path class="orbit-line" d="M60 8 105 34v52l-45 26-45-26V34Z"/><path class="orbit-line inner" d="m60 21 34 20v38L60 99 26 79V41Z"/><path class="gem-outline" d="m60 31 26 22-26 37-26-37Z"/><path class="gem-facet" d="M34 53h52M60 31 49 53l11 37 11-37Z"/><circle cx="60" cy="8" r="3"/><circle cx="105" cy="86" r="2"/><circle cx="15" cy="86" r="2"/></svg></div><p class="eyebrow">YOUR INTELLIGENCE. YOUR WORLD.</p><h2>Make something extraordinary.</h2><p>A thought, a breakthrough, a world only you could imagine.<br/>Bring it here. Let’s see where it goes.</p><div class="starter-grid"><button data-starter="Help me plan a project. Ask about the goal and suggest a practical first step."><span aria-hidden="true">↗</span><b>Shape an idea</b><small>Turn a possibility into a plan</small></button><button data-starter="Help me debug some code. Ask me for the relevant code, expected behavior, and error output."><span aria-hidden="true">⌘</span><b>Build &amp; debug</b><small>Find a way through the code</small></button><button data-starter="Help me create an immersive roleplay world with characters, lore, and a compelling opening scene."><span aria-hidden="true">✧</span><b>Imagine a world</b><small>Give your story a place to live</small></button></div></div>
     <div id="chatlog"></div>
     <div class="row chat-composer" style="margin-top:8px">
       <label class="sr-only" for="prompt">Message Vortex</label>
@@ -287,5 +305,6 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
 <script src="app.js"></script>
 <script src="workspace.js"></script>
 <script src="workspace-tools.js"></script>
+<script src="royal-shell.js"></script>
 </body>
 </html>
