@@ -11,6 +11,19 @@ final class ChatStore: ObservableObject {
     @Published var status = ""
     @Published var availableModels: [String] = [Defaults.model, Defaults.fallbackModel]
     var task: Task<Void, Never>?
+    var generation = ChatGenerationLease()
+    func beginGeneration() -> UUID { generation.begin() }
+    func acceptsGeneration(_ id: UUID) -> Bool { generation.accepts(id) }
+    func messageIndex(chatID: UUID, messageID: UUID, runID: UUID) -> (Int, Int)? {
+        guard acceptsGeneration(runID), let chat = idx(chatID),
+              let message = chats[chat].messages.firstIndex(where: { $0.id == messageID && $0.role == "assistant" }) else { return nil }
+        return (chat, message)
+    }
+    func setStatus(_ value: String, runID: UUID) { if acceptsGeneration(runID) { status = value } }
+    func finishGeneration(_ id: UUID) {
+        guard acceptsGeneration(id) else { return }
+        generation.invalidate(); streaming = false; task = nil; save()
+    }
 
     static var dir: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -37,10 +50,23 @@ final class ChatStore: ObservableObject {
     func idx(_ id: UUID?) -> Int? { chats.firstIndex { $0.id == id } }
     var current: Chat? { chats.first { $0.id == selection } }
 
-    func stop() { task?.cancel(); task = nil; streaming = false }
+    func stop() { generation.invalidate(); task?.cancel(); task = nil; streaming = false; status = "Stopped"; save() }
 
     func send(_ text: String, attachments: [Attachment] = [], systemPrompt: String, contextTokens: Int, params: ChatParams) {
         guard let i = idx(selection), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty, !streaming else { return }
+        if attachments.isEmpty, let spec = MediaSpec.parseRequest(text) {
+            let chatID = chats[i].id
+            let runID = beginGeneration()
+            streaming = true; status = "Queuing \(spec.type)…"
+            task = Task { [weak self] in
+                guard let self else { return }
+                let id = await MediaLibrary.shared.submit(spec, chat: self, chatID: chatID, userText: text)
+                guard self.acceptsGeneration(runID) else { return }
+                self.status = id == nil ? MediaLibrary.shared.message : "Generation queued · follow progress in this chat"
+                self.finishGeneration(runID)
+            }
+            return
+        }
         chats[i].messages.append(Message(role: "user", content: text, attachments: attachments.isEmpty ? nil : attachments))
         if chats[i].title == "New Chat" { chats[i].title = String((text.isEmpty ? attachments.map(\.name).joined(separator: ", ") : text).prefix(40)) }
         prepareGeneration(chatID: chats[i].id, text: text, systemPrompt: systemPrompt, contextTokens: contextTokens, params: params)
@@ -55,12 +81,13 @@ final class ChatStore: ObservableObject {
     private func prepareGeneration(chatID: UUID, text: String, systemPrompt: String, contextTokens: Int, params: ChatParams) {
         guard let i = idx(chatID) else { return }
         let snapshot = chats[i]
+        let runID = beginGeneration()
         streaming = true; status = "Preparing context…"; save()
         task = Task { [weak self] in
             // Check selected remote Bases on every turn so revoked tokens or unavailable hosts
             // cannot keep supplying a previously cached manifest to a new model request.
             await WorkspaceStore.shared.refreshContext(for: snapshot)
-            guard !Task.isCancelled, let self, let j = self.idx(chatID) else { return }
+            guard !Task.isCancelled, let self, self.acceptsGeneration(runID), let j = self.idx(chatID) else { self?.finishGeneration(runID); return }
             self.streaming = false
             if let ps = self.chats[j].participants, !ps.isEmpty {
                 self.generateGroup(chatIndex: j, text: text, systemPrompt: systemPrompt, contextTokens: contextTokens, params: params)
@@ -82,10 +109,12 @@ final class ChatStore: ObservableObject {
             budget -= m.promptChars; if budget < 0 && !hist.isEmpty { break }; hist.insert(m, at: 0)
         }
         if !systemPrompt.isEmpty { hist.insert(Message(role: "system", content: systemPrompt), at: 0) }
-        chats[i].messages.append(Message(role: "assistant", content: ""))
+        let assistant = Message(role: "assistant", content: "")
+        let messageID = assistant.id, runID = beginGeneration()
+        chats[i].messages.append(assistant)
         chats[i].updated = Date(); streaming = true; status = "Thinking…"
-        // "Show replies only when finished" (default ON): collect the whole reply, show a typing indicator, then render it at once.
-        let whole = UserDefaults.standard.object(forKey: "replyWhenFinished") as? Bool ?? true
+        // Stream by default; retain an explicitly saved finished-only preference.
+        let whole = UserDefaults.standard.object(forKey: "replyWhenFinished") as? Bool ?? false
         let buffer = ReplyBuffer()
         if whole { status = "Vortex is typing…" }
         if params.model.hasPrefix("redx-merge-") {
@@ -97,17 +126,20 @@ final class ChatStore: ObservableObject {
                 var p = params
                 if p.model.hasPrefix("local:") {
                     let id = String(p.model.dropFirst(6))
-                    await MainActor.run { self?.status = "Starting \(id) on this Mac…" }
-                    p.baseURL = try await LocalRuntime.shared.ensure(id); p.apiKey = ""; p.model = id
+                    await MainActor.run { self?.setStatus("Starting \(id) on this Mac…", runID: runID) }
+                    p.baseURL = try await LocalRuntime.shared.ensure(id); try Task.checkCancellation(); p.apiKey = ""; p.model = id
                 }
                 let onTok: (String) -> Void = { tok in
-                    if whole { buffer.append(tok); return }
+                    buffer.append(tok)
+                    if whole { return }
                     Task { @MainActor in
-                        guard let self, let j = self.idx(chatID), !self.chats[j].messages.isEmpty else { return }
-                        self.chats[j].messages[self.chats[j].messages.count - 1].content += tok
+                        guard let self, let (j, k) = self.messageIndex(chatID: chatID, messageID: messageID, runID: runID) else { return }
+                        self.chats[j].messages[k].content = buffer.text
                         self.status = "Streaming…"
                     }
                 }
+                try Task.checkCancellation()
+                guard self?.acceptsGeneration(runID) == true else { throw CancellationError() }
                 let lastText = hist.last(where: { $0.role == "user" })?.content ?? ""
                 var tools = await MainActor.run { ToolRegistry.tools(for: p.model) }
                 if Intent.isAction(lastText), !tools.contains(where: { $0.source.hasPrefix("pc:") }), !params.model.hasPrefix("local:") {
@@ -121,10 +153,7 @@ final class ChatStore: ObservableObject {
                         if ok { pc.setEnabled(true); pc.enable(PCKind.safe) }
                         return ok
                     }
-                    if on, !PCControl.eligible(p.model) {
-                        let from = p.model; p.model = "vortex"
-                        await MainActor.run { self?.status = "Using vortex for computer control (\(from) can't use PC tools)…" }
-                    }
+                    _ = on
                     tools = await MainActor.run { ToolRegistry.tools(for: p.model) }
                 }
                 if !tools.isEmpty {
@@ -134,57 +163,62 @@ final class ChatStore: ObservableObject {
                         return ActivityAgent(id: "vortex-default", name: "Vortex")
                     }
                     let (text, log) = try await ActivityLog.$agent.withValue(who) {
-                        try await Agent.run(p, history: hist, tools: tools) { st in Task { @MainActor in self?.status = st } }
+                        try await Agent.run(p, history: hist, tools: tools, onText: { preview in
+                            guard !whole else { return }
+                            Task { @MainActor in
+                                guard let self, let (j, k) = self.messageIndex(chatID: chatID, messageID: messageID, runID: runID) else { return }
+                                self.chats[j].messages[k].content = preview
+                            }
+                        }) { st in Task { @MainActor in self?.setStatus(st, runID: runID) } }
                     }
                     await MainActor.run {
-                        guard let self, let j = self.idx(chatID), !self.chats[j].messages.isEmpty else { return }
-                        let k = self.chats[j].messages.count - 1
+                        guard let self, let (j, k) = self.messageIndex(chatID: chatID, messageID: messageID, runID: runID), !Task.isCancelled else { return }
                         self.chats[j].messages[k].content = text.isEmpty ? "(no answer)" : text
                         self.chats[j].messages[k].toolLog = log.isEmpty ? nil : log
                         self.status = log.isEmpty ? "Done" : "Done · \(log.count) tool call(s)"
-                        self.streaming = false; self.save()
+                        self.save()
                         WorkspaceStore.shared.captureCompletedTurn(self.chats[j], params: p)
+                        self.finishGeneration(runID)
                     }
+                    await MainActor.run { self?.finishGeneration(runID) }
                     return
                 }
                 let tps: Double?
                 do { tps = try await API.stream(p, messages: hist, onToken: onTok) }
-                catch let e as URLError where !params.model.hasPrefix("local:") && (UserDefaults.standard.object(forKey: "autoFailover") as? Bool ?? true) {
-                    await MainActor.run { self?.status = "Server unreachable, failing over…" }
+                catch let e as URLError where e.code != .cancelled && !Task.isCancelled && !params.model.hasPrefix("local:") && (UserDefaults.standard.object(forKey: "autoFailover") as? Bool ?? true) {
+                    await MainActor.run { self?.setStatus("Server unreachable, failing over…", runID: runID) }
                     if let s = await ServerStore.shared.failover() {
                         p.baseURL = s.chatURL; p.apiKey = ServerStore.shared.key(for: s)
-                        await MainActor.run { self?.status = "Switched to \(s.name)" }
+                        await MainActor.run { self?.setStatus("Switched to \(s.name)", runID: runID) }
                         tps = try await API.stream(p, messages: hist, onToken: onTok)
                     } else if let lm = await MainActor.run(body: { LocalRuntime.shared.models.first(where: { !$0.contains("embed") }) }) {
-                        await MainActor.run { self?.status = "No server reachable, using \(lm) on this Mac" }
+                        await MainActor.run { self?.setStatus("No server reachable, using \(lm) on this Mac", runID: runID) }
                         p.baseURL = try await LocalRuntime.shared.ensure(lm); p.apiKey = ""; p.model = lm
                         tps = try await API.stream(p, messages: hist, onToken: onTok)
                     } else { throw e }
                 }
                 if p.apiKey.isEmpty { await MainActor.run { LocalRuntime.shared.touch() } }
+                try Task.checkCancellation()
                 await MainActor.run {
-                    if whole, let self, let j = self.idx(chatID), !self.chats[j].messages.isEmpty {
-                        self.chats[j].messages[self.chats[j].messages.count - 1].content = buffer.text
-                    }
-                    self?.status = tps.map { String(format: "%.1f tokens/s", $0) } ?? "Done"
-                    if let self, let j = self.idx(chatID) { WorkspaceStore.shared.captureCompletedTurn(self.chats[j], params: p) }
+                    guard let self, let (j, k) = self.messageIndex(chatID: chatID, messageID: messageID, runID: runID) else { return }
+                    self.chats[j].messages[k].content = buffer.text
+                    self.status = tps.map { String(format: "%.1f tokens/s", $0) } ?? "Done"
+                    WorkspaceStore.shared.captureCompletedTurn(self.chats[j], params: p)
                 }
             } catch is CancellationError {
                 await MainActor.run {
-                    if whole, let self, let j = self.idx(chatID), !self.chats[j].messages.isEmpty, !buffer.text.isEmpty {
-                        self.chats[j].messages[self.chats[j].messages.count - 1].content = buffer.text
-                    }
-                    self?.status = "Stopped"
+                    guard let self, let (j, k) = self.messageIndex(chatID: chatID, messageID: messageID, runID: runID) else { return }
+                    if whole, !buffer.text.isEmpty { self.chats[j].messages[k].content = buffer.text }
+                    self.status = "Stopped"
                 }
             } catch {
                 await MainActor.run {
-                    self?.status = "Error: \(error.localizedDescription)"
-                    if let self, let j = self.idx(chatID), self.chats[j].messages.last?.content.isEmpty == true {
-                        self.chats[j].messages[self.chats[j].messages.count - 1].content = "⚠️ \(error.localizedDescription)"
-                    }
+                    guard let self, let (j, k) = self.messageIndex(chatID: chatID, messageID: messageID, runID: runID) else { return }
+                    self.status = "Error: \(error.localizedDescription)"
+                    if self.chats[j].messages[k].content.isEmpty { self.chats[j].messages[k].content = "⚠️ \(error.localizedDescription)" }
                 }
             }
-            await MainActor.run { self?.streaming = false; self?.save() }
+            await MainActor.run { self?.finishGeneration(runID) }
         }
     }
 
@@ -231,4 +265,13 @@ final class ReplyBuffer: @unchecked Sendable {
     private var s = ""
     func append(_ t: String) { lock.lock(); s += t; lock.unlock() }
     var text: String { lock.lock(); defer { lock.unlock() }; return s }
+}
+
+
+/// A stale callback can never acquire the identity of a newer reply.
+struct ChatGenerationLease {
+    private(set) var current: UUID?
+    mutating func begin() -> UUID { let id = UUID(); current = id; return id }
+    func accepts(_ id: UUID) -> Bool { current == id }
+    mutating func invalidate() { current = nil }
 }

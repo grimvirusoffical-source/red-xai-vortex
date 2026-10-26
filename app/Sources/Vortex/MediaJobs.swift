@@ -73,6 +73,18 @@ struct MediaSpec: Codable, Equatable {
         return s
     }
     /// Parses "/image a fox --size 768x512 --quality high --style \"oil paint\" --format jpeg".
+    static func parseRequest(_ text: String) -> MediaSpec? {
+        if let command = parse(text) { return command }
+        let pattern = #"^(?:(?:please|can you|could you|would you)\s+)*(?:generate|create|make|draw|render|paint)\s+(?:me\s+)?(?:(?:a|an|some|short)\s+)*(image|picture|photo|illustration|artwork|video|clip|music|song|sound effect|sound|speech|voiceover)\s+(?:(?:of|showing|about|for|that says|saying)\s+)?(.+)$"#
+        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]),
+              let match = re.firstMatch(in: text.trimmingCharacters(in: .whitespacesAndNewlines), range: NSRange(location: 0, length: (text.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).length)) else { return nil }
+        let source = text.trimmingCharacters(in: .whitespacesAndNewlines) as NSString
+        let kind = source.substring(with: match.range(at: 1)).lowercased()
+        let types = ["image":"image", "picture":"image", "photo":"image", "illustration":"image", "artwork":"image", "video":"video", "clip":"video", "music":"music", "song":"music", "sound effect":"sfx", "sound":"sfx", "speech":"speech", "voiceover":"speech"]
+        guard let type = types[kind] else { return nil }
+        return parse("/" + type + " " + source.substring(with: match.range(at: 2)))
+    }
+
     static func parse(_ text: String) -> MediaSpec? {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard t.hasPrefix("/") else { return nil }
@@ -168,23 +180,24 @@ struct MediaItem: Codable, Identifiable, Equatable {
 
     /// Queues a generation with an exact spec. With a chat, posts the command and a live viewer into it.
     @discardableResult
-    func submit(_ s: MediaSpec, chat: ChatStore? = nil, chatID: UUID? = nil) async -> String? {
+    func submit(_ s: MediaSpec, chat: ChatStore? = nil, chatID: UUID? = nil, userText: String? = nil) async -> String? {
         var spec = s
-        do { try spec.normalize() } catch { message = error.localizedDescription; post(chat, chatID, spec.commandLine, "Media: \(error.localizedDescription)"); return nil }
-        guard let r = req("/jobs", method: "POST", body: spec.gatewayBody) else { message = "No active server"; post(chat, chatID, spec.commandLine, "Media: no active server"); return nil }
+        let command = userText ?? spec.commandLine
+        do { try spec.normalize() } catch { message = error.localizedDescription; post(chat, chatID, command, "Media: \(error.localizedDescription)"); return nil }
+        guard let r = req("/jobs", method: "POST", body: spec.gatewayBody) else { message = "No active server"; post(chat, chatID, command, "Media: no active server"); return nil }
         do {
             let (d, resp) = try await URLSession.shared.data(for: r)
             let j = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] ?? [:]
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             guard code < 300, let id = j["id"] as? String, !id.isEmpty else {
-                let m = "Failed: HTTP \(code)"; message = m; post(chat, chatID, spec.commandLine, "Media: \(m)"); return nil }
+                let m = ((j["error"] as? [String: Any])?["message"] as? String) ?? (j["error"] as? String) ?? "Failed: HTTP \(code)"; message = m; post(chat, chatID, command, "Media: \(m)"); return nil }
             var it = MediaItem(id: id, spec: spec); it.position = j["position"] as? Int ?? 0; it.chatID = chatID
             items[id] = it; save()
             message = "Queued \(id) (position \(it.position))"
-            post(chat, chatID, spec.commandLine, "[[media:\(id)]]")
+            post(chat, chatID, command, "[[media:\(id)]]")
             poll(id)
             return id
-        } catch { message = error.localizedDescription; post(chat, chatID, spec.commandLine, "Media: \(error.localizedDescription)"); return nil }
+        } catch { message = error.localizedDescription; post(chat, chatID, command, "Media: \(error.localizedDescription)"); return nil }
     }
     private func post(_ chat: ChatStore?, _ chatID: UUID?, _ user: String, _ reply: String) {
         guard let chat, let i = chat.idx(chatID) else { return }
