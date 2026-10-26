@@ -16,6 +16,7 @@ import Foundation
     @Published var flow = ""          // 2FA flow token (memory only)
     @Published var totp = false
     @Published var call = false
+    @Published var selectedMethod = "totp"
 
     var ready: Bool { termsOK && (signedIn || owner) }
 
@@ -24,6 +25,11 @@ import Foundation
     func check() async {
         checking = true; defer { checking = false }
         owner = await isOwner()
+        if let approvedEmail = await VortexQuickLogin.shared.restore() {
+            username = approvedEmail; signedIn = true
+            UserDefaults.standard.set(username, forKey: "redxUser")
+            return
+        }
         guard let tok = Keychain.get(account: "redx-session"), !tok.isEmpty else { signedIn = false; return }
         let (st, m) = await call("me", session: tok)
         if st == 200, let a = m["account"] as? [String: Any] {
@@ -50,23 +56,39 @@ import Foundation
         case "2fa":
             flow = (m["token"] as? String) ?? ""
             let me = m["methods"] as? [String: Any]; totp = (me?["totp"] as? Bool) ?? false; call = (me?["call"] as? Bool) ?? false
+            selectedMethod = totp ? "totp" : "call"
             msg = totp ? "Enter the code from your authenticator app." : "Use “Call me” to get your code."
         case "2fa_setup": msg = "Finish setting up two-step sign-in on red-xai.com first, then come back."
         default: await finish((m["token"] as? String) ?? "")
         }
     }
-    func callMe() async { let (st, m) = await call("login/call", flow: flow, body: [:]); msg = st == 200 ? "Calling you now." : ((m["message"] as? String) ?? "The call could not be placed.") }
+    func callMe() async {
+        let (st, m) = await call("login/call", flow: flow, body: [:])
+        if st == 200 { selectedMethod = "call" }
+        msg = st == 200 ? "Calling you now." : ((m["message"] as? String) ?? "The call could not be placed.")
+    }
     func twoFA(_ code: String) async {
-        let (st, m) = await call("login/2fa", flow: flow, body: ["method": totp ? "totp" : "call", "code": code.trimmingCharacters(in: .whitespaces)])
+        let (st, m) = await call("login/2fa", flow: flow, body: ["method": selectedMethod, "code": code.trimmingCharacters(in: .whitespaces)])
         if st == 200, let t = m["token"] as? String, !t.isEmpty { flow = ""; await finish(t) }
-        else { msg = st == 401 ? "This sign-in expired. Start again." : ((m["message"] as? String) ?? "That code is not right."); if st == 401 { flow = "" } }
+        else {
+            msg = (m["message"] as? String) ?? "That code was not accepted. Check your method and try again."
+            if (m["error"] as? String) == "flow_expired" { flow = "" }
+        }
     }
     func finish(_ tok: String) async {
         guard !tok.isEmpty else { msg = "Sign-in failed."; return }
+        await VortexQuickLogin.shared.logout()
         Keychain.set(tok, account: "redx-session"); await check()
         if !signedIn { msg = "Sign-in could not be verified." } else { await MainActor.run { PhoneHost.sync() } }
     }
+    func clearLegacyForQuick() async {
+        if let t = Keychain.get(account: "redx-session"), !t.isEmpty {
+            _ = await call("logout", session: t, body: [:])
+            Keychain.set("", account: "redx-session")
+        }
+    }
     func signOut() async {
+        await VortexQuickLogin.shared.logout()
         if let t = Keychain.get(account: "redx-session"), !t.isEmpty { _ = await call("logout", session: t, body: [:]) }
         Keychain.set("", account: "redx-session"); signedIn = false; username = ""; UserDefaults.standard.removeObject(forKey: "redxUser")
     }
@@ -84,6 +106,7 @@ import Foundation
 
 struct GateView<Content: View>: View {
     @StateObject var g = AccountGate.shared
+    @StateObject var quick = VortexQuickLogin.shared
     @ViewBuilder var content: () -> Content
     @Local var login = ""
     @Local var password = ""
@@ -103,6 +126,14 @@ struct GateView<Content: View>: View {
             Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 72, height: 72)
             Text("Sign in to Red-XAI Vortex").font(.title2.bold())
             Text("Use your red-xai.com account.").foregroundStyle(.secondary)
+            Button(quick.busy ? "Waiting for Red-XAI approval…" : "Quick sign in with Red-XAI") { quick.begin() }
+                .buttonStyle(.borderedProminent).disabled(quick.busy || busy)
+            if !quick.code.isEmpty {
+                Text("Approval code: \(quick.code)").font(.headline.monospaced()).textSelection(.enabled)
+                Button("Cancel approval") { quick.cancel() }.buttonStyle(.bordered)
+            }
+            if !quick.message.isEmpty { Text(quick.message).font(.callout).foregroundStyle(.secondary).frame(width: 360) }
+            Text("Or use your password").font(.caption).foregroundStyle(.secondary)
             if g.flow.isEmpty {
                 TextField("Username or email", text: $login).textFieldStyle(.roundedBorder).frame(width: 300)
                 SecureField("Password", text: $password).textFieldStyle(.roundedBorder).frame(width: 300).onSubmit { go() }
@@ -111,6 +142,9 @@ struct GateView<Content: View>: View {
                 if g.totp || g.call { TextField("6-digit code", text: $code).textFieldStyle(.roundedBorder).frame(width: 200) }
                 HStack {
                     if g.call { Button("Call me") { Task { await g.callMe() } } }
+                    if g.totp && g.selectedMethod == "call" {
+                        Button("Use authenticator") { g.selectedMethod = "totp"; g.msg = "Enter the code from your authenticator app." }
+                    }
                     Button("Verify") { busy = true; Task { await g.twoFA(code); busy = false; code = "" } }.buttonStyle(.borderedProminent).disabled(code.isEmpty || busy)
                 }
             }

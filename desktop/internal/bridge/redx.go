@@ -72,6 +72,13 @@ func (s *Server) redx(m string, in map[string]any) map[string]any {
 	case "gate.status":
 		b, _ := os.ReadFile(s.termsFile())
 		res := map[string]any{"ok": true, "termsAccepted": strings.TrimSpace(string(b)), "owner": s.isOwner()}
+		if linked, email, message := s.quickSignedIn(); linked {
+			res["signedIn"] = true
+			res["username"] = email
+			return res
+		} else if message != "" {
+			res["message"] = message
+		}
 		if tok := keyring.Get("redx-session"); tok != "" {
 			st, me := redxDo("GET", "me", map[string]string{"X-RedX-Session": tok}, nil)
 			switch {
@@ -88,6 +95,12 @@ func (s *Server) redx(m string, in map[string]any) map[string]any {
 			}
 		}
 		return res
+	case "redx.quick.start":
+		return s.quickStart()
+	case "redx.quick.poll":
+		return s.quickPoll()
+	case "redx.quick.cancel":
+		return s.quickCancel()
 	case "gate.accept":
 		os.WriteFile(s.termsFile(), []byte(str("version")), 0600)
 		return map[string]any{"ok": true}
@@ -102,6 +115,7 @@ func (s *Server) redx(m string, in map[string]any) map[string]any {
 		r["ok"] = st == 200
 		return r
 	case "redx.logout":
+		s.quickLogout()
 		if tok := keyring.Get("redx-session"); tok != "" {
 			redxDo("POST", "logout", map[string]string{"X-RedX-Session": tok}, map[string]any{})
 		}
@@ -117,6 +131,7 @@ func (s *Server) redxFinish(st int, r map[string]any) map[string]any {
 			return map[string]any{"ok": true, "next": n, "flow": r["token"], "methods": r["methods"]}
 		}
 		if tok, _ := r["token"].(string); tok != "" {
+			s.quickLogout()
 			keyring.Set("redx-session", tok)
 			return map[string]any{"ok": true, "signedIn": true}
 		}
