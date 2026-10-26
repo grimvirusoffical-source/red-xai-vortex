@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 /// Small owner-password prompt shown where an action needs owner unlock (e.g. creating API keys).
 struct OwnerUnlockInline: View {
@@ -81,6 +83,8 @@ struct AccessControlSection: View {
     @Local var deny = ""
     @Local var events: [[String: Any]] = []
     @Local var msg = ""
+    @Local var auditMessage = ""
+    @Local var auditBusy = false
     var body: some View {
         Section("IP allow / deny (whole gateway)") {
             TextField("Allow (IPs/CIDRs, empty = any; 127.0.0.1 is always kept)", text: $allow)
@@ -91,7 +95,18 @@ struct AccessControlSection: View {
             }
         }
         Section("Audit log (newest first)") {
-            Button("Refresh") { Task { await loadAudit() } }
+            Text("Only the newest 10 entries are kept. Older entries are removed automatically when new activity arrives. Mark all as read deletes the displayed logs.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button("Refresh") { Task { await loadAudit() } }.disabled(auditBusy)
+                Button("Mark all as read") { Task { await clearDisplayedAudit() } }
+                    .disabled(auditBusy || events.isEmpty)
+                    .help("Delete these displayed entries. New activity is retained.")
+                Button("Export JSON and delete…") { Task { await exportDisplayedAudit() } }
+                    .disabled(auditBusy || events.isEmpty)
+            }
+            if !auditMessage.isEmpty { Text(auditMessage).font(.caption).foregroundStyle(.secondary) }
+            if events.isEmpty { Text("No audit entries.").foregroundStyle(.secondary) }
             ForEach(Array(events.prefix(100).enumerated()), id: \.offset) { _, e in
                 let t = Date(timeIntervalSince1970: (e["t"] as? Double) ?? 0)
                 HStack(alignment: .top) {
@@ -115,7 +130,57 @@ struct AccessControlSection: View {
         do { _ = try await Admin.call("POST", "/admin/acl", ["allow": split(allow), "deny": split(deny)]); msg = "Saved."; await load() }
         catch { msg = error.localizedDescription }
     }
-    func loadAudit() async {
-        events = ((try? await Admin.call("GET", "/admin/audit?n=200"))?["events"] as? [[String: Any]]) ?? []
+    @MainActor func loadAudit() async {
+        do {
+            let result = try await Admin.call("GET", "/admin/audit?n=10")
+            events = (result["events"] as? [[String: Any]]) ?? []
+        } catch { auditMessage = error.localizedDescription }
+    }
+    var displayedAuditIDs: [String] { events.compactMap { $0["id"] as? String } }
+    @MainActor func clearDisplayedAudit() async {
+        let ids = displayedAuditIDs
+        guard !auditBusy, !ids.isEmpty else { return }
+        auditBusy = true; defer { auditBusy = false }
+        do {
+            let result = try await Admin.call("POST", "/admin/audit/clear", ["ids": ids])
+            events = (result["events"] as? [[String: Any]]) ?? []
+            auditMessage = "Displayed logs deleted. New activity is retained."
+        } catch { auditMessage = error.localizedDescription }
+    }
+    @MainActor func exportDisplayedAudit() async {
+        let ids = displayedAuditIDs
+        guard !auditBusy, !ids.isEmpty else { return }
+        auditBusy = true; defer { auditBusy = false }
+        do {
+            var snapshot = try await Admin.call("POST", "/admin/audit/export", ["ids": ids])
+            guard let token = snapshot.removeValue(forKey: "snapshotToken") as? String else {
+                throw NSError(domain: "audit", code: 1, userInfo: [NSLocalizedDescriptionKey: "The server did not provide an export confirmation. No entries were deleted."])
+            }
+            snapshot.removeValue(forKey: "ok")
+            let data = try JSONSerialization.data(withJSONObject: snapshot, options: [.prettyPrinted, .sortedKeys])
+            let panel = NSSavePanel()
+            panel.title = "Save owner audit log"
+            panel.nameFieldStringValue = "vortex-owner-audit-\(Int(Date().timeIntervalSince1970)).json"
+            panel.allowedContentTypes = [.json]
+            guard panel.runModal() == .OK, let url = panel.url else {
+                auditMessage = "Export canceled. No entries were deleted."
+                return
+            }
+            // Confirm deletion only after the atomic local save succeeds.
+            try OwnerAuditExport.save(data, to: url)
+            do {
+                let result = try await Admin.call("POST", "/admin/audit/export/confirm", ["snapshotToken": token, "saved": true])
+                events = (result["events"] as? [[String: Any]]) ?? []
+                auditMessage = "JSON saved. Exported logs deleted; new activity is retained."
+            } catch { auditMessage = "JSON saved, but server deletion was not confirmed: \(error.localizedDescription)" }
+        } catch { auditMessage = "Export failed. No entries were deleted: \(error.localizedDescription)" }
+    }
+}
+
+/// Separate from the save panel so failed local writes can be tested safely.
+enum OwnerAuditExport {
+    static func save(_ data: Data, to url: URL) throws {
+        try data.write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 }
