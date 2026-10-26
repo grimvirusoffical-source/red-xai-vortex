@@ -36,6 +36,9 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
 .ok{color:var(--ok)}.bad{color:var(--bad)}
 .ev{padding:4px 0;border-bottom:1px solid #1d2733}.ev .k{display:inline-block;min-width:118px;color:var(--muted)}.ev details{color:var(--muted);white-space:pre-wrap}
 .run{padding:6px 0;border-bottom:1px solid #1d2733}.st-done{color:#46a758}.st-error,.st-stopped{color:#e5484d}.st-waiting{color:#f5a623}
+@media (max-width:760px){header{flex-wrap:wrap;gap:6px;padding:8px}header .tabs{margin-left:0;overflow-x:auto;width:100%;flex-wrap:nowrap}header .tabs button{white-space:nowrap}
+main{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #1e2733;max-height:30vh}.msg{max-width:95%}#chatlog{height:calc(100vh - 340px)}
+input,select,textarea{font-size:16px}.panel{padding:10px}}
 </style>
 </head>
 <body>

@@ -15,15 +15,35 @@ import (
 
 func main() {
 	headless := flag.Bool("headless", false, "serve bridge only (no GUI)")
+	noUpdate := flag.Bool("no-update", false, "do not self-update (host app updates us)")
+	phoneOnly := flag.Bool("phone", false, "serve phone access (implies -headless); secure chat from VORTEX_SECURE=0/1")
 	flag.Parse()
 	st := store.Open()
+	if *phoneOnly {
+		*headless = true
+		ss := st.Settings
+		ss.PhoneChat = true
+		ss.PlainChat = os.Getenv("VORTEX_SECURE") == "0"
+		if u := os.Getenv("VORTEX_BASE_URL"); u != "" {
+			ss.BaseURL = u
+		}
+		st.SetSettings(ss)
+		go func() { // exit with the host app
+			for os.Getppid() != 1 {
+				time.Sleep(2 * time.Second)
+			}
+			os.Exit(0)
+		}()
+	}
 	srv, err := bridge.Start(st)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	fmt.Println("Vortex", update.Version, "bridge on", srv.Addr)
-	go autoUpdate(st)
+	if !*noUpdate {
+		go autoUpdate(st)
+	}
 	if *headless {
 		select {}
 	}

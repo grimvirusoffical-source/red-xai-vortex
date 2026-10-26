@@ -17,8 +17,14 @@ import (
 // seals every request with Red-SecretsXAI and carries all traffic as red-X barcode images.
 // The helper is a prebuilt binary shipped next to the app; its source is private.
 
-const linkListen = "127.0.0.1:18191"
-const phoneListen = "0.0.0.0:18192"
+var linkListen = envOr("VORTEX_LINK_LISTEN", "127.0.0.1:18191")
+
+func envOr(k, d string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return d
+}
 
 var (
 	linkMu   sync.Mutex
@@ -57,11 +63,8 @@ func (s *Server) applyLink() {
 	}
 	args := []string{"proxy", "-listen", linkListen, "-servers", srv, "-barcode"}
 	key := keyring.Get("vortex-api-key")
-	if st.PhoneChat && key != "" {
-		args = append(args, "-phone", phoneListen)
-	}
 	sig := strings.Join(args, " ")
-	if !want && !(st.PhoneChat && key != "") {
+	if !want {
 		sig = ""
 	}
 	if sig == linkArgs && linkProc != nil && linkProc.ProcessState == nil {
@@ -121,15 +124,8 @@ func (s *Server) linkStatus() map[string]any {
 	linkMu.Lock()
 	m["error"] = linkErr
 	linkMu.Unlock()
-	if s.St.Settings.PhoneChat {
-		if home, _ := os.UserHomeDir(); home != "" {
-			if b, err := os.ReadFile(filepath.Join(home, ".redx-link-phone")); err == nil {
-				if l := strings.Split(strings.TrimSpace(string(b)), "\n"); len(l) >= 2 {
-					m["phoneURL"] = "http://" + lanIP() + ":18192"
-					m["phonePIN"] = l[1]
-				}
-			}
-		}
+	if u, pin := phoneInfo(); u != "" {
+		m["phoneURL"], m["phonePIN"] = u, pin
 	}
 	return m
 }

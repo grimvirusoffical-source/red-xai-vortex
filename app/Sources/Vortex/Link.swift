@@ -85,6 +85,7 @@ final class RedXLink: ObservableObject {
         let list = serverList()
         guard !list.isEmpty else { status = "no server address configured"; return }
         if !force, proc?.isRunning == true, list == lastServers { return }
+        PhoneHost.sync()
         let old = proc; proc = nil; lastServers = list; running = false
         let log = ChatStore.dir.appendingPathComponent("redx-link.log")
         Task.detached(priority: .utility) {
@@ -96,10 +97,6 @@ final class RedXLink: ObservableObject {
             let p = Process(); p.executableURL = bin
             var args = ["proxy", "-listen", "127.0.0.1:\(Self.port)", "-servers", list.joined(separator: ",")]
             if Self.secure { args.append("-barcode") }
-            if Self.phone, let key = Keychain.get(), !key.isEmpty {
-                args += ["-phone", "0.0.0.0:\(Self.phonePort)"]
-                var env = ProcessInfo.processInfo.environment; env["REDX_LINK_KEY"] = key; p.environment = env
-            }
             p.arguments = args
             p.standardOutput = FileHandle.nullDevice
             FileManager.default.createFile(atPath: log.path, contents: nil)
@@ -199,7 +196,7 @@ struct LinkSettingsBox: View {
                         if let i = RedXLink.phoneInfo() {
                             Text("On your phone (same Wi-Fi) open \(i.url) · PIN \(i.pin)").font(.caption.monospaced()).textSelection(.enabled)
                         } else { Text("Starting… (needs a saved API key)").font(.caption) }
-                        Text("The phone page has its own Secure chat checkbox. The phone↔Mac Wi-Fi hop is plain HTTP on your LAN; Mac↔server uses Red-SecretsXAI.").font(.caption).foregroundStyle(.secondary)
+                        Text("Your phone gets the full Vortex app: chat, agents, media, plugins, projects, party chats and PC control, with the same Secure chat checkbox in its Settings. The phone↔Mac Wi-Fi hop is plain HTTP on your LAN; Mac↔server uses Red-SecretsXAI.").font(.caption).foregroundStyle(.secondary)
                     }
                     if !report.isEmpty { Text(report).font(.caption.monospaced()).textSelection(.enabled) }
                     Text("Every request and reply is encrypted end-to-end with Red-SecretsXAI and authenticated with your API key (fresh session keys, replay protection). Apps on this Mac can use \(RedXLink.chatURL) with your key.").font(.caption).foregroundStyle(.secondary)
@@ -222,5 +219,31 @@ struct LinkSettingsBox: View {
             report = rows.isEmpty ? "check failed (helper missing?)" : rows.joined(separator: "\n")
             checking = false
         }
+    }
+}
+
+
+/// Phone access: runs the bundled `vortex-phone` (the cross-platform Vortex bridge + UI) headless,
+/// so a phone on the same Wi-Fi gets the full app (chat, agents, media, plugins, projects, party,
+/// PC control) behind a PIN. Its chat follows the Secure chat setting. It exits when the app quits.
+@MainActor enum PhoneHost {
+    static var proc: Process?
+    static func sync() {
+        if let p = proc, p.isRunning { p.terminate() }
+        proc = nil
+        guard RedXLink.phone, let key = Keychain.get(), !key.isEmpty,
+              let bin = Bundle.main.url(forResource: "vortex-phone", withExtension: nil),
+              let res = Bundle.main.resourceURL else { return }
+        let p = Process(); p.executableURL = bin; p.arguments = ["-phone", "-no-update"]
+        var env = ProcessInfo.processInfo.environment
+        env["VORTEX_API_KEY"] = key
+        env["VORTEX_SECURE"] = RedXLink.secure ? "1" : "0"
+        env["VORTEX_FRONTEND"] = res.appendingPathComponent("frontend").path
+        env["VORTEX_LINK_LISTEN"] = "127.0.0.1:18193"
+        env["VORTEX_PHONE_LISTEN"] = "0.0.0.0:\(RedXLink.phonePort)"
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        p.environment = env
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        if (try? p.run()) != nil { proc = p }
     }
 }

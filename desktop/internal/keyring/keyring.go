@@ -11,9 +11,9 @@ import (
 // Never logs or prints values.
 
 var (
-	mu   sync.Mutex
-	dir  string
-	mem  = map[string]string{}
+	mu  sync.Mutex
+	dir string
+	mem = map[string]string{}
 )
 
 func init() {
@@ -35,6 +35,11 @@ func Set(account, value string) error {
 }
 
 func Get(account string) string {
+	if account == "vortex-api-key" { // host app (macOS) hands the key over via env
+		if v := os.Getenv("VORTEX_API_KEY"); v != "" {
+			return v
+		}
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if v, ok := mem[account]; ok {

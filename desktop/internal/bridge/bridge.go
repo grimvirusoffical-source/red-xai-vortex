@@ -22,6 +22,7 @@ type Server struct {
 	Act  *activity.Log
 	Addr string
 	ln   net.Listener
+	mux  *http.ServeMux
 }
 
 func Start(st *store.Store) (*Server, error) {
@@ -33,8 +34,10 @@ func Start(st *store.Store) (*Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/bridge/", s.handle)
 	mux.Handle("/", http.FileServer(http.Dir(frontendDir())))
+	s.mux = mux
 	go http.Serve(ln, mux)
 	s.applyLink()
+	s.applyPhone()
 	return s, nil
 }
 
@@ -96,6 +99,7 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		}
 		s.St.SetSettings(st)
 		s.applyLink()
+		s.applyPhone()
 		return map[string]any{"ok": true, "message": "Saved. Key stored in OS credential store."}
 	case "settings.probe":
 		models, ok := s.listModels()
@@ -519,4 +523,3 @@ func str(m map[string]any, k string) string {
 	v, _ := m[k].(string)
 	return v
 }
-
