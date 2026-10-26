@@ -266,6 +266,12 @@ func (s *Server) loop(ctx context.Context, r *Run, me member, ts []tool) {
 			return
 		}
 		s.setRun(r, func() { r.Steps = step + 1 })
+		if r.ChatID != "" {
+			msgs[0]["content"] = sys
+			if workspace := s.workspaceContext(r.ChatID, r.Task); workspace != "" {
+				msgs[0]["content"] += "\n\n" + workspace
+			}
+		}
 		out, err := s.complete(agentID, me.Model, msgs, 700)
 		if err != nil {
 			s.log(r, "error", "", err.Error(), "")

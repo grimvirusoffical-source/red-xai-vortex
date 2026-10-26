@@ -114,6 +114,13 @@ func (s *Server) groupSend(c *store.Chat, comp store.Composer) map[string]any {
 		ms = append(ms, s.memberFor(id))
 	}
 	maxTok, hint := lengthParams(comp)
+	query := ""
+	if len(c.Messages) > 0 {
+		query = c.Messages[len(c.Messages)-1].Content
+	}
+	if context := s.workspaceContext(c.ID, query); context != "" {
+		hint += "\n" + context
+	}
 	replies := []map[string]string{}
 	for _, me := range ms {
 		others := []string{}

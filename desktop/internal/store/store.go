@@ -57,11 +57,13 @@ type Settings struct {
 }
 
 type Store struct {
-	mu       sync.Mutex
-	Dir      string
-	Agents   []Agent
-	Chats    []Chat
-	Settings Settings
+	mu             sync.Mutex
+	Dir            string
+	Agents         []Agent
+	Chats          []Chat
+	Settings       Settings
+	Workspace      Workspace
+	WorkspaceError string
 }
 
 func Open() *Store {
@@ -70,6 +72,7 @@ func Open() *Store {
 	_ = os.MkdirAll(d, 0700)
 	s := &Store{Dir: d, Settings: Settings{BaseURL: "https://45.77.105.187/v1", ActiveID: "vortex-default"}}
 	s.load()
+	s.loadWorkspace()
 	if len(s.Agents) == 0 {
 		s.Agents = []Agent{{
 			ID: "vortex-default", Name: "Vortex", Provider: "vortex", Model: "vortex",

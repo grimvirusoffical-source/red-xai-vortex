@@ -18,11 +18,12 @@ import (
 )
 
 type Server struct {
-	St   *store.Store
-	Act  *activity.Log
-	Addr string
-	ln   net.Listener
-	mux  *http.ServeMux
+	St             *store.Store
+	Act            *activity.Log
+	Addr           string
+	ln             net.Listener
+	mux            *http.ServeMux
+	baseCredential func(string) string // tests can isolate credential access
 }
 
 func Start(st *store.Store) (*Server, error) {
@@ -61,8 +62,36 @@ func frontendDir() string {
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	method := strings.TrimPrefix(r.URL.Path, "/bridge/")
+	if strings.HasPrefix(method, "workspace.") {
+		if !workspaceRequestAllowed(r) {
+			http.Error(w, "workspace requests require same-origin JSON POST", http.StatusForbidden)
+			return
+		}
+		limit := int64(4 << 20)
+		if method == "workspace.action" {
+			limit = 45 << 20
+		}
+		raw, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+		if err != nil || int64(len(raw)) > limit {
+			http.Error(w, "workspace request too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		var input map[string]any
+		if err = json.Unmarshal(raw, &input); err != nil || input == nil {
+			http.Error(w, "invalid JSON object", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(s.dispatch(method, input))
+		return
+	}
 	var in map[string]any
-	json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&in)
+	limit := int64(1 << 20)
+	if method == "workspace.action" {
+		limit = 45 << 20
+	}
+	json.NewDecoder(io.LimitReader(r.Body, limit)).Decode(&in)
 	if in == nil {
 		in = map[string]any{}
 	}
@@ -73,6 +102,14 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 	switch m {
+	case "workspace.get":
+		return s.workspaceResult()
+	case "workspace.save":
+		return s.workspaceSave(in)
+	case "workspace.delete":
+		return s.workspaceDelete(in)
+	case "workspace.action":
+		return s.workspaceAction(in)
 	case "status":
 		models, connected := s.listModels()
 		return map[string]any{
@@ -320,6 +357,9 @@ func (s *Server) chatSend(in map[string]any) map[string]any {
 	}
 	maxTok, hint := lengthParams(comp)
 	msgs := []map[string]string{}
+	if context := s.workspaceContext(c.ID, text); context != "" {
+		msgs = append(msgs, map[string]string{"role": "system", "content": context})
+	}
 	if hint != "" {
 		msgs = append(msgs, map[string]string{"role": "system", "content": hint})
 	}
