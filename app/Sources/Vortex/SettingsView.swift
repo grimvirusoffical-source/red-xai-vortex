@@ -160,14 +160,19 @@ struct AppearanceSettings: View {
     @AppStorage("markdown") var markdown = true
     @AppStorage("sendOnEnter") var sendOnEnter = true
     @AppStorage("showTimestamps") var showTimestamps = false
-    @AppStorage("replyWhenFinished") var replyWhenFinished = true
+    @AppStorage("replyWhenFinished") var replyWhenFinished = false
+    @AppStorage("royalPalette") var royalPalette = "gold"
     var body: some View {
         Form {
+            Picker("Vortex look", selection: $royalPalette) {
+                Text("Royal gold & black").tag("gold"); Text("Purple & black").tag("purple")
+                Text("Light").tag("light"); Text("Black & red").tag("red")
+            }
             Toggle("Show replies only when finished", isOn: $replyWhenFinished)
                 .help("Shows a typing indicator, then the whole reply at once instead of word by word.")
             Picker("Theme", selection: $theme) { Text("System").tag("system"); Text("Light").tag("light"); Text("Dark").tag("dark") }
             Picker("Accent", selection: $accent) {
-                ForEach(["red", "blue", "teal", "purple", "orange", "green", "pink"], id: \.self) { Text($0.capitalized).tag($0) }
+                ForEach(["gold", "red", "blue", "teal", "purple", "orange", "green", "pink"], id: \.self) { Text($0.capitalized).tag($0) }
             }
             HStack { Text("Font size"); Slider(value: $fontSize, in: 10...24, step: 1); Text("\(Int(fontSize)) pt").frame(width: 44) }
             Picker("Bubble style", selection: $bubbleStyle) { Text("Rounded").tag("rounded"); Text("Square").tag("square"); Text("Minimal").tag("minimal") }
