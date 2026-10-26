@@ -29,6 +29,9 @@ type Chat struct {
 	Messages []Msg     `json:"messages"`
 	Updated  time.Time `json:"updated"`
 	Composer *Composer `json:"composer,omitempty"` // per-chat composer settings; nil = global default
+	Kind     string    `json:"kind,omitempty"`    // "" (model chat) | "agent" | "party"
+	AgentID  string    `json:"agentID,omitempty"` // agent chats: the agent
+	Members  []string  `json:"members,omitempty"` // party chats: agent IDs (or "model:<id>") that reply in turn
 }
 
 // Composer holds the chat composer controls: strength tier, reply length and Quick replies.
@@ -40,6 +43,7 @@ type Composer struct {
 type Msg struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	Name    string `json:"name,omitempty"` // speaker name in agent/party chats
 }
 
 type Settings struct {
@@ -123,6 +127,19 @@ func (s *Store) SaveChat(c Chat) {
 	if !found {
 		s.Chats = append([]Chat{c}, s.Chats...)
 	}
+	s.mu.Unlock()
+	s.save()
+}
+
+func (s *Store) DeleteChat(id string) {
+	s.mu.Lock()
+	out := s.Chats[:0]
+	for _, c := range s.Chats {
+		if c.ID != id {
+			out = append(out, c)
+		}
+	}
+	s.Chats = out
 	s.mu.Unlock()
 	s.save()
 }

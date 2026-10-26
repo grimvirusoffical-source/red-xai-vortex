@@ -12,6 +12,26 @@ struct ContentView: View {
     @Local var search = ""
     @Local var renaming: UUID?
     @Local var renameText = ""
+    @Local var partyHint = false
+    @StateObject var agents = AgentStore.shared
+
+    @ViewBuilder func chatRow(_ c: Chat) -> some View {
+        HStack {
+            if c.pinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(Color.accent(accent)) }
+            if (c.participants?.count ?? 0) >= 2 { Image(systemName: "person.3.fill").font(.caption) }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(c.title).lineLimit(1)
+                Text(c.updated, style: .relative).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .tag(c.id)
+        .contextMenu {
+            Button("Rename") { renaming = c.id; renameText = c.title }
+            Button(c.pinned ? "Unpin" : "Pin") { store.togglePin(c.id) }
+            Divider()
+            Button("Delete", role: .destructive) { store.delete(c.id) }
+        }
+    }
 
     var filtered: [Chat] {
         search.isEmpty ? store.sorted : store.sorted.filter { c in
@@ -22,21 +42,19 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $store.selection) {
-                ForEach(filtered) { c in
-                    HStack {
-                        if c.pinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(Color.accent(accent)) }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(c.title).lineLimit(1)
-                            Text(c.updated, style: .relative).font(.caption2).foregroundStyle(.secondary)
-                        }
+                Section("Chats") { ForEach(filtered.filter { ($0.participants ?? []).isEmpty }) { c in chatRow(c) } }
+                Section("Agents") {
+                    ForEach(agents.agents) { a in
+                        let c = store.chats.first { $0.participants == ["agent:" + a.id] }
+                        HStack { Image(systemName: "cpu").foregroundStyle(Color.accent(accent)); Text(a.name).lineLimit(1); Spacer(); Text(a.model).font(.caption2).foregroundStyle(.secondary) }
+                            .tag(c?.id ?? UUID())
+                            .contentShape(Rectangle())
+                            .onTapGesture { store.openAgentChat(a) }
                     }
-                    .tag(c.id)
-                    .contextMenu {
-                        Button("Rename") { renaming = c.id; renameText = c.title }
-                        Button(c.pinned ? "Unpin" : "Pin") { store.togglePin(c.id) }
-                        Divider()
-                        Button("Delete", role: .destructive) { store.delete(c.id) }
-                    }
+                }
+                Section("Party chats") {
+                    ForEach(filtered.filter { ($0.participants?.count ?? 0) >= 2 || ($0.participants == nil && $0.title == "Party chat") }) { c in chatRow(c) }
+                    Button { store.newParty(); partyHint = true } label: { Label("New party chat", systemImage: "person.3") }.buttonStyle(.borderless)
                 }
             }
             .searchable(text: $search, placement: .sidebar)
@@ -61,6 +79,7 @@ struct ContentView: View {
         .onAppear {
             if useTunnel && !tunnel.running { tunnel.start(host: sshHost, local: sshLocalPort, remote: sshRemotePort, keyPath: sshKey) }
         }
+        .sheet(isPresented: $partyHint) { GroupSetupView().environmentObject(store) }
         .alert("Rename Chat", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Title", text: $renameText)
             Button("Save") { if let r = renaming { store.rename(r, renameText) }; renaming = nil }
@@ -246,7 +265,7 @@ struct BubbleView: View {
         HStack(alignment: .top) {
             if isUser { Spacer(minLength: 60) } else { Image(systemName: "sparkles").font(.title2) }
             VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
-                if let who = message.model { Text(who).font(.caption.bold()).foregroundStyle(GroupColors.color(who)) }
+                if let who = message.model { Text(GroupTurns.label(who)).font(.caption.bold()).foregroundStyle(GroupColors.color(who)) }
                 if let a = message.attachments, !a.isEmpty { AttachmentChips(items: a) }
                 if let l = message.toolLog {
                     let off = Array(Set(l.compactMap { $0.hasPrefix(PCControl.offMarker) ? PCKind(rawValue: String($0.dropFirst(PCControl.offMarker.count))) : nil }))

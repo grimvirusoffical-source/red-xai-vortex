@@ -10,13 +10,24 @@ enum GroupColors {
 }
 
 enum GroupTurns {
+    /// "agent:<id>" -> agent name, refreshed before each group turn (read off the main actor).
+    nonisolated(unsafe) static var agentNames: [String: String] = [:]
     static func mentions(_ text: String, in ps: [String]) -> [String] {
         let words = text.split(whereSeparator: { $0.isWhitespace || ",;:!?".contains($0) })
             .filter { $0.hasPrefix("@") && $0.count > 1 }.map { $0.dropFirst().lowercased() }
         if words.contains("all") || words.contains("everyone") { return ps }
         var out: [String] = []
-        for p in ps where words.contains(where: { w in p.lowercased() == w || p.lowercased().contains(w) || short(p).lowercased() == w }) { out.append(p) }
+        for p in ps where words.contains(where: { w in p.lowercased() == w || p.lowercased().contains(w) || short(p).lowercased() == w || (agentNames[p]?.lowercased().hasPrefix(w) ?? false) }) { out.append(p) }
         return out
+    }
+    /// Display name for a participant: agents ("agent:<id>") show the agent's name, models their display name.
+    @MainActor static func label(_ m: String) -> String {
+        if m.hasPrefix("agent:") { let id = String(m.dropFirst(6)); return AgentStore.shared.agents.first { $0.id == id }?.name ?? "Agent" }
+        return Defaults.displayName(m)
+    }
+    /// Non-isolated label using a snapshot of agent names.
+    static func label(_ m: String, names: [String: String]) -> String {
+        m.hasPrefix("agent:") ? (names[String(m.dropFirst(6))] ?? "Agent") : Defaults.displayName(m)
     }
     static func short(_ m: String) -> String {
         let base = m.hasPrefix("local:") ? String(m.dropFirst(6)) : m
@@ -32,11 +43,13 @@ enum GroupTurns {
     /// History as seen by one participant: its own replies stay "assistant", everyone else's become
     /// "user" lines tagged with the speaker. Same-role neighbours are merged so strict templates accept it.
     static func history(for me: String, chat: Chat, system: String, others: [String], budgetChars: Int) -> [Message] {
+        let names = Dictionary(uniqueKeysWithValues: agentNames.map { ($0.key.replacingOccurrences(of: "agent:", with: ""), $0.value) })
+        let meL = label(me, names: names), othersL = others.map { label($0, names: names) }
         var budget = budgetChars, out: [Message] = []
         for m in chat.messages.reversed() where !m.content.isEmpty || m.attachments != nil {
             var c = m
             if m.role == "assistant" {
-                if m.model != nil && m.model != me { c.role = "user"; c.content = "[\(m.model!)]: \(m.content)" }
+                if m.model != nil && m.model != me { c.role = "user"; c.content = "[\(label(m.model!, names: names))]: \(m.content)" }
             } else if m.role == "user", chat.messages.contains(where: { $0.model != nil }) { c.content = "[User]: \(m.content)" }
             budget -= c.promptChars; if budget < 0 && !out.isEmpty { break }
             out.insert(c, at: 0)
@@ -51,7 +64,7 @@ enum GroupTurns {
         }
         if merged.first?.role == "assistant" { merged.insert(Message(role: "user", content: "[User]: (conversation start)"), at: 0) }
         let sys = (system.isEmpty ? "" : system + "\n\n") +
-            "This is a group chat. You are \(me). Also present: the user\(others.isEmpty ? "" : " and " + others.joined(separator: ", ")). " +
+            (others.isEmpty ? "You are \(meL). Lines starting with [User]: are from the user. " : "This is a group chat. You are \(meL). Also present: the user and " + othersL.joined(separator: ", ") + ". ") +
             "Lines starting with [name]: were written by that participant. Reply only as yourself, without a name prefix. Keep it focused; add something new instead of repeating others."
         return [Message(role: "system", content: sys)] + merged
     }
@@ -67,23 +80,30 @@ extension ChatStore {
         task = Task { [weak self] in
             for (n, m) in who.enumerated() {
                 if Task.isCancelled { break }
-                guard let snapshot = await MainActor.run(body: { () -> Chat? in
+                guard let (snapshot, agentP, agentSys) = await MainActor.run(body: { () -> (Chat, ChatParams?, String?)? in
                     guard let self, let j = self.idx(chatID) else { return nil }
+                    GroupTurns.agentNames = Dictionary(uniqueKeysWithValues: AgentStore.shared.agents.map { ("agent:" + $0.id, $0.name) })
+                    var ap: ChatParams? = nil, asys: String? = nil
+                    if m.hasPrefix("agent:"), let a = AgentStore.shared.agents.first(where: { $0.id == String(m.dropFirst(6)) }) {
+                        ap = AgentStore.shared.chatParams(for: a.id, fallback: params); asys = a.systemPrompt
+                    }
                     self.chats[j].messages.append(Message(role: "assistant", content: "", model: m))
-                    self.status = "\(m) is replying (\(n + 1)/\(who.count))…"
-                    var c = self.chats[j]; c.messages.removeLast(); return c
+                    self.status = "\(GroupTurns.label(m)) is replying (\(n + 1)/\(who.count))…"
+                    var c = self.chats[j]; c.messages.removeLast(); return (c, ap, asys)
                 }) else { break }
                 let others = (snapshot.participants ?? []).filter { $0 != m }
-                let hist = GroupTurns.history(for: m, chat: snapshot, system: systemPrompt, others: others, budgetChars: budget)
+                let hist = GroupTurns.history(for: m, chat: snapshot, system: agentSys ?? systemPrompt, others: others, budgetChars: budget)
                 let buf = ReplyBuffer()
                 var reply: String
                 do {
                     var p = params; p.model = m
+                    if let ap = agentP { p = ap; p.maxTokens = params.maxTokens }
                     if m.hasPrefix("local:") { let id = String(m.dropFirst(6)); p.baseURL = try await LocalRuntime.shared.ensure(id); p.apiKey = ""; p.model = id }
                     _ = try await API.stream(p, messages: hist, onToken: { buf.append($0) })
                     reply = buf.text.trimmingCharacters(in: .whitespacesAndNewlines)
                     // strip a self-added "[name]:" prefix
-                    for pre in ["[\(m)]:", "\(m):"] where reply.hasPrefix(pre) { reply = String(reply.dropFirst(pre.count)).trimmingCharacters(in: .whitespaces) }
+                    let lbl = GroupTurns.agentNames[m] ?? m
+                    for pre in ["[\(m)]:", "\(m):", "[\(lbl)]:", "\(lbl):"] where reply.hasPrefix(pre) { reply = String(reply.dropFirst(pre.count)).trimmingCharacters(in: .whitespaces) }
                     if reply.isEmpty { reply = "(no answer)" }
                 } catch is CancellationError { reply = buf.text.isEmpty ? "(stopped)" : buf.text }
                   catch { reply = "⚠️ \(m): \(error.localizedDescription)" }
@@ -96,6 +116,14 @@ extension ChatStore {
             await MainActor.run { self?.status = Task.isCancelled ? "Stopped" : "Group: \(who.count) repl\(who.count == 1 ? "y" : "ies")"; self?.streaming = false; self?.save() }
         }
     }
+    /// Opens (or creates) the sidebar chat for an agent: a one-participant chat with "agent:<id>".
+    func openAgentChat(_ a: AgentProfile) {
+        let key = ["agent:" + a.id]
+        if let c = chats.first(where: { $0.participants == key }) { selection = c.id; return }
+        var c = Chat(); c.title = a.name; c.participants = key; c.turnMode = "all"
+        chats.append(c); selection = c.id; save()
+    }
+    func newParty() { var c = Chat(); c.title = "Party chat"; chats.append(c); selection = c.id; save() }
     func setGroup(_ ps: [String], mode: String) {
         guard let i = idx(selection) else { return }
         chats[i].participants = ps.isEmpty ? nil : ps; chats[i].turnMode = mode; chats[i].nextTurn = 0; save()
@@ -108,11 +136,11 @@ struct GroupSetupView: View {
     @Local var picked: [String] = []
     @Local var mode = "all"
     @Local var loaded = false
-    var all: [String] { Array(Set(store.availableModels + LocalRuntime.shared.models.map { "local:\($0)" })).sorted() }
+    var all: [String] { AgentStore.shared.agents.map { "agent:" + $0.id } + Array(Set(store.availableModels + LocalRuntime.shared.models.map { "local:\($0)" })).sorted() }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Group chat").font(.title2.bold())
-            Text("Pick the models that take part in this chat. Each reply is labelled with its model. Type @name (any part of a model id) to ask only that model, or @all for everyone.")
+            Text("Party chat").font(.title2.bold())
+            Text("Pick the agents (🤖) and models that take part in this chat. Each reply is labelled with its model. Type @name (any part of a model id) to ask only that model, or @all for everyone.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Picker("Turn order", selection: $mode) {
                 Text("Everyone replies, in order").tag("all")
@@ -122,7 +150,7 @@ struct GroupSetupView: View {
                 List {
                     Section("Available") {
                         ForEach(all.filter { !picked.contains($0) }, id: \.self) { m in
-                            HStack { Text(Defaults.displayName(m)).lineLimit(1); Spacer(); Button("Add") { picked.append(m) } }
+                            HStack { Text((m.hasPrefix("agent:") ? "🤖 " : "") + GroupTurns.label(m)).lineLimit(1); Spacer(); Button("Add") { picked.append(m) } }
                         }
                     }
                 }.frame(minWidth: 280)
@@ -130,7 +158,7 @@ struct GroupSetupView: View {
                     Section("In this chat (turn order)") {
                         ForEach(Array(picked.enumerated()), id: \.element) { n, m in
                             HStack {
-                                Text("\(n + 1). \(m)").foregroundStyle(GroupColors.color(m)).lineLimit(1); Spacer()
+                                Text("\(n + 1). \(GroupTurns.label(m))").foregroundStyle(GroupColors.color(m)).lineLimit(1); Spacer()
                                 Button { if n > 0 { picked.swapAt(n, n - 1) } } label: { Image(systemName: "arrow.up") }.buttonStyle(.borderless).disabled(n == 0)
                                 Button { picked.remove(at: n) } label: { Image(systemName: "xmark.circle") }.buttonStyle(.borderless)
                             }
@@ -139,12 +167,12 @@ struct GroupSetupView: View {
                 }.frame(minWidth: 280)
             }.frame(height: 280)
             HStack {
-                if store.current?.participants != nil { Button("Turn off group chat", role: .destructive) { store.setGroup([], mode: mode); dismiss() } }
+                if store.current?.participants != nil { Button("Turn off party chat", role: .destructive) { store.setGroup([], mode: mode); dismiss() } }
                 Spacer()
                 Button("Cancel") { dismiss() }
                 Button("Save") { store.setGroup(picked, mode: mode); dismiss() }.keyboardShortcut(.defaultAction).disabled(picked.count == 1)
             }
-            if picked.count == 1 { Text("Pick at least two models (or none to turn group chat off).").font(.caption).foregroundStyle(.orange) }
+            if picked.count == 1 { Text("Pick at least two agents or models (or none to turn group chat off).").font(.caption).foregroundStyle(.orange) }
         }
         .padding(20).frame(width: 640)
         .onAppear { if !loaded { picked = store.current?.participants ?? []; mode = store.current?.turnMode ?? "all"; loaded = true } }

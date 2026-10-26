@@ -29,6 +29,8 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
 .msg{white-space:pre-wrap;padding:8px 10px;border-radius:8px;margin:6px 0;max-width:80%}
 .msg.user{background:#1a2a44;margin-left:auto}
 .msg.assistant{background:#162018}
+.sidehead{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:12px 0 4px}
+.msg .who{display:block;font-size:11px;color:#e0263a;font-weight:600;margin-bottom:2px}
 #chatlog{height:calc(100vh - 220px);overflow:auto;padding:8px}
 .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#1a2433;color:var(--muted);font-size:11px}
 .ok{color:var(--ok)}.bad{color:var(--bad)}
@@ -70,8 +72,18 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
 </header>
 <main>
   <aside id="chatside">
-    <button class="primary" id="newchat" style="margin-bottom:10px">+ New chat</button>
-    <div id="chatlist"></div>
+    <button class="primary" id="newchat" style="margin-bottom:6px">+ New chat</button>
+    <button id="newparty" style="margin-bottom:10px">+ Party chat</button>
+    <div id="partyPick" class="card" style="display:none;font-size:13px">
+      <b>Party chat</b><div class="muted">Pick agents and models to work together.</div>
+      <div id="partyOpts" style="max-height:220px;overflow:auto;margin:6px 0"></div>
+      <input id="partyTitle" placeholder="Title (optional)" style="width:100%"/>
+      <div class="row" style="margin-top:6px"><button class="primary" id="partyGo">Start</button><button id="partyCancel">Cancel</button></div>
+      <div id="partyMsg" class="bad"></div>
+    </div>
+    <div class="sidehead">Chats</div><div id="chatlist"></div>
+    <div class="sidehead">Agents</div><div id="agentChats"></div>
+    <div class="sidehead">Party chats</div><div id="partyList"></div>
   </aside>
   <section class="panel on" id="tab-chat">
     <div class="row" style="margin-bottom:8px">

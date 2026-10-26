@@ -135,12 +135,27 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		id, _ := in["id"].(string)
 		for _, c := range s.St.Chats {
 			if c.ID == id {
-				return map[string]any{"id": c.ID, "title": c.Title, "messages": c.Messages}
+				return map[string]any{"id": c.ID, "title": c.Title, "messages": c.Messages, "kind": c.Kind, "agentID": c.AgentID, "members": c.Members}
 			}
 		}
 		return map[string]any{"messages": []any{}}
 	case "chat.send":
 		return s.chatSend(in)
+	case "agent.chat":
+		return s.agentChat(str(in, "agent"))
+	case "party.new":
+		ms := []string{}
+		if a, ok := in["members"].([]any); ok {
+			for _, x := range a {
+				if v, ok := x.(string); ok && v != "" {
+					ms = append(ms, v)
+				}
+			}
+		}
+		return s.partyNew(str(in, "title"), ms)
+	case "chat.delete":
+		s.St.DeleteChat(str(in, "id"))
+		return map[string]any{"ok": true}
 	case "agent.save":
 		return s.agentSave(in)
 	case "agent.testVortex":
@@ -176,7 +191,7 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 func chatSummaries(cs []store.Chat) []map[string]any {
 	out := make([]map[string]any, 0, len(cs))
 	for _, c := range cs {
-		out = append(out, map[string]any{"id": c.ID, "title": c.Title})
+		out = append(out, map[string]any{"id": c.ID, "title": c.Title, "kind": c.Kind, "agentID": c.AgentID, "members": c.Members})
 	}
 	return out
 }
@@ -239,6 +254,9 @@ func (s *Server) chatSend(in map[string]any) map[string]any {
 	comp := fillComposer(s.St.Settings.Composer)
 	if c.Composer != nil {
 		comp = fillComposer(*c.Composer)
+	}
+	if c.Kind == "agent" || c.Kind == "party" {
+		return s.groupSend(c, comp)
 	}
 	if strings.HasPrefix(model, "vortex") && in["modelExplicit"] != true {
 		model = comp.Tier

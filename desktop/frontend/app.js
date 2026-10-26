@@ -38,17 +38,40 @@ function renderModels(){
   sel.innerHTML = state.models.map(m=>`<option>${m}</option>`).join('');
   if(cur) sel.value=cur; else sel.value='vortex';
 }
+function esc(t){ return String(t??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function chatBtn(c,label){ return `<button data-id="${esc(c.id)}" class="${c.id===state.active?'on':''}">${esc(label||c.title||'Chat')}</button>`; }
 function renderChats(){
-  $('#chatlist').innerHTML = state.chats.map(c=>`<button data-id="${c.id}" class="${c.id===state.active?'on':''}">${c.title||'Chat'}</button>`).join('');
-  $$('#chatlist button').forEach(b=>b.onclick=()=>{ state.active=b.dataset.id; loadChat(); });
+  const plain=state.chats.filter(c=>!c.kind), party=state.chats.filter(c=>c.kind==='party');
+  $('#chatlist').innerHTML = plain.map(c=>chatBtn(c)).join('') || '<em class="muted">No chats yet</em>';
+  $('#partyList').innerHTML = party.map(c=>chatBtn(c,'👥 '+c.title)).join('') || '<em class="muted">None yet</em>';
+  // every agent appears in the sidebar; clicking opens (or creates) its chat
+  $('#agentChats').innerHTML = state.agents.map(a=>{ const c=state.chats.find(x=>x.kind==='agent'&&x.agentID===a.id);
+    return `<button data-agent="${esc(a.id)}" class="${c&&c.id===state.active?'on':''}">🤖 ${esc(a.name)} <span class="muted" style="font-size:11px">${esc(a.model)}</span></button>`; }).join('');
+  $$('#chatside [data-id]').forEach(b=>b.onclick=()=>{ state.active=b.dataset.id; loadChat(); renderChats(); });
+  $$('#agentChats [data-agent]').forEach(b=>b.onclick=async()=>{ const r=await bridge.call('agent.chat',{agent:b.dataset.agent}); state.active=r.id; await refresh(); loadChat(); });
 }
+$('#newparty').onclick=()=>{
+  const opts=[...state.agents.map(a=>({id:a.id,label:'🤖 '+a.name+' · '+a.model})), ...state.models.map(m=>({id:'model:'+m,label:'🧠 '+m}))];
+  $('#partyOpts').innerHTML=opts.map(o=>`<label style="display:block"><input type="checkbox" value="${esc(o.id)}"/> ${esc(o.label)}</label>`).join('');
+  $('#partyMsg').textContent=''; $('#partyPick').style.display='';
+};
+$('#partyCancel').onclick=()=>$('#partyPick').style.display='none';
+$('#partyGo').onclick=async()=>{
+  const members=$$('#partyOpts input:checked').map(i=>i.value);
+  const r=await bridge.call('party.new',{members,title:$('#partyTitle').value.trim()});
+  if(!r.ok){ $('#partyMsg').textContent=r.message||'failed'; return; }
+  $('#partyPick').style.display='none'; $('#partyTitle').value=''; state.active=r.id; await refresh(); loadChat();
+};
+function addMsg(role,content,name){ const d=document.createElement('div'); d.className='msg '+role;
+  if(name){ const w=document.createElement('span'); w.className='who'; w.textContent=name; d.appendChild(w); }
+  d.appendChild(document.createTextNode(content)); $('#chatlog').appendChild(d); return d; }
 async function loadChat(){
   loadComposer();
   const c = await bridge.call('chat.get',{id:state.active});
   const log=$('#chatlog'); log.innerHTML='';
-  (c.messages||[]).forEach(m=>{
-    const d=document.createElement('div'); d.className='msg '+m.role; d.textContent=m.content; log.appendChild(d);
-  });
+  state.kind=c.kind||'';
+  $('#agentPick').disabled=$('#modelPick').disabled=!!c.kind;
+  (c.messages||[]).forEach(m=>addMsg(m.role,m.content,m.name));
   log.scrollTop=log.scrollHeight;
 }
 $('#newchat').onclick=async()=>{ const c=await bridge.call('chat.new',{}); state.active=c.id; await refresh(); loadChat(); };
@@ -58,10 +81,11 @@ $('#send').onclick=async()=>{
   if(!state.active){ const c=await bridge.call('chat.new',{}); state.active=c.id; }
   const log=$('#chatlog');
   const u=document.createElement('div'); u.className='msg user'; u.textContent=text; log.appendChild(u);
-  const a=document.createElement('div'); a.className='msg assistant'; a.textContent='…'; log.appendChild(a);
+  const a=document.createElement('div'); a.className='msg assistant'; a.textContent=state.kind==='party'?'Agents are replying in turn…':'…'; log.appendChild(a);
   if(!state.comp?.perChat) await saveComposer(false);
   const r=await bridge.call('chat.send',{id:state.active, text, agent:$('#agentPick').value, model:$('#modelPick').value, modelExplicit:state.modelExplicit});
-  a.textContent = r.reply || r.error || '(no reply)';
+  if(r.replies&&r.replies.length){ a.remove(); r.replies.forEach(x=>addMsg('assistant',x.content,x.name)); }
+  else a.textContent = r.reply || r.error || '(no reply)';
   log.scrollTop=log.scrollHeight; refresh();
 };
 $('#aSave').onclick=async()=>{
