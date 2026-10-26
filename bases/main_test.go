@@ -191,3 +191,21 @@ func TestRemotePlaintextRefused(t *testing.T) {
 		t.Fatal("remote plaintext allowed")
 	}
 }
+
+func TestIndexCapacityCannotMakeExistingCatalogUnreadable(t *testing.T) {
+	h, token, _ := fixture(t)
+	c, err := h.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Sources = append(c.Sources, Source{ID: uid(), Name: "Oversized index", Text: strings.Repeat("x", maxCatalogBytes)})
+	if err = h.save(c); err == nil {
+		t.Fatal("oversized catalog was written")
+	}
+	if _, err = h.load(); err != nil {
+		t.Fatal("previous catalog was not preserved", err)
+	}
+	if w := request(h, token, "GET", "/v1/manifest"); w.Code != 200 {
+		t.Fatal("existing Base stopped working")
+	}
+}

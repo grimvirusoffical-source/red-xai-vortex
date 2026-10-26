@@ -34,6 +34,9 @@ the hosted copy. Default quota is 2 GiB, up to 1,000 sources; each imported file
 limited to 128 MiB. Text/transcript input is bounded to 1 MiB. Text files are indexed
 as UTF-8; other formats retain MIME type, size, checksum, and an optional description
 or transcript. Text search ranks matching words; it is not a semantic/vector index.
+The serialized metadata/text index is limited to 32 MiB; an import that exceeds it
+is rejected while preserving the existing Base. Split larger indexes into multiple
+Bases. Raw media storage is governed separately by the configured storage quota.
 
 Google Docs and other HTTPS document URLs can be registered with exported text.
 The host does not fetch arbitrary remote URLs or bypass document access controls.

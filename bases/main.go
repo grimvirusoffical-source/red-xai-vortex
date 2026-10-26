@@ -29,6 +29,7 @@ import (
 const maxSourceBytes int64 = 128 << 20
 const maxTextBytes = 1 << 20
 const maxManifestText = 1 << 20
+const maxCatalogBytes = 32 << 20
 
 type Source struct {
 	ID        string `json:"id"`
@@ -79,7 +80,7 @@ func (h *Host) load() (Catalog, error) {
 	if e != nil {
 		return c, e
 	}
-	if len(b) > 32<<20 {
+	if len(b) > maxCatalogBytes {
 		return c, errors.New("catalog too large")
 	}
 	e = json.Unmarshal(b, &c)
@@ -92,6 +93,9 @@ func (h *Host) save(c Catalog) error {
 	b, e := json.MarshalIndent(c, "", "  ")
 	if e != nil {
 		return e
+	}
+	if len(b) > maxCatalogBytes {
+		return errors.New("Base metadata/text index exceeds 32 MiB; split this collection into smaller Bases")
 	}
 	f, e := os.CreateTemp(h.dir, ".catalog-*")
 	if e != nil {
