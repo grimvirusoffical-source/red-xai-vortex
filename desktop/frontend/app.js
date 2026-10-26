@@ -3,7 +3,7 @@ const bridge = window.vortex || {
 };
 const $ = (s)=>document.querySelector(s);
 const $$ = (s)=>[...document.querySelectorAll(s)];
-let state = {chats:[], active:null, agents:[], models:['vortex']};
+let state = {chats:[], active:null, agents:[], models:['vortex'], tiers:[], comp:null, modelExplicit:false};
 
 $$('.tabs button').forEach(b=>b.onclick=()=>{
   $$('.tabs button').forEach(x=>x.classList.toggle('on',x===b));
@@ -43,6 +43,7 @@ function renderChats(){
   $$('#chatlist button').forEach(b=>b.onclick=()=>{ state.active=b.dataset.id; loadChat(); });
 }
 async function loadChat(){
+  loadComposer();
   const c = await bridge.call('chat.get',{id:state.active});
   const log=$('#chatlog'); log.innerHTML='';
   (c.messages||[]).forEach(m=>{
@@ -58,7 +59,8 @@ $('#send').onclick=async()=>{
   const log=$('#chatlog');
   const u=document.createElement('div'); u.className='msg user'; u.textContent=text; log.appendChild(u);
   const a=document.createElement('div'); a.className='msg assistant'; a.textContent='…'; log.appendChild(a);
-  const r=await bridge.call('chat.send',{id:state.active, text, agent:$('#agentPick').value, model:$('#modelPick').value});
+  if(!state.comp?.perChat) await saveComposer(false);
+  const r=await bridge.call('chat.send',{id:state.active, text, agent:$('#agentPick').value, model:$('#modelPick').value, modelExplicit:state.modelExplicit});
   a.textContent = r.reply || r.error || '(no reply)';
   log.scrollTop=log.scrollHeight; refresh();
 };
@@ -197,3 +199,31 @@ $('#nRefresh').onclick=nRefresh;
 $('#nAll').onclick=async()=>{await bridge.call('notif.read',{all:true});nRefresh();};
 if('Notification' in window && Notification.permission==='default') Notification.requestPermission();
 nRefresh(); setInterval(nRefresh,45000);
+
+// ---- Composer controls: Quick replies, strength slider, reply length (per chat, with a global default) ----
+async function loadComposer(){
+  const r=await bridge.call('composer.get',{id:state.active||''});
+  if(!r.ok) return;
+  state.tiers=r.tiers; state.comp=r;
+  const c=r.composer;
+  $('#cQuick').checked=!!c.quick; $('#cLen').value=c.length;
+  $('#cTier').value=Math.max(0,r.tiers.findIndex(t=>t.ID===c.tier));
+  showTier();
+  $('#cScope').textContent=r.perChat?'Saved for this chat':'Using your default';
+}
+function showTier(){
+  const t=state.tiers[+$('#cTier').value]; if(!t) return;
+  $('#cTierName').textContent=t.Name; $('#cTierName').title=t.Model;
+  $('#cTierSpeed').textContent=$('#cQuick').checked?'Quick: Vortex Mini · ≈14 tok/s':t.Speed;
+}
+function compVals(){ const t=state.tiers[+$('#cTier').value]; return {tier:t?t.ID:'vortex', length:$('#cLen').value, quick:$('#cQuick').checked}; }
+async function saveComposer(global){
+  if(!state.active && !global){ return; }
+  const r=await bridge.call('composer.set',Object.assign({id:state.active||'', global}, compVals()));
+  if(r.ok && state.comp){ state.comp.perChat=!!state.active; $('#cScope').textContent=global?'Saved as default':'Saved for this chat'; }
+}
+$('#cTier').oninput=showTier;
+['cTier','cLen','cQuick'].forEach(id=>$('#'+id).onchange=()=>{ showTier(); saveComposer(false); });
+$('#cDefault').onclick=()=>saveComposer(true);
+$('#modelPick').onchange=()=>{ state.modelExplicit=!$('#modelPick').value.startsWith('vortex'); };
+loadComposer();

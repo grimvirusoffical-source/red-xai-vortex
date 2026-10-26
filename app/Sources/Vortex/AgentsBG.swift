@@ -7,7 +7,7 @@ import UserNotifications
 struct BGAgent: Codable, Identifiable, Equatable {
     var id: String
     var name: String = ""
-    var model: String = "vortex"
+    var model: String = "vortex-mini"
     var system: String = ""
     var goal: String = ""
     var interval_s: Int = 300
@@ -107,7 +107,7 @@ struct BackgroundAgentsView: View {
             HStack {
                 Text("Background agents").font(.headline)
                 Spacer()
-                Button { edit = BGAgent(id: "", name: "New agent", model: chatModel) } label: { Label("New", systemImage: "plus") }
+                Button { edit = BGAgent(id: "", name: "New agent", model: "vortex-mini") } label: { Label("New", systemImage: "plus") }
                 Button { Task { await s.refresh() } } label: { Image(systemName: "arrow.clockwise") }
             }
             Text("These run on the Vortex server, or on your Cloud PC if you have approved access. They keep going after you close the app, until you switch them off. Click Chat to talk to an agent; it has its own history.")

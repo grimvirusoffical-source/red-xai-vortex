@@ -30,6 +30,10 @@ struct ConnectionSettings: View {
     @Local var test = ""
     var body: some View {
         Form {
+            Section("Updates") {
+                Toggle("Auto-update from GitHub Releases (SHA256 + Developer ID verified)", isOn: Binding(get: { !UserDefaults.standard.bool(forKey: "noAutoUpdate") }, set: { UserDefaults.standard.set(!$0, forKey: "noAutoUpdate") }))
+                Button("Check for updates now") { Task { await Updater.shared.check() } }
+            }
             Section("Server") {
                 TextField("Server URL (OpenAI-compatible, ends in /v1)", text: $serverURL)
                 HStack {

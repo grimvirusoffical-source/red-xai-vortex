@@ -107,6 +107,30 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		c := store.Chat{ID: id, Title: "New chat", Updated: time.Now()}
 		s.St.SaveChat(c)
 		return map[string]any{"id": id}
+	case "composer.get":
+		comp := fillComposer(s.St.Settings.Composer)
+		perChat := false
+		for _, c := range s.St.Chats {
+			if c.ID == str(in, "id") && c.Composer != nil {
+				comp, perChat = fillComposer(*c.Composer), true
+			}
+		}
+		return map[string]any{"ok": true, "composer": comp, "perChat": perChat, "tiers": Tiers, "default": fillComposer(s.St.Settings.Composer)}
+	case "composer.set":
+		comp := fillComposer(store.Composer{Tier: str(in, "tier"), Length: str(in, "length"), Quick: in["quick"] == true})
+		if in["global"] == true {
+			st := s.St.Settings
+			st.Composer = comp
+			s.St.SetSettings(st)
+		}
+		for i := range s.St.Chats {
+			if s.St.Chats[i].ID == str(in, "id") {
+				c := s.St.Chats[i]
+				c.Composer = &comp
+				s.St.SaveChat(c)
+			}
+		}
+		return map[string]any{"ok": true, "composer": comp}
 	case "chat.get":
 		id, _ := in["id"].(string)
 		for _, c := range s.St.Chats {
@@ -212,11 +236,25 @@ func (s *Server) chatSend(in map[string]any) map[string]any {
 		}
 		c.Title = t
 	}
+	comp := fillComposer(s.St.Settings.Composer)
+	if c.Composer != nil {
+		comp = fillComposer(*c.Composer)
+	}
+	if strings.HasPrefix(model, "vortex") && in["modelExplicit"] != true {
+		model = comp.Tier
+	}
+	if comp.Quick && strings.HasPrefix(model, "vortex") {
+		model = "vortex-mini"
+	}
+	maxTok, hint := lengthParams(comp)
 	msgs := []map[string]string{}
+	if hint != "" {
+		msgs = append(msgs, map[string]string{"role": "system", "content": hint})
+	}
 	for _, m := range c.Messages {
 		msgs = append(msgs, map[string]string{"role": m.Role, "content": m.Content})
 	}
-	body := map[string]any{"model": model, "messages": msgs, "temperature": 0.4, "max_tokens": 1024}
+	body := map[string]any{"model": model, "messages": msgs, "temperature": 0.4, "max_tokens": maxTok}
 	raw, _ := json.Marshal(body)
 	cli := &http.Client{Timeout: 600 * time.Second}
 	var res *http.Response
@@ -317,7 +355,7 @@ func (s *Server) agentSave(in map[string]any) map[string]any {
 		a.Provider = "vortex"
 	}
 	if a.Model == "" {
-		a.Model = "vortex"
+		a.Model = "vortex-mini" // new agents default to the fast tier
 	}
 	if k := str(in, "apiKey"); k != "" && a.Provider != "vortex" {
 		_ = keyring.Set("agent-key-"+a.ID, k)

@@ -21,6 +21,7 @@ struct Chat: Identifiable, Codable, Equatable {
     var participants: [String]? = nil   // group chat: models taking part, in turn order
     var turnMode: String? = nil         // "all" (each replies in order) | "rotate" (one per turn)
     var nextTurn: Int? = nil
+    var composer: ComposerSettings? = nil  // nil = use the global default
 }
 
 struct Persona: Identifiable, Codable, Equatable, Hashable {
@@ -47,7 +48,7 @@ enum Defaults {
         return id
     }
     static let fallbackModel = "dolphin3-llama3.1-8b-q8"
-    static let knownModels = ["vortex", "red-xai", "qwen2.5-coder-14b", "r1-distill-qwen-14b", "mistral-small-24b", "dolphin2.7-mixtral-8x7b-iq4xs", "dolphin3-mistral-24b-q6k", "dolphin3-llama3.1-8b-q8", "dolphin3-llama3.2-3b-q4km"]
+    static let knownModels = ["vortex", "vortex-mini", "vortex-quick", "vortex-pro", "vortex-max", "red-xai", "qwen2.5-coder-14b", "r1-distill-qwen-14b", "mistral-small-24b", "dolphin2.7-mixtral-8x7b-iq4xs", "dolphin3-mistral-24b-q6k", "dolphin3-llama3.1-8b-q8", "dolphin3-llama3.2-3b-q4km"]
     static let systemPrompt = "You are Vortex, the Red-XAI Vortex assistant: sharp, friendly and direct. Answer clearly."
     static let personas: [Persona] = [
         Persona(name: "Vortex", prompt: systemPrompt),

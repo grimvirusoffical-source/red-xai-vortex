@@ -192,7 +192,7 @@ struct AgentsView: View {
     func label(_ p: String) -> String { AgentProfile.providers.first { $0.0 == p }?.1 ?? p }
     func newDraft() {
         let id = "agent-" + String((0..<8).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
-        draft = AgentProfile(id: id, name: "New agent", provider: "vortex", model: Defaults.model)
+        draft = AgentProfile(id: id, name: "New agent", provider: "vortex", model: "vortex-mini")
         apiKey = ""; editing = true
     }
     func saveDraft() {

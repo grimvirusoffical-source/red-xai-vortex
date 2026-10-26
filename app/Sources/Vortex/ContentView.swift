@@ -127,6 +127,7 @@ struct ChatView: View {
                     if !attachError.isEmpty { Text(attachError).font(.caption).foregroundStyle(.red) }
                 }.padding(.horizontal, 10).padding(.top, 8)
             }
+            ComposerBar()
             HStack(alignment: .bottom, spacing: 8) {
                 ChatPlusMenu(upload: pickFiles) { tab in HubNav.open(tab) }
                 ComposeField(text: $input, sendOnEnter: sendOnEnter, fontSize: fontSize, onSend: send)
@@ -188,8 +189,11 @@ struct ChatView: View {
         if a.contains(where: { $0.kind == "image" }) && !(model.contains("vision") || model.contains("vl") || model.hasPrefix("ext:")) {
             store.status = "Tip: images need a vision model (e.g. gemma3-12b-vision)."
         }
-        let sp = AgentStore.shared.active?.systemPrompt ?? systemPrompt
-        store.send(t, attachments: a, systemPrompt: skills.systemPrompt(base: sp), contextTokens: contextTokens, params: p)
+        var sp = skills.systemPrompt(base: AgentStore.shared.active?.systemPrompt ?? systemPrompt)
+        let comp = store.current?.composer ?? Composer.globalDefault
+        Composer.apply(comp, params: &p, systemPrompt: &sp)
+        if store.current?.composer == nil, let i = store.chats.firstIndex(where: { $0.id == store.selection }) { store.chats[i].composer = comp }
+        store.send(t, attachments: a, systemPrompt: sp, contextTokens: contextTokens, params: p)
     }
     func pickFiles() {
         let p = NSOpenPanel(); p.allowsMultipleSelection = true; p.canChooseDirectories = false

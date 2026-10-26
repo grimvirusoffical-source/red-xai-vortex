@@ -1,13 +1,10 @@
-// Package update checks GitHub Releases, verifies SHA256SUMS, installs and relaunches.
+// Package update checks GitHub Releases, verifies the signed release manifest, installs and relaunches.
 package update
 
 import (
 	"archive/tar"
 	"archive/zip"
-	"bufio"
 	"compress/gzip"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -110,44 +107,46 @@ func fetch(url string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(res.Body, 1<<30))
 }
 
-// Apply downloads, verifies SHA256 against SHA256SUMS, installs over the running app and relaunches.
+// Verifier checks a downloaded release package against the signed release manifest.
+// Official builds register one at build time; when none is registered, updates are refused (fail closed).
+// SHA256SUMS on the release page is public information only and is not trusted here.
+var Verifier func(manifest, sig []byte, name string, data []byte) error
+
+// Apply downloads, verifies the signed release manifest, installs over the running app and relaunches.
 func Apply(r *Release) error {
-	var pkg, sums string
+	if Verifier == nil {
+		return errors.New("this build cannot verify signed releases; download updates manually")
+	}
+	var pkg, man, sig string
 	for _, a := range r.Assets {
 		switch a.Name {
 		case assetName():
 			pkg = a.URL
-		case "SHA256SUMS":
-			sums = a.URL
+		case "release-manifest.json":
+			man = a.URL
+		case "release-manifest.sig":
+			sig = a.URL
 		}
 	}
-	if pkg == "" || sums == "" {
-		return errors.New("release is missing the package or SHA256SUMS")
+	if pkg == "" || man == "" || sig == "" {
+		return errors.New("release is missing the package or its signed manifest")
 	}
-	sb, err := fetch(sums)
+	mb, err := fetch(man)
 	if err != nil {
 		return err
 	}
-	want := ""
-	sc := bufio.NewScanner(strings.NewReader(string(sb)))
-	for sc.Scan() {
-		f := strings.Fields(sc.Text())
-		if len(f) == 2 && strings.TrimPrefix(f[1], "*") == assetName() {
-			want = strings.ToLower(f[0])
-		}
-	}
-	if want == "" {
-		return errors.New("no checksum for " + assetName())
+	sb, err := fetch(sig)
+	if err != nil {
+		return err
 	}
 	data, err := fetch(pkg)
 	if err != nil {
 		return err
 	}
-	h := sha256.Sum256(data)
-	if hex.EncodeToString(h[:]) != want {
-		return errors.New("SHA256 mismatch: update rejected")
+	if err := Verifier(mb, sb, assetName(), data); err != nil {
+		return errors.New("update rejected: " + err.Error())
 	}
-	exe, err := os.Executable()
+	exe, err := exePath()
 	if err != nil {
 		return err
 	}
@@ -195,8 +194,14 @@ func Apply(r *Release) error {
 }
 
 // Relaunch starts the new binary with the same args and exits.
+// exePath is the installed executable path, even after the running file was renamed to .old.
+func exePath() (string, error) {
+	exe, err := os.Executable()
+	return strings.TrimSuffix(exe, ".old"), err
+}
+
 func Relaunch() {
-	exe, _ := os.Executable()
+	exe, _ := exePath()
 	cmd := exec.Command(exe, os.Args[1:]...)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Start(); err == nil {

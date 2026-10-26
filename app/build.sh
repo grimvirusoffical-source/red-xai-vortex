@@ -23,6 +23,10 @@ if [ -x "$W" ]; then cp "$W" "$APP/Contents/Resources/ggml-rpc-server"
 mkdir -p "$APP/Contents/Resources/Help"; cp help/*.md "$APP/Contents/Resources/Help/" 2>/dev/null || cp ../docs/*.md "$APP/Contents/Resources/Help/" 2>/dev/null || true
 # server installer for one-click Servers > Install
 [ -f server/install.sh ] && cp server/install.sh "$APP/Contents/Resources/install.sh"
+# Release verifier (private source, built with rsx; universal binary in ~/Projects/redx-verify)
+RV="$HOME/Projects/redx-verify"
+if [ -x "$RV" ]; then cp "$RV" "$APP/Contents/Resources/redx-verify"
+  codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP/Contents/Resources/redx-verify" 2>&1 | tail -1; fi
 # RedX Link helper (private source, built separately with rsx; universal binary in ~/Projects/redx-link)
 RL=~/Projects/redx-link/redx-link
 if [ -x "$RL" ]; then cp "$RL" "$APP/Contents/Resources/redx-link"
@@ -40,8 +44,8 @@ cat > "$APP/Contents/Info.plist" <<P
 <key>CFBundleExecutable</key><string>Vortex</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>2.2</string>
-<key>CFBundleVersion</key><string>41</string>
+<key>CFBundleShortVersionString</key><string>2.3</string>
+<key>CFBundleVersion</key><string>44</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>

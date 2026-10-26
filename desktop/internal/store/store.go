@@ -28,6 +28,14 @@ type Chat struct {
 	Title    string    `json:"title"`
 	Messages []Msg     `json:"messages"`
 	Updated  time.Time `json:"updated"`
+	Composer *Composer `json:"composer,omitempty"` // per-chat composer settings; nil = global default
+}
+
+// Composer holds the chat composer controls: strength tier, reply length and Quick replies.
+type Composer struct {
+	Tier   string `json:"tier"`   // vortex-mini | vortex-std | vortex-pro | vortex
+	Length string `json:"length"` // short | normal | long
+	Quick  bool   `json:"quick"`
 }
 type Msg struct {
 	Role    string `json:"role"`
@@ -37,7 +45,8 @@ type Msg struct {
 type Settings struct {
 	BaseURL      string `json:"baseURL"`
 	ActiveID     string `json:"activeAgent"`
-	NoAutoUpdate bool   `json:"noAutoUpdate"`
+	NoAutoUpdate bool     `json:"noAutoUpdate"`
+	Composer     Composer `json:"composer"` // global default for new chats
 }
 
 type Store struct {

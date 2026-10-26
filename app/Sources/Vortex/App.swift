@@ -20,7 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         Process.launchedProcess(launchPath: "/usr/bin/pkill", arguments: ["-f", "Vortex.app/Contents/Resources/ggml-rpc-server"])
-        MainActor.assumeIsolated { _ = PluginStore.shared; _ = SkillStore.shared; _ = AgentStore.shared; Task { await MCPStore.shared.connectEnabled() }; Task { await ServerStore.shared.healthCheckActive() } }   // seed starter plugins/skills on first launch
+        MainActor.assumeIsolated { _ = PluginStore.shared; _ = SkillStore.shared; _ = AgentStore.shared; Task { await MCPStore.shared.connectEnabled() }; Task { await ServerStore.shared.healthCheckActive() }; Updater.shared.start() }   // seed starter plugins/skills on first launch
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { SelfTest.arg == nil }
     func applicationWillTerminate(_ n: Notification) { MainActor.assumeIsolated {

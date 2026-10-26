@@ -84,6 +84,17 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
       <textarea id="prompt" rows="2" placeholder="Message Vortex…"></textarea>
       <button class="primary" id="send">Send</button>
     </div>
+    <div class="row composer" id="composer" style="margin-top:6px;gap:12px;flex-wrap:wrap;font-size:13px">
+      <label title="Fast, short answers on the quickest model"><input type="checkbox" id="cQuick"/> Quick replies</label>
+      <label style="display:flex;align-items:center;gap:6px">Strength
+        <input type="range" id="cTier" min="0" max="3" step="1" value="3" style="width:120px"/>
+        <span id="cTierName" class="pill">Vortex Max</span>
+      </label>
+      <span id="cTierSpeed" style="color:var(--muted)"></span>
+      <label>Length <select id="cLen"><option value="short">Short</option><option value="normal" selected>Normal</option><option value="long">Long</option></select></label>
+      <button id="cDefault" title="Use these settings for new chats">Set as default</button>
+      <span id="cScope" style="color:var(--muted)"></span>
+    </div>
   </section>
   <section class="panel" id="tab-agents" style="grid-column:1/-1">
     <div class="card">
@@ -103,7 +114,7 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
           <option value="ollama">Ollama</option>
           <option value="openai_compat">OpenAI-compatible</option>
         </select>
-        <input id="aModel" placeholder="Model id" value="vortex" style="max-width:160px"/>
+        <input id="aModel" placeholder="Model id" value="vortex-mini" style="max-width:160px"/>
         <input id="aBase" placeholder="Base URL (optional)" style="max-width:220px"/>
         <input id="aKey" type="password" placeholder="API key (external)" style="max-width:180px"/>
         <button class="primary" id="aSave">Save agent</button>

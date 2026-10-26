@@ -5,7 +5,6 @@ The gateway needs a CSPRNG, HMAC-SHA256 (key hashing) and a 256-bit AEAD (provid
 | Tag | Backend |
 |---|---|
 | `stdcrypto` | Go standard library (AES-256-GCM). Use this for normal installs |
-| `rsx` | Red-SecretsXAI SDK (private, not included). Needs `go mod edit -require redsecretsxai@v0.0.0 -replace redsecretsxai=/path/to/sdk/go` |
 | *(none)* | stub that refuses to run |
 
 ```bash
