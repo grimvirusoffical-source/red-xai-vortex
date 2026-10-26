@@ -34,6 +34,8 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
 #chatlog{height:calc(100vh - 220px);overflow:auto;padding:8px}
 .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#1a2433;color:var(--muted);font-size:11px}
 .ok{color:var(--ok)}.bad{color:var(--bad)}
+.ev{padding:4px 0;border-bottom:1px solid #1d2733}.ev .k{display:inline-block;min-width:118px;color:var(--muted)}.ev details{color:var(--muted);white-space:pre-wrap}
+.run{padding:6px 0;border-bottom:1px solid #1d2733}.st-done{color:#46a758}.st-error,.st-stopped{color:#e5484d}.st-waiting{color:#f5a623}
 </style>
 </head>
 <body>
@@ -61,6 +63,7 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
   <div class="tabs">
     <button class="on" data-tab="chat">Chat</button>
     <button data-tab="agents">Agents</button>
+    <button data-tab="activity" id="actTabBtn">Activity</button>
     <button data-tab="integrations">Integrations</button>
     <button data-tab="media">Media</button>
     <button data-tab="plugins">Plugins</button>
@@ -106,6 +109,30 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
       <label>Length <select id="cLen"><option value="short">Short</option><option value="normal" selected>Normal</option><option value="long">Long</option></select></label>
       <button id="cDefault" title="Use these settings for new chats">Set as default</button>
       <span id="cScope" style="color:var(--muted)"></span>
+    </div>
+  </section>
+  <section class="panel" id="tab-activity" style="grid-column:1/-1">
+    <div class="card">
+      <h3>Run a task</h3>
+      <div class="row"><select id="rAgent" style="max-width:200px"></select>
+        <input id="rTask" style="flex:1" placeholder="Give the agent a task, for example: summarise https://example.com into ~/notes.txt"/>
+        <button class="primary" id="rGo">Start</button></div>
+      <p class="muted" style="font-size:12px">The agent can read web pages and files in your home folder by itself. It asks you before writing files or running commands (commands only if PC control is on for that agent). In an agent chat you can also type <code>/run your task</code>.</p>
+      <div id="rList"></div>
+    </div>
+    <div class="card">
+      <h3>Dashboard</h3>
+      <div id="actStats"></div>
+    </div>
+    <div class="card">
+      <h3>Activity log</h3>
+      <div class="row"><select id="aFilter" style="max-width:200px"><option value="">All agents</option></select>
+        <select id="aKind" style="max-width:160px"><option value="">Everything</option><option value="run">Runs</option><option value="tool">Actions</option><option value="approval">Approvals</option><option value="chat">Chat replies</option><option value="error">Errors</option></select>
+        <input id="aQ" style="flex:1" placeholder="Search the log…"/>
+        <button id="aExpJ">Export JSON</button><button id="aExpC">Export CSV</button></div>
+      <div id="aExpMsg" class="ok" style="font-size:12px"></div>
+      <div id="actLog" style="font-size:13px;max-height:55vh;overflow:auto"></div>
+      <p class="muted" style="font-size:12px">The log is append-only and stays on this computer. Keys, tokens and passwords are masked before anything is written.</p>
     </div>
   </section>
   <section class="panel" id="tab-agents" style="grid-column:1/-1">
@@ -198,6 +225,7 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
     </div>
   </section>
 </main>
+<div id="apBar" style="display:none;position:fixed;right:16px;bottom:16px;z-index:40;max-width:440px" class="card"></div>
 <footer style="padding:8px 16px;color:var(--muted);font-size:12px;border-top:1px solid #1e2733">
   Red-XAI Vortex is property of Red-XAI LLC. Our business registration is currently pending approval.
   · <a href="#" id="fTerms">Terms</a> · <a href="https://45.77.105.187/vortex/donate" target="_blank">Donate</a>

@@ -13,6 +13,7 @@ struct ContentView: View {
     @Local var renaming: UUID?
     @Local var renameText = ""
     @Local var partyHint = false
+    @Local var showActivity = false
     @StateObject var agents = AgentStore.shared
 
     @ViewBuilder func chatRow(_ c: Chat) -> some View {
@@ -56,6 +57,9 @@ struct ContentView: View {
                     ForEach(filtered.filter { ($0.participants?.count ?? 0) >= 2 || ($0.participants == nil && $0.title == "Party chat") }) { c in chatRow(c) }
                     Button { store.newParty(); partyHint = true } label: { Label("New party chat", systemImage: "person.3") }.buttonStyle(.borderless)
                 }
+                Section("Activity") {
+                    Button { showActivity = true } label: { Label("Activity and dashboard", systemImage: "list.bullet.rectangle") }.buttonStyle(.borderless)
+                }
             }
             .searchable(text: $search, placement: .sidebar)
             .safeAreaInset(edge: .bottom) {
@@ -80,6 +84,7 @@ struct ContentView: View {
             if useTunnel && !tunnel.running { tunnel.start(host: sshHost, local: sshLocalPort, remote: sshRemotePort, keyPath: sshKey) }
         }
         .sheet(isPresented: $partyHint) { GroupSetupView().environmentObject(store) }
+        .sheet(isPresented: $showActivity) { ActivityView() }
         .alert("Rename Chat", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Title", text: $renameText)
             Button("Save") { if let r = renaming { store.rename(r, renameText) }; renaming = nil }

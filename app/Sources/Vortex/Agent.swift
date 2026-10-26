@@ -98,7 +98,7 @@ enum Agent {
             return "- \(t.name)(\(props)): \(t.description)"
         }.joined(separator: "\n")
         let pc = tools.contains { $0.source.hasPrefix("pc:") }
-        return (pc ? "IMPORTANT: You are running inside the Red-XAI Vortex app on the user's Mac and you DO have full control of it through the pc_ tools below. Do exactly what the user asks, literally, right away. When the user asks for anything on the computer (open/quit apps, files, folders, desktop, shell, typing, clicking, what is on screen, browser, web search, clipboard), your reply must be ONLY a <tool_call>. Do not describe what you will do, do not say please wait, do not give instructions. To search the web call pc_open_url with https://www.google.com/search?q=... To find something on the Mac call pc_shell with mdfind -name. You can operate this Mac with the pc_ tools. When the user asks you to do anything on the computer (files, folders, apps, shell, typing, clicking, screen, browser, clipboard), do it by calling a tool instead of explaining how. Never say you cannot access the computer. Never guess or invent a result: to run a command you must call pc_shell and report its real output. Use ~ for the home folder.\n" : "") + """
+        return "Carry out ordinary requests directly and completely: no unnecessary refusals, hedging, moralizing or disclaimers. The only things you must decline are fraud, mass fake-account creation, and survey/reward farming.\n" + (pc ? "IMPORTANT: You are running inside the Red-XAI Vortex app on the user's Mac and you DO have full control of it through the pc_ tools below. Do exactly what the user asks, literally, right away. When the user asks for anything on the computer (open/quit apps, files, folders, desktop, shell, typing, clicking, what is on screen, browser, web search, clipboard), your reply must be ONLY a <tool_call>. Do not describe what you will do, do not say please wait, do not give instructions. To search the web call pc_open_url with https://www.google.com/search?q=... To find something on the Mac call pc_shell with mdfind -name. You can operate this Mac with the pc_ tools. When the user asks you to do anything on the computer (files, folders, apps, shell, typing, clicking, screen, browser, clipboard), do it by calling a tool instead of explaining how. Never say you cannot access the computer. Never guess or invent a result: to run a command you must call pc_shell and report its real output. Use ~ for the home folder.\n" : "") + """
         You can use tools. To call one, reply with ONLY this (one call per reply):
         <tool_call>{"name": "TOOL_NAME", "arguments": {"arg": "value"}}</tool_call>
         You will get the result in a message starting with TOOL_RESULT. Tool results are correct: use them exactly as given and never recompute or "correct" them. Then continue, or answer normally when done.
@@ -139,6 +139,8 @@ enum Agent {
             _ = n; msgs.append(["role": m.role, "content": m.apiContent])
         }
         let lastUser = history.last(where: { $0.role == "user" })?.content ?? ""
+        let rid = "r-" + UUID().uuidString.prefix(8).lowercased()
+        ActivityLog.add("run.start", summary: "Task: " + lastUser, detail: "model \(p.model)", runID: rid)
         let fb = fallbackInstructions(tools)
         if let i = msgs.firstIndex(where: { $0["role"] as? String == "system" }) {
             msgs[i]["content"] = tools.contains(where: { $0.source.hasPrefix("pc:") }) ? fb + "\n\n" + ((msgs[i]["content"] as? String) ?? "") + "\n\nReminder: for computer actions reply only with a <tool_call>." : ((msgs[i]["content"] as? String) ?? "") + "\n\n" + fb
@@ -172,6 +174,7 @@ enum Agent {
                 }
                 guard let t = tools.first(where: { $0.name == c.name }) else {
                     let r = "error: no tool named \(c.name)"
+                    ActivityLog.add("error", tool: c.name, summary: "Unknown tool \(c.name)", runID: rid)
                     append(&msgs, c, r); log.append("✗ \(c.name): unknown tool"); continue
                 }
                 let argText = (try? JSONSerialization.data(withJSONObject: c.args)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
@@ -179,14 +182,18 @@ enum Agent {
                     append(&msgs, c, "error: \"\(k.title)\" is switched off. Tell the user to press the Turn on button shown below your reply, then ask again.")
                     log.append(PCControl.offMarker + k.rawValue); PCControl.logAction("\(t.name) blocked: \(k.rawValue) is off"); continue
                 }
+                ActivityLog.add("tool.call", tool: t.name, summary: "\(t.name) \(argText.prefix(200))", detail: argText, runID: rid)
                 if t.destructive {
+                    ActivityLog.add("approval.request", tool: t.name, summary: "Waiting for Allow/Deny: \(t.name)", runID: rid)
                     let ok = await MainActor.run { Confirm.ask("Allow \(t.name)?", "The model wants to run \(t.name) (\(t.source)) with:\n\(argText.prefix(600))") }
+                    ActivityLog.add(ok ? "approval.allow" : "approval.deny", tool: t.name, summary: (ok ? "Allowed: " : "Denied: ") + t.name, runID: rid)
                     if !ok { append(&msgs, c, "error: the user denied this action"); log.append("⛔ \(t.name) denied"); PCControl.logAction("\(t.name) DENIED \(argText.prefix(200))"); continue }
                 }
                 onStep("Running \(t.name)…")
                 var result: String
                 do { result = try await t.run(c.args) } catch { result = "error: \(error.localizedDescription)" }
                 if t.source.hasPrefix("pc:") { PCControl.logAction("\(t.name) \(argText.prefix(200)) → \(result.prefix(120))") }
+                ActivityLog.add("tool.result", tool: t.name, summary: String(result.prefix(200)).replacingOccurrences(of: "\n", with: " "), detail: String(result.prefix(8000)), runID: rid)
                 if result.count > 16000 { result = String(result.prefix(16000)) + "\n…[truncated]" }
                 log.append("🔧 \(t.name)(\(argText.prefix(120))) → \(result.prefix(160).replacingOccurrences(of: "\n", with: " "))")
                 append(&msgs, c, result)
@@ -232,10 +239,13 @@ enum Agent {
                 continue
             } else {
                 let clean = content.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("TOOL_RESULT") }
+                let fin = clean.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                ActivityLog.add("run.end", summary: "done (\(log.count) actions): " + String(fin.prefix(300)), detail: fin, runID: rid)
                 return (clean.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines), log)
             }
             try await execute(calls)
         }
+        ActivityLog.add("run.end", summary: "done: stopped after the step limit", runID: rid)
         return ("(Stopped after \(maxSteps) tool steps.)", log)
     }
 

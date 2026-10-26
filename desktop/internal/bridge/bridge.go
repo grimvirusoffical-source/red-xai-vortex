@@ -12,12 +12,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/activity"
 	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/keyring"
 	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/store"
 )
 
 type Server struct {
 	St   *store.Store
+	Act  *activity.Log
 	Addr string
 	ln   net.Listener
 }
@@ -27,7 +29,7 @@ func Start(st *store.Store) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{St: st, Addr: "http://" + ln.Addr().String(), ln: ln}
+	s := &Server{St: st, Act: activity.Open(st.Dir), Addr: "http://" + ln.Addr().String(), ln: ln}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/bridge/", s.handle)
 	mux.Handle("/", http.FileServer(http.Dir(frontendDir())))
@@ -176,6 +178,20 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		return s.mediaJob(str(in, "id"))
 	case "media.jobs":
 		return s.mediaJobs()
+	case "run.start":
+		return s.startRun(str(in, "agentID"), str(in, "task"), str(in, "chatID"))
+	case "run.list":
+		return map[string]any{"runs": listRuns()}
+	case "run.approve":
+		return s.approve(str(in, "runID"), in["allow"] == true)
+	case "run.stop":
+		return s.stopRun(str(in, "runID"))
+	case "activity.search":
+		return map[string]any{"events": s.Act.Search(s.activityQuery(in))}
+	case "activity.stats":
+		return map[string]any{"agents": s.Act.Stats(), "runs": listRuns()}
+	case "activity.export":
+		return s.activityExport(in)
 	case "notif.list":
 		return s.gw("GET", "/notifications", nil)
 	case "notif.read":
@@ -254,6 +270,17 @@ func (s *Server) chatSend(in map[string]any) map[string]any {
 	comp := fillComposer(s.St.Settings.Composer)
 	if c.Composer != nil {
 		comp = fillComposer(*c.Composer)
+	}
+	if c.Kind == "agent" && strings.HasPrefix(strings.TrimSpace(text), "/run ") {
+		s.St.SaveChat(*c)
+		r := s.startRun(c.AgentID, strings.TrimPrefix(strings.TrimSpace(text), "/run "), c.ID)
+		note := "Working on it. Follow along (and Allow/Deny actions) in Activity."
+		if r["ok"] != true {
+			note = fmt.Sprint(r["message"])
+		}
+		c.Messages = append(c.Messages, msgOf(s.memberFor(c.AgentID).Name, note))
+		s.St.SaveChat(*c)
+		return map[string]any{"reply": note, "replies": []map[string]string{{"name": s.memberFor(c.AgentID).Name, "content": note}}, "run": r["run"]}
 	}
 	if c.Kind == "agent" || c.Kind == "party" {
 		return s.groupSend(c, comp)

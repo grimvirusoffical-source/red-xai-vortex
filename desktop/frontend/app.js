@@ -251,3 +251,55 @@ $('#cTier').oninput=showTier;
 $('#cDefault').onclick=()=>saveComposer(true);
 $('#modelPick').onchange=()=>{ state.modelExplicit=!$('#modelPick').value.startsWith('vortex'); };
 loadComposer();
+
+// ---- Agent runs + activity (v2.5) ----
+function tfmt(t){ const d=new Date(t); return d.toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit',second:'2-digit'}); }
+function fillAgentSelects(){
+  const opts=state.agents.map(a=>`<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('');
+  const r=$('#rAgent'), f=$('#aFilter');
+  if(r && r.dataset.n!==String(state.agents.length)){ r.innerHTML=opts; r.dataset.n=state.agents.length; }
+  if(f && f.dataset.n!==String(state.agents.length)){ const v=f.value; f.innerHTML='<option value="">All agents</option>'+opts; f.value=v; f.dataset.n=state.agents.length; }
+}
+function runRow(r){
+  const ap=r.pending?`<div class="row" style="margin-top:4px"><span>Wants to <b>${esc(r.pending.tool)}</b>: <code>${esc(r.pending.what)}</code></span>
+    <button class="primary" data-allow="${esc(r.id)}">Allow once</button><button data-deny="${esc(r.id)}">Deny</button></div>`:'';
+  const stop=(r.status==='running'||r.status==='waiting')?` <button data-stop="${esc(r.id)}">Stop</button>`:'';
+  return `<div class="run"><b>${esc(r.agent)}</b> · <span class="st-${esc(r.status)}">${esc(r.status)}</span> · step ${r.steps} · ${tfmt(r.started)}${stop}
+    <div>${esc(r.task)}</div>${r.result?`<div class="muted">${esc(r.result).slice(0,600)}</div>`:''}${ap}</div>`;
+}
+function bindRunButtons(root){
+  root.querySelectorAll('[data-allow]').forEach(b=>b.onclick=async()=>{ await bridge.call('run.approve',{runID:b.dataset.allow,allow:true}); actPoll(); });
+  root.querySelectorAll('[data-deny]').forEach(b=>b.onclick=async()=>{ await bridge.call('run.approve',{runID:b.dataset.deny,allow:false}); actPoll(); });
+  root.querySelectorAll('[data-stop]').forEach(b=>b.onclick=async()=>{ await bridge.call('run.stop',{runID:b.dataset.stop}); actPoll(); });
+}
+async function actLog(){
+  const r=await bridge.call('activity.search',{agentID:$('#aFilter').value,kind:$('#aKind').value,q:$('#aQ').value,limit:300});
+  $('#actLog').innerHTML=(r.events||[]).map(e=>`<div class="ev"><span class="k">${tfmt(e.ts)}</span> <b>${esc(e.agent)}</b> <span class="pill">${esc(e.kind)}</span> ${esc(e.summary)}
+    ${e.detail&&e.detail!==e.summary?`<details><summary>details</summary>${esc(e.detail)}</details>`:''}</div>`).join('')||'<p class="muted">No activity yet.</p>';
+}
+let actSig='';
+async function actPoll(){
+  fillAgentSelects();
+  const st=await bridge.call('activity.stats',{});
+  const runs=st.runs||[];
+  const waiting=runs.filter(r=>r.pending);
+  const bar=$('#apBar');
+  if(waiting.length){ bar.style.display=''; bar.innerHTML='<b>An agent is waiting for you</b>'+waiting.map(runRow).join(''); bindRunButtons(bar); }
+  else bar.style.display='none';
+  $('#actTabBtn').textContent=waiting.length?`Activity (${waiting.length})`:'Activity';
+  if(!$('#tab-activity').classList.contains('on')) return;
+  $('#rList').innerHTML=runs.slice(0,10).map(runRow).join(''); bindRunButtons($('#rList'));
+  $('#actStats').innerHTML=(st.agents||[]).length?`<table style="width:100%;font-size:13px"><tr><th align=left>Agent</th><th>Runs</th><th>Actions</th><th>Denied</th><th>Errors</th><th align=left>Last activity</th></tr>`+
+    st.agents.map(a=>`<tr><td><a href="#" data-ag="${esc(a.agentID)}">${esc(a.agent)}</a></td><td align=center>${a.runs}</td><td align=center>${a.actions}</td><td align=center>${a.denied}</td><td align=center>${a.errors}</td><td>${tfmt(a.last)} · ${esc(a.lastWhat).slice(0,80)}</td></tr>`).join('')+'</table>':'<p class="muted">No activity yet.</p>';
+  $('#actStats').querySelectorAll('[data-ag]').forEach(a=>a.onclick=(ev)=>{ ev.preventDefault(); $('#aFilter').value=a.dataset.ag; actLog(); });
+  const sig=JSON.stringify(runs.map(r=>[r.id,r.status,r.steps]));
+  if(sig!==actSig){ actSig=sig; actLog(); }
+}
+$('#rGo').onclick=async()=>{ const r=await bridge.call('run.start',{agentID:$('#rAgent').value,task:$('#rTask').value}); if(r.ok){ $('#rTask').value=''; } else alert(r.message); actPoll(); };
+$('#aFilter').onchange=actLog; $('#aKind').onchange=actLog;
+let aqT; $('#aQ').oninput=()=>{ clearTimeout(aqT); aqT=setTimeout(actLog,250); };
+async function actExport(format){ const r=await bridge.call('activity.export',{format,agentID:$('#aFilter').value,kind:$('#aKind').value,q:$('#aQ').value});
+  $('#aExpMsg').textContent=r.ok?`Saved ${r.count} entries to ${r.path}`:r.message; }
+$('#aExpJ').onclick=()=>actExport('json'); $('#aExpC').onclick=()=>actExport('csv');
+$('#actTabBtn').addEventListener('click',()=>{ actSig=''; actPoll(); });
+setInterval(actPoll, 2000);

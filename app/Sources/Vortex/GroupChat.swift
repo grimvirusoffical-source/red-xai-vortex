@@ -99,8 +99,23 @@ extension ChatStore {
                     var p = params; p.model = m
                     if let ap = agentP { p = ap; p.maxTokens = params.maxTokens }
                     if m.hasPrefix("local:") { let id = String(m.dropFirst(6)); p.baseURL = try await LocalRuntime.shared.ensure(id); p.apiKey = ""; p.model = id }
-                    _ = try await API.stream(p, messages: hist, onToken: { buf.append($0) })
+                    let solo = (snapshot.participants?.count ?? 0) == 1 && m.hasPrefix("agent:")
+                    let who = ActivityAgent(id: m.hasPrefix("agent:") ? String(m.dropFirst(6)) : m, name: GroupTurns.agentNames[m] ?? m)
+                    let tools = solo ? await MainActor.run { () -> [ToolSpec] in
+                        let a = AgentStore.shared.agents.first { "agent:" + $0.id == m }
+                        return (a?.toolsOn ?? true) ? ToolRegistry.tools(for: p.model) : []
+                    } : []
+                    if !tools.isEmpty {
+                        // Agent chat: the agent can act (tools, PC control) step by step; every step is logged.
+                        let (t, _) = try await ActivityLog.$agent.withValue(who) {
+                            try await Agent.run(p, history: hist, tools: tools) { st in Task { @MainActor in self?.status = "\(who.name): \(st)" } }
+                        }
+                        buf.append(t)
+                    } else {
+                        _ = try await API.stream(p, messages: hist, onToken: { buf.append($0) })
+                    }
                     reply = buf.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if m.hasPrefix("agent:") { ActivityLog.add("chat", summary: "Replied in \(snapshot.title)", detail: reply, agent: who) }
                     // strip a self-added "[name]:" prefix
                     let lbl = GroupTurns.agentNames[m] ?? m
                     for pre in ["[\(m)]:", "\(m):", "[\(lbl)]:", "\(lbl):"] where reply.hasPrefix(pre) { reply = String(reply.dropFirst(pre.count)).trimmingCharacters(in: .whitespaces) }

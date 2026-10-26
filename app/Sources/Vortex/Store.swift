@@ -105,7 +105,14 @@ final class ChatStore: ObservableObject {
                     tools = await MainActor.run { ToolRegistry.tools(for: p.model) }
                 }
                 if !tools.isEmpty {
-                    let (text, log) = try await Agent.run(p, history: hist, tools: tools) { st in Task { @MainActor in self?.status = st } }
+                    let who = await MainActor.run { () -> ActivityAgent in
+                        let st = AgentStore.shared
+                        if let ag = st.agents.first(where: { $0.id == st.activeID }) { return ActivityAgent(id: ag.id, name: ag.name) }
+                        return ActivityAgent(id: "vortex-default", name: "Vortex")
+                    }
+                    let (text, log) = try await ActivityLog.$agent.withValue(who) {
+                        try await Agent.run(p, history: hist, tools: tools) { st in Task { @MainActor in self?.status = st } }
+                    }
                     await MainActor.run {
                         guard let self, let j = self.idx(chatID), !self.chats[j].messages.isEmpty else { return }
                         let k = self.chats[j].messages.count - 1

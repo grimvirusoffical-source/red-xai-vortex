@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/activity"
 	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/store"
 )
 
@@ -134,6 +135,9 @@ func (s *Server) groupSend(c *store.Chat, comp store.Composer) map[string]any {
 			reply = "(" + me.Name + " could not reply: " + err.Error() + ")"
 		}
 		c.Messages = append(c.Messages, store.Msg{Role: "assistant", Name: me.Name, Content: reply})
+		if agentID != "" {
+			s.Act.Append(activity.Event{AgentID: agentID, Agent: me.Name, Kind: "chat", Summary: "Replied in " + c.Title, Detail: reply})
+		}
 		replies = append(replies, map[string]string{"name": me.Name, "content": reply})
 		c.Updated = time.Now()
 		s.St.SaveChat(*c) // persist after each speaker so the UI can stream turns
@@ -147,6 +151,9 @@ func (s *Server) groupSend(c *store.Chat, comp store.Composer) map[string]any {
 
 // agentChat opens (or creates) the sidebar chat for an agent.
 func (s *Server) agentChat(agentID string) map[string]any {
+	if agentID == "" {
+		return map[string]any{"ok": false, "message": "Pick an agent."}
+	}
 	for _, c := range s.St.Chats {
 		if c.Kind == "agent" && c.AgentID == agentID {
 			return map[string]any{"ok": true, "id": c.ID}
