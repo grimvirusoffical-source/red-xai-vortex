@@ -26,6 +26,9 @@ type Server struct {
 	mux            *http.ServeMux
 	baseCredential func(string) string // tests can isolate credential access
 	quickAuth      vortexQuickAuth
+	updateMu       sync.Mutex
+	updateBusy     bool
+	updateMessage  string
 	pcMu           sync.Mutex
 	pcEpoch        uint64
 	pcRevision     uint64
@@ -75,6 +78,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		s.handlePCControl(w, r, method)
 		return
 	}
+	if strings.HasPrefix(method, "update.") && !pcLocalOperator(r) {
+		http.Error(w, "manual updates require a local same-origin JSON POST", http.StatusForbidden)
+		return
+	}
 	if strings.HasPrefix(method, "workspace.") {
 		if !workspaceRequestAllowed(r) {
 			http.Error(w, "workspace requests require same-origin JSON POST", http.StatusForbidden)
@@ -117,6 +124,12 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 	switch m {
+	case "update.check":
+		return s.manualUpdateCheck()
+	case "update.install":
+		return s.manualUpdateInstall()
+	case "update.status":
+		return s.manualUpdateStatus()
 	case "workspace.get":
 		return s.workspaceResult()
 	case "workspace.save":

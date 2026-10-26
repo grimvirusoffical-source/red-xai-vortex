@@ -16,6 +16,7 @@ struct SettingsView: View {
 }
 
 struct ConnectionSettings: View {
+    @StateObject private var updater = Updater.shared
     @EnvironmentObject var tunnel: TunnelManager
     @EnvironmentObject var store: ChatStore
     @AppStorage("serverURL") var serverURL = Defaults.serverURL
@@ -32,7 +33,12 @@ struct ConnectionSettings: View {
         Form {
             Section("Updates") {
                 Toggle("Auto-update from GitHub Releases (SHA256 + Developer ID verified)", isOn: Binding(get: { !UserDefaults.standard.bool(forKey: "noAutoUpdate") }, set: { UserDefaults.standard.set(!$0, forKey: "noAutoUpdate") }))
-                Button("Check for updates now") { Task { await Updater.shared.check() } }
+                Button(updater.checking ? "Checking for updates…" : "Check for updates now") {
+                    Task { await updater.check(manual: true) }
+                }
+                .disabled(updater.checking)
+                Text(updater.status).font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("vortex-update-status")
             }
             Section("Server") {
                 TextField("Server URL (OpenAI-compatible, ends in /v1)", text: $serverURL)

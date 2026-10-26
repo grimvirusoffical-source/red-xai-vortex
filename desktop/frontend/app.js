@@ -223,6 +223,31 @@ $('#saveSettings').onclick=async()=>{
   $('#apiKey').value=''; $('#setMsg').textContent=r.message||'Saved'; $('#setMsg').className=r.ok?'ok':'bad'; refresh();
 };
 $('#probe').onclick=async()=>{ const r=await bridge.call('settings.probe',{}); $('#setMsg').textContent=r.message||''; $('#setMsg').className=r.ok?'ok':'bad'; };
+let updateStatusPolling=0;
+$('#checkUpdatesNow').onclick=async()=>{
+  const button=$('#checkUpdatesNow'),label=$('#updateStatus');
+  if(button.disabled)return;
+  button.disabled=true;label.textContent='Checking GitHub releases…';
+  try{
+    const r=await bridge.call('update.check');
+    label.textContent=r.message||r.error||'Update check failed.';
+    if(!r.ok||!r.available)return;
+    if(!window.confirm('Install Vortex '+r.version+'? The signed package will be verified, then Vortex will restart.'))return;
+    const result=await bridge.call('update.install');
+    label.textContent=result.message||result.error||'Could not start the update.';
+    if(!result.ok)return;
+    clearInterval(updateStatusPolling);
+    updateStatusPolling=setInterval(async()=>{
+      try{
+        const s=await bridge.call('update.status');
+        if(s.message)label.textContent=s.message;
+        if(!s.busy){clearInterval(updateStatusPolling);updateStatusPolling=0;button.disabled=false;}
+      }catch(e){label.textContent='Vortex is restarting; reopen the updated app if necessary.';clearInterval(updateStatusPolling);updateStatusPolling=0;}
+    },1500);
+  }catch(e){label.textContent='GitHub could not be reached; try again.';}
+  finally{if(!updateStatusPolling)button.disabled=false;}
+};
+
 refresh(); setInterval(refresh, 15000);
 
 // ---- Media: exact-spec generation, in-chat generation, viewer (Download / Regenerate / Redesign)

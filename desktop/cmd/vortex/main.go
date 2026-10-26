@@ -20,6 +20,9 @@ func main() {
 	flag.Parse()
 	st := store.Open()
 	if *phoneOnly {
+		// This binary is embedded in the notarized Mac host. Only the host
+		// updater may modify it; updating it in place invalidates the bundle.
+		*noUpdate = true
 		*headless = true
 		ss := st.Settings
 		ss.PhoneChat = true
@@ -41,7 +44,7 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("Vortex", update.Version, "bridge on", srv.Addr)
-	if !*noUpdate {
+	if allowAutoUpdate(*noUpdate, *phoneOnly) {
 		go autoUpdate(st)
 	}
 	if *headless {
@@ -65,6 +68,10 @@ func openUI(url string) {
 		}
 		_ = exec.Command("xdg-open", url).Start()
 	}
+}
+
+func allowAutoUpdate(disabled, hostedPhone bool) bool {
+	return !disabled && !hostedPhone
 }
 
 // autoUpdate checks on launch and every 4 hours unless turned off in Settings.

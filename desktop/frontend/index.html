@@ -287,6 +287,10 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
       <p id="linkInfo" class="muted"></p>
       <div id="phoneQRBox" style="display:none;margin:6px 0"><img id="phoneQR" alt="Phone QR code" width="180" height="180" style="background:#fff;padding:6px;border-radius:8px"/><div class="muted">Scan with your phone camera (same Wi-Fi), then enter the PIN. Or type the address above.</div></div>
       <label><input type="checkbox" id="autoUpdate" checked style="width:auto"/> Auto-update from GitHub Releases (checks on launch and every 4 hours, SHA256-verified)</label>
+      <div class="row" style="margin-top:8px">
+        <button class="ghost" id="checkUpdatesNow" type="button">Check for updates now</button>
+        <span id="updateStatus" role="status" aria-live="polite">Signed updates are checked on launch and every four hours.</span>
+      </div>
       <div class="row" style="margin-top:10px">
         <button class="primary" id="saveSettings">Save</button>
         <button class="ghost" id="probe">Test connection</button>
