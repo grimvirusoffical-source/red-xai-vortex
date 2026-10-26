@@ -85,6 +85,7 @@ struct AccessControlSection: View {
     @Local var msg = ""
     @Local var auditMessage = ""
     @Local var auditBusy = false
+    @Local var auditSupported = false
     var body: some View {
         Section("IP allow / deny (whole gateway)") {
             TextField("Allow (IPs/CIDRs, empty = any; 127.0.0.1 is always kept)", text: $allow)
@@ -95,15 +96,15 @@ struct AccessControlSection: View {
             }
         }
         Section("Audit log (newest first)") {
-            Text("Only the newest 10 entries are kept. Older entries are removed automatically when new activity arrives. Mark all as read deletes the displayed logs.")
+            Text(auditSupported ? "Only the newest 10 entries are kept. Older entries are removed automatically when new activity arrives. Mark all as read deletes the displayed logs." : "The gateway needs an update before audit cleanup and the 10-entry retention limit are available. Refresh and existing logs remain available.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Button("Refresh") { Task { await loadAudit() } }.disabled(auditBusy)
                 Button("Mark all as read") { Task { await clearDisplayedAudit() } }
-                    .disabled(auditBusy || events.isEmpty)
+                    .disabled(auditBusy || events.isEmpty || !auditSupported)
                     .help("Delete these displayed entries. New activity is retained.")
                 Button("Export JSON and delete…") { Task { await exportDisplayedAudit() } }
-                    .disabled(auditBusy || events.isEmpty)
+                    .disabled(auditBusy || events.isEmpty || !auditSupported)
             }
             if !auditMessage.isEmpty { Text(auditMessage).font(.caption).foregroundStyle(.secondary) }
             if events.isEmpty { Text("No audit entries.").foregroundStyle(.secondary) }
@@ -134,12 +135,13 @@ struct AccessControlSection: View {
         do {
             let result = try await Admin.call("GET", "/admin/audit?n=10")
             events = (result["events"] as? [[String: Any]]) ?? []
-        } catch { auditMessage = error.localizedDescription }
+            auditSupported = (result["retention"] as? Int) == 10 && displayedAuditIDs.count == events.count
+        } catch { auditSupported = false; auditMessage = error.localizedDescription }
     }
     var displayedAuditIDs: [String] { events.compactMap { $0["id"] as? String } }
     @MainActor func clearDisplayedAudit() async {
         let ids = displayedAuditIDs
-        guard !auditBusy, !ids.isEmpty else { return }
+        guard !auditBusy, auditSupported, !ids.isEmpty else { return }
         auditBusy = true; defer { auditBusy = false }
         do {
             let result = try await Admin.call("POST", "/admin/audit/clear", ["ids": ids])
@@ -149,7 +151,7 @@ struct AccessControlSection: View {
     }
     @MainActor func exportDisplayedAudit() async {
         let ids = displayedAuditIDs
-        guard !auditBusy, !ids.isEmpty else { return }
+        guard !auditBusy, auditSupported, !ids.isEmpty else { return }
         auditBusy = true; defer { auditBusy = false }
         do {
             var snapshot = try await Admin.call("POST", "/admin/audit/export", ["ids": ids])
