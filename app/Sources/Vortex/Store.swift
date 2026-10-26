@@ -28,7 +28,8 @@ final class ChatStore: ObservableObject {
     var sorted: [Chat] { chats.sorted { ($0.pinned ? 1 : 0, $0.updated) > ($1.pinned ? 1 : 0, $1.updated) } }
     func save() { if let d = try? JSONEncoder().encode(chats) { try? d.write(to: file, options: .atomic) } }
 
-    func newChat() { let c = Chat(); chats.append(c); selection = c.id; save() }
+    func newChat(projectID: UUID? = nil, worldID: UUID? = nil) { var c = Chat(); c.projectID = projectID; c.worldID = worldID; chats.append(c); selection = c.id; save() }
+    func updateCurrent(_ change: (inout Chat) -> Void) { guard let i = idx(selection) else { return }; change(&chats[i]); save() }
     func delete(_ id: UUID) { chats.removeAll { $0.id == id }; if selection == id { selection = sorted.first?.id }; if chats.isEmpty { newChat() }; save() }
     func rename(_ id: UUID, _ t: String) { if let i = idx(id) { chats[i].title = t; save() } }
     func togglePin(_ id: UUID) { if let i = idx(id) { chats[i].pinned.toggle(); save() } }
@@ -42,22 +43,44 @@ final class ChatStore: ObservableObject {
         guard let i = idx(selection), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty, !streaming else { return }
         chats[i].messages.append(Message(role: "user", content: text, attachments: attachments.isEmpty ? nil : attachments))
         if chats[i].title == "New Chat" { chats[i].title = String((text.isEmpty ? attachments.map(\.name).joined(separator: ", ") : text).prefix(40)) }
-        if let ps = chats[i].participants, !ps.isEmpty { generateGroup(chatIndex: i, text: text, systemPrompt: systemPrompt, contextTokens: contextTokens, params: params); return }
-        generate(chatIndex: i, systemPrompt: systemPrompt, contextTokens: contextTokens, params: params)
+        prepareGeneration(chatID: chats[i].id, text: text, systemPrompt: systemPrompt, contextTokens: contextTokens, params: params)
     }
 
     func regenerate(systemPrompt: String, contextTokens: Int, params: ChatParams) {
         guard let i = idx(selection), !streaming else { return }
         if chats[i].messages.last?.role == "assistant" { chats[i].messages.removeLast() }
-        generate(chatIndex: i, systemPrompt: systemPrompt, contextTokens: contextTokens, params: params)
+        prepareGeneration(chatID: chats[i].id, text: chats[i].messages.last(where: { $0.role == "user" })?.content ?? "", systemPrompt: systemPrompt, contextTokens: contextTokens, params: params)
+    }
+
+    private func prepareGeneration(chatID: UUID, text: String, systemPrompt: String, contextTokens: Int, params: ChatParams) {
+        guard let i = idx(chatID) else { return }
+        let snapshot = chats[i]
+        streaming = true; status = "Preparing context…"; save()
+        task = Task { [weak self] in
+            // Check selected remote Bases on every turn so revoked tokens or unavailable hosts
+            // cannot keep supplying a previously cached manifest to a new model request.
+            await WorkspaceStore.shared.refreshContext(for: snapshot)
+            guard !Task.isCancelled, let self, let j = self.idx(chatID) else { return }
+            self.streaming = false
+            if let ps = self.chats[j].participants, !ps.isEmpty {
+                self.generateGroup(chatIndex: j, text: text, systemPrompt: systemPrompt, contextTokens: contextTokens, params: params)
+            } else { self.generate(chatIndex: j, systemPrompt: systemPrompt, contextTokens: contextTokens, params: params) }
+        }
     }
 
     private func generate(chatIndex i: Int, systemPrompt: String, contextTokens: Int, params: ChatParams) {
         let chatID = chats[i].id
+        let workspace = WorkspaceStore.shared.context(for: chats[i], basePrompt: systemPrompt, query: chats[i].messages.last(where: { $0.role == "user" })?.content ?? "", maxChars: max(0, (contextTokens - params.maxTokens) * 2))
+        let systemPrompt = workspace.system
+        let lastUserID = chats[i].messages.last(where: { $0.role == "user" })?.id
         // Trim history to fit the context budget (approx. 4 chars per token, leave room for the reply).
         var budget = max(512, (contextTokens - params.maxTokens)) * 4 - systemPrompt.count
         var hist: [Message] = []
-        for m in chats[i].messages.reversed() where !m.content.hasPrefix("[[media:") { budget -= m.promptChars; if budget < 0 && !hist.isEmpty { break }; hist.insert(m, at: 0) }
+        for message in chats[i].messages.reversed() where !message.content.hasPrefix("[[media:") {
+            var m = message
+            if m.id == lastUserID, !workspace.images.isEmpty { m.attachments = (m.attachments ?? []) + workspace.images }
+            budget -= m.promptChars; if budget < 0 && !hist.isEmpty { break }; hist.insert(m, at: 0)
+        }
         if !systemPrompt.isEmpty { hist.insert(Message(role: "system", content: systemPrompt), at: 0) }
         chats[i].messages.append(Message(role: "assistant", content: ""))
         chats[i].updated = Date(); streaming = true; status = "Thinking…"
