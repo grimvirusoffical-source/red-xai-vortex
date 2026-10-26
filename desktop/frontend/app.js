@@ -23,7 +23,7 @@ async function refresh(){
     if('autoUpdate' in s) $('#autoUpdate').checked = s.autoUpdate;
     if('secureChat' in s) $('#secureChat').checked = s.secureChat;
     if('phoneChat' in s) $('#phoneChat').checked = s.phoneChat;
-    if(s.link){ const L=s.link; $('#linkInfo').textContent = (L.error? L.error : (L.secure? 'Secure chat active · red-X barcode transport' : 'Secure chat off · direct HTTPS')) + (L.phoneURL? ' · Phone: open '+L.phoneURL+' · PIN '+L.phonePIN : ''); }
+    if(s.link){ const L=s.link; $('#linkInfo').textContent = (L.error? L.error : (L.secure? 'Secure chat active · red-X barcode transport' : 'Secure chat off · direct HTTPS')) + (L.phoneURL? ' · Phone: open '+L.phoneURL+' · PIN '+L.phonePIN : ''); $('#phoneQRBox').style.display = L.phoneQR? 'block':'none'; if(L.phoneQR) $('#phoneQR').src = L.phoneQR; }
     state.agents = s.agents||[];
     state.models = s.models||['vortex'];
     state.chats = s.chats||[];

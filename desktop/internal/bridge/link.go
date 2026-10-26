@@ -1,11 +1,14 @@
 package bridge
 
 import (
+	"encoding/base64"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+
+	qrcode "github.com/skip2/go-qrcode"
 	"strings"
 	"sync"
 	"time"
@@ -126,6 +129,9 @@ func (s *Server) linkStatus() map[string]any {
 	linkMu.Unlock()
 	if u, pin := phoneInfo(); u != "" {
 		m["phoneURL"], m["phonePIN"] = u, pin
+		if png, err := qrcode.Encode(u, qrcode.Medium, 256); err == nil {
+			m["phoneQR"] = "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+		}
 	}
 	return m
 }

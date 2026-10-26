@@ -1,5 +1,7 @@
 import SwiftUI
 import Foundation
+import CoreImage
+import AppKit
 
 /// RedX Link: the default way to reach the RedX servers. No SSH needed — just a server address and an API key.
 /// The bundled `redx-link` helper runs a local OpenAI-compatible proxy on 127.0.0.1 and speaks the
@@ -35,6 +37,13 @@ final class RedXLink: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "phoneChat") }
     }
     static let phonePort = 18192
+    /// QR code (black on white) for the phone URL, generated locally with Core Image.
+    static func qrImage(_ text: String) -> NSImage? {
+        guard let f = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        f.setValue(Data(text.utf8), forKey: "inputMessage"); f.setValue("M", forKey: "inputCorrectionLevel")
+        guard let out = f.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)) else { return nil }
+        let rep = NSCIImageRep(ciImage: out); let img = NSImage(size: rep.size); img.addRepresentation(rep); return img
+    }
     /// "http://<lan-ip>:18192" and PIN written by the helper, if phone chat is running.
     static func phoneInfo() -> (url: String, pin: String)? {
         let f = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".redx-link-phone")
@@ -194,7 +203,17 @@ struct LinkSettingsBox: View {
                         .onChange(of: phone) { _, _ in link.start(force: true) }
                     if phone {
                         if let i = RedXLink.phoneInfo() {
-                            Text("On your phone (same Wi-Fi) open \(i.url) · PIN \(i.pin)").font(.caption.monospaced()).textSelection(.enabled)
+                            HStack(alignment: .top, spacing: 12) {
+                                if let qr = RedXLink.qrImage(i.url) {
+                                    Image(nsImage: qr).interpolation(.none).resizable().frame(width: 150, height: 150)
+                                        .padding(6).background(Color.white).cornerRadius(8).help("Scan with your phone camera")
+                                }
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Scan the QR code with your phone camera (same Wi-Fi), then enter the PIN.").font(.caption)
+                                    Text("PIN \(i.pin)").font(.title3.monospaced().bold()).textSelection(.enabled)
+                                    Text("Or open \(i.url) in the phone's browser.").font(.caption.monospaced()).textSelection(.enabled)
+                                }
+                            }
                         } else { Text("Starting… (needs a saved API key)").font(.caption) }
                         Text("Your phone gets the full Vortex app: chat, agents, media, plugins, projects, party chats and PC control, with the same Secure chat checkbox in its Settings. The phone↔Mac Wi-Fi hop is plain HTTP on your LAN; Mac↔server uses Red-SecretsXAI.").font(.caption).foregroundStyle(.secondary)
                     }
