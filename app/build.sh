@@ -55,7 +55,7 @@ for arch in $ARCHS; do
   (cd ../bases && CGO_ENABLED=0 GOOS=darwin GOARCH="$goarch" go build -buildvcs=false -trimpath -ldflags="-s -w" -o "$GO_WORK/base-$arch" .)
   bash ../scripts/build-desktop-with-helper.sh darwin "$goarch" "$GO_WORK/phone-$arch"
   (cd ../desktop && CGO_ENABLED=0 GOOS=darwin GOARCH="$goarch" go build -buildvcs=false -trimpath -ldflags="-s -w" -o "$GO_WORK/verify-$arch" ./cmd/redx-verify)
-  BASE_PARTS+=("$GO_WORK/base-$arch"); PHONE_PARTS+=("$GO_WORK/phone-$arch"); VERIFY_PARTS+=("$GO_WORK/verify-$arch")
+  BASE_PARTS+=("$GO_WORK/base-$arch"); PHONE_PARTS+=("$GO_WORK/phone-$arch/vortex-darwin-$goarch"); VERIFY_PARTS+=("$GO_WORK/verify-$arch")
 done
 lipo -create "${BASE_PARTS[@]}" -output "$APP/Contents/Resources/vortex-base"
 lipo -create "${PHONE_PARTS[@]}" -output "$APP/Contents/Resources/vortex-phone"
