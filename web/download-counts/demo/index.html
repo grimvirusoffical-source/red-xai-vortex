@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Red-XAI download counts</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root { --background:#0a0b0d; --foreground:#f2f4f7; --muted:#8a9099; --primary:#ff2b36; --border:#23262d; --card:#111317; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--background); color: var(--foreground); font: 16px/1.5 "IBM Plex Sans", system-ui, sans-serif; }
+    main { max-width: 980px; margin: 0 auto; padding: 40px 20px 80px; }
+    h1 { font-size: 32px; margin: 0 0 8px; }
+    .sub { color: var(--muted); margin: 0 0 28px; }
+    .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    article { background: var(--card); border: 1px solid var(--border); border-radius: 22px; padding: 22px; }
+    h2 { margin: 0 0 6px; font-size: 18px; }
+    p { color: var(--muted); margin: 0; }
+    .btn-glow { display: flex; align-items: center; justify-content: center; height: 44px; margin-top: 22px; border-radius: 12px; background: var(--primary); color: #fff; text-decoration: none; font-weight: 600; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .chips a { color: var(--muted); text-decoration: none; border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-size: 12px; }
+    .row { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
+    .ghost { border: 1px solid var(--border); color: var(--foreground); text-decoration: none; border-radius: 8px; padding: 6px 10px; font-size: 14px; }
+  </style>
+</head>
+<body>
+<main>
+  <p class="sub">Red-XAI apps</p>
+  <h1>Rotten Store</h1>
+  <p class="sub">Local demo of the download buttons on red-xai.com. Counts are stored on the server and shared by every visitor.</p>
+  <div class="grid">
+    <article>
+      <h2>Vortex</h2>
+      <p>Private assistant for macOS, Windows, and Linux.</p>
+      <a class="btn-glow" download href="/api/store/download/vortex/darwin-universal">Download for macOS</a>
+      <div class="chips">
+        <a href="/api/store/download/vortex/windows-amd64">Windows · v2.8</a>
+        <a href="/api/store/download/vortex/linux-amd64">Linux · v2.8</a>
+        <a href="/api/store/download/vortex/darwin-universal">macOS · v2.8</a>
+      </div>
+    </article>
+    <article>
+      <h2>Rotten Core</h2>
+      <p>One installer for every Red-XAI app.</p>
+      <a class="btn-glow" download href="/api/store/download/rotten-core/windows-amd64">Download for Windows</a>
+    </article>
+    <article>
+      <h2>Release asset</h2>
+      <p>GitHub release offered from the builds list.</p>
+      <div class="row">
+        <a class="ghost" target="_blank" rel="noreferrer" href="https://github.com/grimvirusoffical-source/red-xai-vortex/releases/download/v2.8/Vortex-2.8-mac.dmg">Download</a>
+      </div>
+    </article>
+  </div>
+</main>
+<script src="/__downloads/widget.js" defer></script>
+</body>
+</html>
