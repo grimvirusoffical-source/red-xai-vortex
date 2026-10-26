@@ -1,10 +1,10 @@
-Red-XAI Vortex 2.10
+Red-XAI Vortex 2.11
 
 Keep the application, frontend folder, redx-link, vortex-base, and complete rsx-runtime folder together.
 
 Windows: double-click vortex.exe. Linux: run install.sh, then vortex-app; the installer supports PREFIX and preserves its existing desktop entry and frontend locations.
 
-Use Workspace to organize Projects, XAI Bases, personalities, scoped memory, roleplay worlds, and coding context. Automatic memory and world-state updates start off; enable Review or Save per conversation. Patch application requires Allow in Activity.
+Use Workspace to organize Projects, XAI Bases, personalities, scoped memory, roleplay worlds, and coding context. Automatic memory and world-state updates start off; enable Review or Save per conversation. PC writes, commands and patch application ask for approval in Activity by default. An explicit always-allow PC control option on this computer can skip repeated approvals for locally started tasks. Phone sessions cannot enable that option or inherit unattended permission. Stop disables always-allow mode and cancels active PC runs and pending approvals; it does not undo completed actions.
 
 Managed Base hosting defaults to this computer only, requires access tokens, and stops when the app exits. Sharing to another computer needs an explicitly configured HTTPS endpoint or TLS tunnel. Create individual expiring invites and revoke them in the hosting controls.
 

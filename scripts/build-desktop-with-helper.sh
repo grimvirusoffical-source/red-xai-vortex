@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build one desktop target with its matching Base helper embedded and adjacent.
-# Example: VORTEX_VERSION=2.10 ./scripts/build-desktop-with-helper.sh linux amd64 /tmp/vortex-linux
+# Example: VORTEX_VERSION=2.11 ./scripts/build-desktop-with-helper.sh linux amd64 /tmp/vortex-linux
 # Official private release-verifier registration can be supplied as a trusted
 # source overlay; this script never creates a signing key or disables verification.
 set -euo pipefail
@@ -8,7 +8,7 @@ if [ "$#" -ne 3 ]; then echo 'Usage: build-desktop-with-helper.sh linux|windows|
 TARGET_OS="$1"; TARGET_ARCH="$2"; OUTPUT_DIR="$3"
 case "$TARGET_OS" in linux|windows|darwin) ;; *) echo 'Unsupported target OS' >&2; exit 2;; esac
 case "$TARGET_ARCH" in amd64|arm64) ;; *) echo 'Unsupported architecture' >&2; exit 2;; esac
-RELEASE_VERSION="${VORTEX_VERSION:-2.10}"
+RELEASE_VERSION="${VORTEX_VERSION:-2.11}"
 case "$RELEASE_VERSION" in ''|*[!0-9.]*) echo 'VORTEX_VERSION must be numeric dotted version' >&2; exit 2;; esac
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$OUTPUT_DIR"
