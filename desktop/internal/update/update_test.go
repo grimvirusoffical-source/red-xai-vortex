@@ -65,3 +65,14 @@ func TestSignedVersionRejectsReplayAndUnsignedTagMismatch(t *testing.T) {
 		}
 	}
 }
+
+func TestHistoricalSigningKeyCannotAuthorizeNewReleases(t *testing.T) {
+	if !legacyReleaseVersionAllowed("2.8") || !legacyReleaseVersionAllowed("2.9") {
+		t.Fatal("historical releases lost verification support")
+	}
+	for _, version := range []string{"2.10", "v2.11", "3.0"} {
+		if legacyReleaseVersionAllowed(version) {
+			t.Fatalf("lost old key can authorize new release %s", version)
+		}
+	}
+}

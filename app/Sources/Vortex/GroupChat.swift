@@ -131,7 +131,11 @@ extension ChatStore {
                     self.save()
                 }
             }
-            await MainActor.run { self?.status = Task.isCancelled ? "Stopped" : "Group: \(who.count) repl\(who.count == 1 ? "y" : "ies")"; self?.streaming = false; self?.save() }
+            let cancelled = Task.isCancelled
+            await MainActor.run {
+                self?.status = cancelled ? "Stopped" : "Group: \(who.count) repl\(who.count == 1 ? "y" : "ies")"; self?.streaming = false; self?.save()
+                if !cancelled, let self, let j = self.idx(chatID) { WorkspaceStore.shared.captureCompletedTurn(self.chats[j], params: params) }
+            }
         }
     }
     /// Opens (or creates) the sidebar chat for an agent: a one-participant chat with "agent:<id>".

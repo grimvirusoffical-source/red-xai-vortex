@@ -16,7 +16,7 @@ import AppKit
         timer = Timer.scheduledTimer(withTimeInterval: 4 * 3600, repeats: true) { _ in Task { @MainActor in await Updater.shared.check() } }
     }
 
-    static func newer(_ a: String, _ b: String) -> Bool {
+    nonisolated static func newer(_ a: String, _ b: String) -> Bool {
         let p = { (s: String) in s.trimmingCharacters(in: CharacterSet(charactersIn: "v")).split(separator: ".").map { Int($0) ?? 0 } }
         let x = p(a), y = p(b)
         for i in 0..<max(x.count, y.count) {
@@ -24,6 +24,18 @@ import AppKit
             if u != v { return u > v }
         }
         return false
+    }
+
+    nonisolated static func validateSignedVersion(_ stdout: String, requested: String, current: String) throws -> String {
+        func version(_ value: String) -> String? {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.range(of: #"^v?[0-9]+(?:\.[0-9]+){0,3}$"#, options: .regularExpression) != nil else { return nil }
+            return trimmed.hasPrefix("v") ? String(trimmed.dropFirst()) : trimmed
+        }
+        guard let signed = version(stdout), let requested = version(requested), signed == requested, version(current) != nil, newer(signed, current) else {
+            throw Fail(errorDescription: "signed release version does not match the requested newer release; update rejected")
+        }
+        return signed
     }
 
     func check() async {
@@ -59,9 +71,19 @@ import AppKit
         let (t, _) = try await URLSession.shared.download(from: zipURL)
         let tmp = dl.appendingPathComponent(zipURL.lastPathComponent)
         try FileManager.default.moveItem(at: t, to: tmp)
-        guard run(verifier.path, [man.path, sig.path, tmp.path]) == 0 else {
-            throw Fail(errorDescription: "release signature check failed, update rejected")
+        let verify = Process(), verifiedOutput = Pipe()
+        verify.executableURL = verifier; verify.arguments = [man.path, sig.path, tmp.path]
+        verify.standardOutput = verifiedOutput; verify.standardError = FileHandle.nullDevice
+        try verify.run()
+        var versionData = Data()
+        while let chunk = try verifiedOutput.fileHandleForReading.read(upToCount: 256), !chunk.isEmpty {
+            guard versionData.count + chunk.count <= 1024 else { if verify.isRunning { verify.terminate() }; try? verifiedOutput.fileHandleForReading.close(); verify.waitUntilExit(); throw Fail(errorDescription: "invalid release verifier output; update rejected") }
+            versionData.append(chunk)
         }
+        verify.waitUntilExit(); try? verifiedOutput.fileHandleForReading.close()
+        guard verify.terminationStatus == 0 else { throw Fail(errorDescription: "release signature check failed, update rejected") }
+        let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+        let signedVersion = try Self.validateSignedVersion(String(decoding: versionData, as: UTF8.self), requested: tag, current: currentVersion)
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("vortex-update-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
         guard run("/usr/bin/ditto", ["-x", "-k", tmp.path, work.path]) == 0,
@@ -71,6 +93,8 @@ import AppKit
         guard run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path]) == 0,
               run("/usr/bin/codesign", ["--verify", "-R=anchor apple generic and certificate leaf[subject.OU] = \"\(Updater.teamID)\"", app.path]) == 0
         else { throw Fail(errorDescription: "Developer ID signature check failed, update rejected") }
+        guard let packageVersion = Bundle(url: app)?.infoDictionary?["CFBundleShortVersionString"] as? String,
+              (try? Self.validateSignedVersion(packageVersion, requested: signedVersion, current: currentVersion)) != nil else { throw Fail(errorDescription: "signed release and application versions differ; update rejected") }
         let dest = Bundle.main.bundleURL
         let old = dest.deletingLastPathComponent().appendingPathComponent(".Vortex-old-\(tag).app")
         try? FileManager.default.removeItem(at: old)

@@ -279,3 +279,19 @@ func TestSnapshotAcceptsNativeAndDesktopDocumentAliases(t *testing.T) {
 		}
 	}
 }
+
+func TestSnapshotDocumentQueriesAllowFormatButRejectCredentials(t *testing.T) {
+	for _, raw := range []string{"https://docs.google.com/document/d/example/export?format=txt", "https://docs.google.com/document/d/example/edit?usp=sharing"} {
+		if _, err := validateSnapshotSource(SnapshotSource{ID: "document", Name: "Google document", URL: raw, Text: "Exported text"}); err != nil {
+			t.Fatalf("safe document query rejected: %v", err)
+		}
+	}
+	for _, key := range []string{"token", "jwt", "sig", "authorization", "access_key", "resourcekey", "ACCESS-KEY", "Api_Key", "oauth-code"} {
+		if _, err := validateSnapshotSource(SnapshotSource{ID: "document", Name: "Credential URL", URL: "https://example.com/document?" + key + "=private"}); err == nil {
+			t.Fatalf("credential alias %s was accepted", key)
+		}
+	}
+	if _, err := validateSnapshotSource(SnapshotSource{ID: "document", Name: "Invalid query", URL: "https://example.com/?jwt=private;format=txt"}); err == nil {
+		t.Fatal("invalid query could bypass credential validation")
+	}
+}

@@ -14,6 +14,10 @@ struct WorkspaceAsset: Identifiable, Codable, Equatable {
     var relativePath: String? = nil
     var bytes: Int = 0
     var updatedAt = Date()
+    var sourceURL: String? = nil
+    var extraction: String? = nil
+    var liveSync: Bool? = nil
+    var sourceAvailable: Bool? = nil
     var icon: String {
         switch kind { case "image": return "photo"; case "audio": return "waveform"; case "video": return "film"; case "document": return "doc.richtext"; default: return "doc.text" }
     }
@@ -26,6 +30,7 @@ struct VortexProject: Identifiable, Codable, Equatable {
     var baseIDs: [UUID] = []
     var personaID: UUID? = nil
     var model = ""
+    var repositoryPath: String? = nil
     var updated = Date()
 }
 struct VortexWorld: Identifiable, Codable, Equatable {
@@ -46,6 +51,9 @@ struct VortexMemory: Identifiable, Codable, Equatable {
     var projectID: UUID? = nil
     var attachments: [WorkspaceAsset] = []
     var updated = Date()
+    var originChatID: UUID? = nil
+    var originMessageID: UUID? = nil
+    var generated: Bool? = nil
     var storageBytes: Int { text.utf8.count + title.utf8.count + attachments.reduce(0) { $0 + $1.bytes + ($1.text?.utf8.count ?? 0) } }
 }
 struct XAIBase: Identifiable, Codable, Equatable {
@@ -70,8 +78,11 @@ struct WorkspaceState: Codable, Equatable {
     var bases: [XAIBase] = []
     var memoryQuotaBytes = 256 * 1024 * 1024
     var memoryEnabled = true
+    var hosting: [HostedBaseConfiguration] = []
+    var proposals: [WorkspaceProposal] = []
+    var processedTurns: [UUID] = []
     init() {}
-    enum CodingKeys: String, CodingKey { case schemaVersion, projects, worlds, memories, bases, memoryQuotaBytes, memoryEnabled }
+    enum CodingKeys: String, CodingKey { case schemaVersion, projects, worlds, memories, bases, memoryQuotaBytes, memoryEnabled, hosting, proposals, processedTurns }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
@@ -81,6 +92,9 @@ struct WorkspaceState: Codable, Equatable {
         bases = try c.decodeIfPresent([XAIBase].self, forKey: .bases) ?? []
         memoryQuotaBytes = try c.decodeIfPresent(Int.self, forKey: .memoryQuotaBytes) ?? 256 * 1024 * 1024
         memoryEnabled = try c.decodeIfPresent(Bool.self, forKey: .memoryEnabled) ?? true
+        hosting = try c.decodeIfPresent([HostedBaseConfiguration].self, forKey: .hosting) ?? []
+        proposals = try c.decodeIfPresent([WorkspaceProposal].self, forKey: .proposals) ?? []
+        processedTurns = try c.decodeIfPresent([UUID].self, forKey: .processedTurns) ?? []
     }
 }
 
@@ -204,6 +218,11 @@ enum BaseClient {
     let directory: URL
     let preferences: UserDefaults
     private var writable = true
+    var willDeleteBase: ((UUID) -> Void)?
+    var automationTasks: [UUID: Task<Void, Never>] = [:]
+    var automationPending: [UUID: [(Chat, ChatParams)]] = [:]
+    var extractionProvider: ((ChatParams, [Message]) async throws -> String)?
+    @Published var automationStatus: [UUID: String] = [:]
     var file: URL { directory.appendingPathComponent("workspace.json") }
     var assetsDirectory: URL { directory.appendingPathComponent("assets", isDirectory: true) }
     var usedMemoryBytes: Int { state.memories.reduce(0) { $0 + $1.storageBytes } }
@@ -309,6 +328,10 @@ enum BaseClient {
             if let extracted = try? await AttachmentLoader.load(url) { asset.text = extracted.text }
             else if kind == "text" { asset.kind = ["docx", "doc", "odt", "rtf", "xlsx", "pptx"].contains(url.pathExtension.lowercased()) ? "document" : "file" }
         }
+        if asset.text == nil, ["image", "audio", "video", "document"].contains(asset.kind) {
+            do { let result = try await NativeWorkspaceIngestion.extract(url, kind: asset.kind); asset.text = result.text; asset.extraction = result.detail }
+            catch { asset.extraction = error.localizedDescription }
+        }
         // Account for extracted text as well as the original file in memory quota.
         guard size + (asset.text?.utf8.count ?? 0) <= remainingBytes else { throw Self.error("The file and its extracted text exceed the available memory quota.") }
         let suffix = url.pathExtension.filter { $0.isLetter || $0.isNumber }.prefix(16)
@@ -355,7 +378,7 @@ enum BaseClient {
         do {
             let citation = try BaseClient.documentCitation(documentURL).map { "Source citation: " + $0 + "\n\n" } ?? ""
             let value = String((citation + text).prefix(100_000))
-            state.bases[i].sources.append(WorkspaceAsset(name: name.isEmpty ? "Text source" : name, kind: "text", text: value, bytes: value.utf8.count)); save()
+            state.bases[i].sources.append(WorkspaceAsset(name: name.isEmpty ? "Text source" : name, kind: "text", text: value, bytes: value.utf8.count, sourceURL: try BaseClient.documentCitation(documentURL))); save()
             return true
         } catch { errorMessage = error.localizedDescription; return false }
     }
@@ -405,6 +428,7 @@ enum BaseClient {
     func deleteBase(_ id: UUID) {
         guard let base = state.bases.first(where: { $0.id == id }) else { return }
         if base.isRemote { do { try BaseCredentials.set(nil, for: id) } catch { errorMessage = error.localizedDescription; return } }
+        willDeleteBase?(id)
         state.bases.removeAll { $0.id == id }; for i in state.projects.indices { state.projects[i].baseIDs.removeAll { $0 == id } }; save()
         base.sources.forEach(removeAsset)
     }
@@ -412,11 +436,38 @@ enum BaseClient {
         guard let i = state.bases.firstIndex(where: { $0.id == id }), !state.bases[i].isRemote, let asset = state.bases[i].sources.first(where: { $0.id == source }) else { return }
         state.bases[i].sources.removeAll { $0.id == source }; save(); removeAsset(asset)
     }
+    func fetchDocumentSource(_ baseID: UUID, name: String, address: String) async -> Bool {
+        do {
+            let result = try await NativeWorkspaceIngestion.fetchDocument(address)
+            guard let i = state.bases.firstIndex(where: { $0.id == baseID }), !state.bases[i].isRemote else { return false }
+            state.bases[i].sources.append(WorkspaceAsset(name: name.isEmpty ? "Live document" : name, kind: "document", text: result.text, bytes: result.text.utf8.count, sourceURL: try BaseClient.documentCitation(address), extraction: result.detail, liveSync: true, sourceAvailable: true)); save(); return true
+        } catch { errorMessage = error.localizedDescription; return false }
+    }
+    func syncDocument(_ baseID: UUID, sourceID: UUID) async {
+        guard let source = state.bases.first(where: { $0.id == baseID })?.sources.first(where: { $0.id == sourceID }), let address = source.sourceURL else { return }
+        do {
+            let result = try await NativeWorkspaceIngestion.fetchDocument(address)
+            guard let i = state.bases.firstIndex(where: { $0.id == baseID }), let j = state.bases[i].sources.firstIndex(where: { $0.id == sourceID }) else { return }
+            state.bases[i].sources[j].text = result.text; state.bases[i].sources[j].bytes = result.text.utf8.count; state.bases[i].sources[j].updatedAt = Date(); state.bases[i].sources[j].sourceAvailable = true; state.bases[i].sources[j].extraction = result.detail; save()
+        } catch {
+            guard let i = state.bases.firstIndex(where: { $0.id == baseID }), let j = state.bases[i].sources.firstIndex(where: { $0.id == sourceID }) else { return }
+            state.bases[i].sources[j].sourceAvailable = false; state.bases[i].sources[j].extraction = "Live fetch failed. This source is excluded from new model context until it syncs successfully."; save()
+        }
+    }
+    func transcribeBaseSource(_ baseID: UUID, sourceID: UUID) async {
+        guard let source = state.bases.first(where: { $0.id == baseID })?.sources.first(where: { $0.id == sourceID }), let url = assetURL(source) else { return }
+        do {
+            let result = try await NativeWorkspaceIngestion.extract(url, kind: source.kind, requestSpeechPermission: true)
+            guard let i = state.bases.firstIndex(where: { $0.id == baseID }), let j = state.bases[i].sources.firstIndex(where: { $0.id == sourceID }) else { return }
+            state.bases[i].sources[j].text = result.text; state.bases[i].sources[j].extraction = result.detail; state.bases[i].sources[j].updatedAt = Date(); save()
+        } catch { errorMessage = error.localizedDescription }
+    }
     func refreshContext(for chat: Chat) async {
         let project = state.projects.first { $0.id == chat.projectID }
         let ids = Set((project?.baseIDs ?? []) + (chat.baseIDs ?? []))
-        for base in state.bases where ids.contains(base.id) && base.isRemote && base.connected && base.canUse {
-            await refreshBase(base.id)
+        for base in state.bases where ids.contains(base.id) && base.connected && base.canUse {
+            if base.isRemote { await refreshBase(base.id) }
+            else { for source in base.sources where source.liveSync == true && source.sourceURL != nil { await syncDocument(base.id, sourceID: source.id) } }
             if Task.isCancelled { return }
         }
     }
@@ -453,7 +504,7 @@ enum BaseClient {
         for a in project?.files ?? [] { references.append(("Project file: " + a.name, a.text ?? "\(a.kind) attachment; contents require a compatible model or transcript.", a)) }
         let baseIDs = Set((project?.baseIDs ?? []) + (chat.baseIDs ?? []))
         for base in state.bases where baseIDs.contains(base.id) && base.connected && base.canUse && (!base.isRemote || base.status == "Available") {
-            for a in base.sources { references.append(("XAI Base \(base.name): " + a.name, a.text ?? "\(a.kind) source hosted by this Base; binary contents are not loaded into text context.", a)) }
+            for a in base.sources where a.sourceAvailable != false { references.append(("XAI Base \(base.name): " + a.name, a.text ?? "\(a.kind) source hosted by this Base; binary contents are not loaded into text context.", a)) }
         }
         let terms = Set(query.lowercased().split { !$0.isLetter && !$0.isNumber }.filter { $0.count > 2 }.map(String.init))
         func score(_ r: (String, String, WorkspaceAsset?)) -> Int { let text = (r.0 + " " + r.1).lowercased(); return terms.reduce(0) { $0 + (text.contains($1) ? 1 : 0) } }

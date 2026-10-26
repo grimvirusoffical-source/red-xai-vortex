@@ -64,3 +64,5 @@ VORTEX_LEGACY_RELEASE_TEST_DIR=/absolute/path/to/rel2.8 go test ./internal/updat
 ```
 
 The ordinary tests do not require a signing private key or network access.
+
+The legacy key is restricted to historical versions below 2.10. Only the rotated key can authorize releases starting at 2.10. Both clients also bind the authenticated manifest version to the requested tag and reject downgrades before changing installed files.

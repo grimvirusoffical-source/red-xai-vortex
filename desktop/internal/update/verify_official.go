@@ -55,15 +55,21 @@ func verifyReleaseWithPublicKey(publicKey, manifest, signature []byte, name stri
 	return nil
 }
 
-// VerifyOfficialRelease accepts the legacy and owner-approved rotated release
-// keys. Both paths require the same detached signature and signed asset digest.
+func legacyReleaseVersionAllowed(version string) bool { return Newer("2.10", version) }
+
+// VerifyOfficialRelease accepts the legacy key for historical releases and the
+// owner-approved rotated key for future releases. The lost legacy key cannot
+// authorize releases starting at 2.10.
 func VerifyOfficialRelease(manifest, signature []byte, name string, data []byte) error {
-	for _, encoded := range []string{officialReleasePublicKey, rotatedReleasePublicKey} {
+	for index, encoded := range []string{officialReleasePublicKey, rotatedReleasePublicKey} {
 		key, err := hex.DecodeString(encoded)
 		if err != nil {
 			continue
 		}
-		if _, err = decodeSignedManifest(key, manifest, signature); err == nil {
+		if document, decodeError := decodeSignedManifest(key, manifest, signature); decodeError == nil {
+			if index == 0 && !legacyReleaseVersionAllowed(document.Version) {
+				return errors.New("the historical signing key cannot authorize releases starting at 2.10")
+			}
 			return verifyReleaseWithPublicKey(key, manifest, signature, name, data)
 		}
 	}

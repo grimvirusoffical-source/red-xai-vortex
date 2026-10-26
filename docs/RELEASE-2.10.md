@@ -10,7 +10,9 @@ See [WORKSPACES.md](WORKSPACES.md) for setup, storage and capability limits.
 The previous release-signing private key was held by the earlier build agent and
 is unavailable. With the owner's approval, 2.10 introduces a new Ed25519 release
 signing key. New clients trust the new key and retain the previously verified
-public key. The private key is kept outside the repository and public website.
+public key for historical versions below 2.10. Only the new key can authorize
+releases starting at 2.10. The private key is kept outside the repository and
+public website.
 
 Older clients cannot authenticate a manifest signed by the new key. Their update
 verification should reject it. Download and install 2.10 manually from

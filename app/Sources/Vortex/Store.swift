@@ -143,6 +143,7 @@ final class ChatStore: ObservableObject {
                         self.chats[j].messages[k].toolLog = log.isEmpty ? nil : log
                         self.status = log.isEmpty ? "Done" : "Done · \(log.count) tool call(s)"
                         self.streaming = false; self.save()
+                        WorkspaceStore.shared.captureCompletedTurn(self.chats[j], params: p)
                     }
                     return
                 }
@@ -166,6 +167,7 @@ final class ChatStore: ObservableObject {
                         self.chats[j].messages[self.chats[j].messages.count - 1].content = buffer.text
                     }
                     self?.status = tps.map { String(format: "%.1f tokens/s", $0) } ?? "Done"
+                    if let self, let j = self.idx(chatID) { WorkspaceStore.shared.captureCompletedTurn(self.chats[j], params: p) }
                 }
             } catch is CancellationError {
                 await MainActor.run {

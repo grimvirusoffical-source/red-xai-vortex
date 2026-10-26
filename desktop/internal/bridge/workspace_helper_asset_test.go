@@ -8,10 +8,7 @@ import (
 )
 
 func TestEmbeddedHelperCacheRepairsTamperingWithoutDownloads(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
-	t.Setenv("LocalAppData", filepath.Join(home, "cache"))
+	t.Setenv("VORTEX_HELPER_CACHE_DIR", filepath.Join(t.TempDir(), "cache"))
 	before := BundledBaseHelper
 	BundledBaseHelper = []byte("trusted-build-helper")
 	t.Cleanup(func() { BundledBaseHelper = before })

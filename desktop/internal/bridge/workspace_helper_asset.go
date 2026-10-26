@@ -20,7 +20,11 @@ func cachedBundledBaseHelper() (string, error) {
 	if len(BundledBaseHelper) == 0 {
 		return "", errors.New("no embedded hosting helper")
 	}
-	cache, err := os.UserCacheDir()
+	cache := os.Getenv("VORTEX_HELPER_CACHE_DIR")
+	var err error
+	if cache == "" {
+		cache, err = os.UserCacheDir()
+	}
 	if err != nil {
 		return "", errors.New("private helper cache unavailable")
 	}

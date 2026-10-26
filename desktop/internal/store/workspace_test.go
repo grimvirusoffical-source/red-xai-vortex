@@ -11,7 +11,6 @@ import (
 
 func TestWorkspaceMigrationPreservesLegacyState(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 	dir := filepath.Join(home, ".config", "red-xai-vortex")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -24,7 +23,7 @@ func TestWorkspaceMigrationPreservesLegacyState(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	st := Open()
+	st := OpenAt(dir)
 	if len(st.Chats) != 1 || st.Chats[0].Messages[0].Content != "Keep this message" || st.Chats[0].Composer.Tier != "vortex-pro" || st.Settings != oldSettings || st.Agents[0].Model != "custom-model" {
 		t.Fatal("legacy state changed during additive migration")
 	}
@@ -37,7 +36,7 @@ func TestWorkspaceMigrationPreservesLegacyState(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	reopened := Open()
+	reopened := OpenAt(dir)
 	if len(reopened.Workspace.Projects) != 1 || reopened.Chats[0].Title != "Existing chat" {
 		t.Fatal("workspace or chats did not survive reopen")
 	}
@@ -81,11 +80,10 @@ func TestCorruptAndFutureWorkspacePreserved(t *testing.T) {
 	for _, raw := range []string{"not json", `{"version":99,"memory":{"quotaBytes":1024}}`} {
 		t.Run(raw, func(t *testing.T) {
 			home := t.TempDir()
-			t.Setenv("HOME", home)
 			dir := filepath.Join(home, ".config", "red-xai-vortex")
 			_ = os.MkdirAll(dir, 0700)
 			_ = os.WriteFile(filepath.Join(dir, "workspace.json"), []byte(raw), 0600)
-			st := Open()
+			st := OpenAt(dir)
 			if st.WorkspaceError == "" {
 				t.Fatal("corrupt workspace not reported")
 			}
@@ -113,9 +111,8 @@ func TestWorkspaceSnapshotIsIndependent(t *testing.T) {
 }
 
 func TestExtractedTextCountsTowardQuotaAndCanBeRecoveredAfterUpgrade(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	st := Open()
+	dir := t.TempDir()
+	st := OpenAt(dir)
 	if err := st.UpdateWorkspace(func(w *Workspace) error {
 		w.Memory.QuotaBytes = 1024
 		w.Attachments = []Attachment{{ID: "a", Bytes: 500, Text: strings.Repeat("x", 600)}}
@@ -134,7 +131,7 @@ func TestExtractedTextCountsTowardQuotaAndCanBeRecoveredAfterUpgrade(t *testing.
 	if err := os.WriteFile(filepath.Join(st.Dir, "workspace.json"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	reopened := Open()
+	reopened := OpenAt(dir)
 	if reopened.WorkspaceError != "" || len(reopened.Workspace.Memory.Entries) != 1 {
 		t.Fatal("over-quota migrated memory became unrecoverable")
 	}

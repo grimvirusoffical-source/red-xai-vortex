@@ -51,6 +51,7 @@ struct WorkspaceAssetRow: View {
             if let url = workspace.assetURL(asset) { Button { NSWorkspace.shared.open(url) } label: { Image(systemName: "arrow.up.right.square") }.help("Open the locally stored file") }
             if let remove { Button(role: .destructive, action: remove) { Image(systemName: "trash") }.help("Remove file") }
         }.padding(.vertical, 3)
+        if let detail = asset.extraction { Text(detail).font(.caption2).foregroundStyle(asset.sourceAvailable == false ? Color.orange : Color.secondary).lineLimit(3) }
     }
 }
 @MainActor func pickWorkspaceFiles(_ completion: @escaping ([URL]) -> Void) {
@@ -91,7 +92,7 @@ struct ProjectDetailView: View {
                 HStack { Button("New project chat") { chats.newChat(projectID: project.id) }; if chats.current != nil { Button("Move current chat here") { chats.updateCurrent { $0.projectID = project.id } } } }
             }
             Section("Reference files") {
-                Text("Text, code and PDF contents are indexed locally. Images use a compatible vision model; audio/video remain stored files until you add a transcript.").font(.caption).foregroundStyle(.secondary)
+                Text("Text, code and PDFs are indexed locally. Vision OCR extracts readable image/scanned-PDF text; video adds a sampled OCR timeline. Audio transcribes only with authorized, available on-device Speech recognition. General scene understanding still requires a compatible model.").font(.caption).foregroundStyle(.secondary)
                 ForEach(project.files) { asset in WorkspaceAssetRow(asset: asset) { workspace.removeProjectFile(project.id, asset: asset.id) } }
                 Button("Import files…") { let id = project.id; pickWorkspaceFiles { urls in Task { await workspace.attachToProject(id, urls: urls) } } }
             }
@@ -165,13 +166,15 @@ struct BasesWorkspaceView: View {
                 if base.isRemote {
                     HStack { Button("Check availability") { Task { await workspace.refreshBase(base.id) } }.disabled(!base.connected || workspace.refreshing.contains(base.id)); Button("Disconnect and forget token") { workspace.disconnectBase(base.id) }.disabled(!base.connected) }
                 } else {
+                    ManagedBaseHostingView(baseID: base.id)
                     Button("Import source files…") { pickWorkspaceFiles { urls in Task { await workspace.importBaseFiles(base.id, urls: urls) } } }
                     DisclosureGroup("Add text or document-source snapshot") {
                         VStack(alignment: .leading, spacing: 6) {
                             TextField("Source title", text: $sourceName)
                             TextField("Google Docs or document URL (optional citation)", text: $documentURL)
                             TextEditor(text: $sourceText).frame(height: 100)
-                            Text("Paste an exported document, transcript, or caption. Private document links are citations; this app does not sign in to Google or fetch them automatically.").font(.caption2).foregroundStyle(.secondary)
+                            Text("Fetch a public HTTPS text/CSV export or Google Doc, or paste a snapshot/transcript. Live sources sync before selected chat turns. Private Google OAuth is not configured in this client.").font(.caption2).foregroundStyle(.secondary)
+                            Button("Fetch live public document") { let n = sourceName, a = documentURL; Task { if await workspace.fetchDocumentSource(base.id, name: n, address: a) { sourceName = ""; sourceText = ""; documentURL = "" } } }.disabled(documentURL.isEmpty)
                             Button("Add source") { if workspace.addBaseText(base.id, name: sourceName, text: sourceText, documentURL: documentURL) { sourceName = ""; sourceText = ""; documentURL = "" } }.disabled(sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
                     }
@@ -179,7 +182,16 @@ struct BasesWorkspaceView: View {
                 Text("\(base.sources.count) indexed sources").font(.headline)
                 ForEach(base.sources) { asset in
                     if base.isRemote { WorkspaceAssetRow(asset: asset) }
-                    else { WorkspaceAssetRow(asset: asset) { workspace.removeBaseSource(base.id, source: asset.id) } }
+                    else {
+                        WorkspaceAssetRow(asset: asset) { workspace.removeBaseSource(base.id, source: asset.id) }
+                        if asset.sourceURL != nil {
+                            HStack {
+                                Toggle("Sync before chat turns", isOn: Binding(get: { workspace.state.bases[i].sources.first(where: { $0.id == asset.id })?.liveSync ?? false }, set: { value in if let j = workspace.state.bases[i].sources.firstIndex(where: { $0.id == asset.id }) { workspace.state.bases[i].sources[j].liveSync = value; workspace.save() } }))
+                                Button("Sync now") { Task { await workspace.syncDocument(base.id, sourceID: asset.id) } }
+                            }.font(.caption)
+                        }
+                        if asset.kind == "audio" { Button("Transcribe on this Mac…") { Task { await workspace.transcribeBaseSource(base.id, sourceID: asset.id) } } }
+                    }
                 }
                 Button("Delete this Base connection", role: .destructive) { workspace.deleteBase(base.id); selected = nil }
             }.padding(8)
@@ -199,6 +211,7 @@ struct MemoryWorkspaceView: View {
     var filtered: [VortexMemory] { workspace.state.memories.filter { $0.worldID == worldID && $0.projectID == projectID && (search.isEmpty || ($0.title + " " + $0.text).localizedCaseInsensitiveContains(search)) }.sorted { $0.updated > $1.updated } }
     var body: some View {
         Form {
+            WorkspaceProposalsView()
             Section("Local memory") {
                 Toggle("Use saved memory as chat context", isOn: $workspace.state.memoryEnabled)
                 Text("Memories stay in this Mac's Application Support folder. Selected memories are sent to the model provider when used in a chat. Vortex remembers only the entries you save here; it does not silently extract or delete memories.").font(.caption).foregroundStyle(.secondary)
@@ -241,6 +254,7 @@ struct MemoryEntryView: View {
                         TextField("Title", text: $title); TextEditor(text: $text).frame(height: 100)
                         HStack { Button("Save") { var value = memory; value.title = title; value.text = text; value.updated = Date(); do { try workspace.upsertMemory(value); editing = false } catch { workspace.errorMessage = error.localizedDescription } }; Button("Cancel") { editing = false } }
                     } else { Text(memory.text).textSelection(.enabled) }
+                    if memory.generated == true { Text("Captured automatically from a completed chat turn. Review, edit or delete it at any time.").font(.caption2).foregroundStyle(.secondary) }
                     ForEach(memory.attachments) { asset in WorkspaceAssetRow(asset: asset) }
                     HStack {
                         Button("Edit") { title = memory.title; text = memory.text; editing = true }
@@ -316,6 +330,7 @@ struct WorldDetailView: View {
                 Text("Characters and relationships").font(.headline); TextEditor(text: $world.characters).frame(height: 90)
                 Text("Current state and story log").font(.headline); TextEditor(text: $world.state).frame(height: 90)
                 Text("Update the story state explicitly as it evolves. Vortex receives this snapshot on every turn; it does not overwrite the world automatically.").font(.caption).foregroundStyle(.secondary)
+                if chats.current?.worldID == world.id { WorkspaceAutomationControls() }
                 Toggle("Use this world's isolated personal memory", isOn: $world.useMemory)
                 Text("Add entries and attachments in Memory → this world's library. Global shared memory is off by default; enable it in a chat only when you want to include personal memory.").font(.caption).foregroundStyle(.secondary)
             }
@@ -343,6 +358,7 @@ struct CodingWorkspaceView: View {
             Section("Project context") {
                 Picker("Current project", selection: Binding(get: { chats.current?.projectID }, set: { value in chats.updateCurrent { $0.projectID = value } })) { Text("No project").tag(Optional<UUID>.none); ForEach(workspace.state.projects) { p in Text(p.name).tag(Optional(p.id)) } }
                 if let id = chats.current?.projectID, let project = workspace.state.projects.first(where: { $0.id == id }) {
+                    NativeRepositoryView(projectID: id)
                     ForEach(project.files) { file in WorkspaceAssetRow(asset: file) }
                     Button("Add code or reference files…") { pickWorkspaceFiles { urls in Task { await workspace.attachToProject(id, urls: urls) } } }
                 }

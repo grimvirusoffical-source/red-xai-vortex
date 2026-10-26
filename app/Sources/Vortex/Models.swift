@@ -30,6 +30,8 @@ struct Chat: Identifiable, Codable, Equatable {
     var baseIDs: [UUID]? = nil
     var codingMode: String? = nil
     var codingNotes: String? = nil
+    var memoryCapture: String? = nil   // off | review | save; opt-in only
+    var stateEvolution: String? = nil  // off | review | save; world chats only
 }
 
 struct Persona: Identifiable, Codable, Equatable, Hashable {
