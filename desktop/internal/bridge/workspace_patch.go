@@ -123,7 +123,10 @@ func validatePatch(root, patch string) (patchReview, error) {
 	return review, nil
 }
 func runGitPatch(root, patchPath string, check bool) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	return runGitPatchContext(context.Background(), root, patchPath, check)
+}
+func runGitPatchContext(parent context.Context, root, patchPath string, check bool) error {
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 	args := []string{"--literal-pathspecs", "-c", "core.fsmonitor=false", "-C", root, "apply", "--whitespace=nowarn"}
 	if check {
@@ -132,12 +135,21 @@ func runGitPatch(root, patchPath string, check bool) error {
 	args = append(args, "--", patchPath)
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
-	if err := cmd.Run(); err != nil {
+	configurePCProcess(cmd)
+	if err := pcStart(ctx, cmd); err != nil {
+		return err
+	}
+	err := cmd.Wait()
+	if ctx.Err() != nil {
+		_ = killPCProcessTree(cmd)
+	}
+	if err != nil {
 		return errors.New("patch did not apply cleanly to the current repository files; refresh the diff and review it again")
 	}
 	return nil
 }
 func (s *Server) workspacePatchAction(in map[string]any) map[string]any {
+	epoch := s.pcCurrentEpoch()
 	chatID := str(in, "chatID")
 	root := ""
 	for _, c := range s.St.WorkspaceSnapshot().ChatSettings {
@@ -189,31 +201,44 @@ func (s *Server) workspacePatchAction(in map[string]any) map[string]any {
 	ctx, cancel := context.WithCancel(context.Background())
 	approval := &Approval{ID: workspaceID("approval"), Tool: "apply_patch", What: fmt.Sprintf("Apply reviewed patch in %s: %s (+%d / -%d). Full patch is available in Activity.", root, strings.Join(review.Files, ", "), review.Additions, review.Deletions), decided: make(chan bool, 1)}
 	run := &Run{ID: workspaceID("patch"), AgentID: "workspace-code", Agent: "Code patch", Task: "Apply reviewed repository patch", Status: "waiting", Started: time.Now().UTC(), ChatID: chatID, Pending: approval, cancel: cancel}
-	runs.mu.Lock()
-	runs.runs[run.ID] = run
-	runs.mu.Unlock()
+	run.localOperator = in["__localOperator"] == true
+	if !s.registerPCRunAt(run, epoch) {
+		cancel()
+		_ = os.Remove(path)
+		return workspaceError(errors.New("PC control was stopped; review and apply the patch again"))
+	}
+	autoAllowed := s.autoApprove(ctx, run)
+	if autoAllowed {
+		s.setRun(run, func() { run.Status = "running"; run.Pending = nil })
+	}
 	if s.Act != nil {
-		s.log(run, "approval.request", "apply_patch", approval.What, patch)
+		if autoAllowed {
+			s.log(run, "approval.policy", "apply_patch", "Always allow PC control enabled on this computer.", patch)
+		} else {
+			s.log(run, "approval.request", "apply_patch", approval.What, patch)
+		}
 	}
 	go func() {
 		defer os.Remove(path)
 		defer cancel()
-		allow := false
-		select {
-		case allow = <-approval.decided:
-		case <-ctx.Done():
-		case <-time.After(10 * time.Minute):
+		allow := autoAllowed
+		if !autoAllowed {
+			select {
+			case allow = <-approval.decided:
+			case <-ctx.Done():
+			case <-time.After(10 * time.Minute):
+			}
 		}
 		result := "Patch cancelled; repository files were preserved."
 		status := "stopped"
-		if allow {
+		if allow && ctx.Err() == nil {
 			if _, e := validatePatch(root, patch); e != nil {
 				result = e.Error()
 				status = "error"
-			} else if e = runGitPatch(root, path, true); e != nil {
+			} else if e = runGitPatchContext(context.WithValue(ctx, pcExecutionKey{}, pcExecution{server: s, run: run, auto: autoAllowed}), root, path, true); e != nil {
 				result = e.Error()
 				status = "error"
-			} else if e = runGitPatch(root, path, false); e != nil {
+			} else if e = runGitPatchContext(context.WithValue(ctx, pcExecutionKey{}, pcExecution{server: s, run: run, auto: autoAllowed}), root, path, false); e != nil {
 				result = e.Error()
 				status = "error"
 			} else {
@@ -226,5 +251,9 @@ func (s *Server) workspacePatchAction(in map[string]any) map[string]any {
 			s.log(run, "run.end", "apply_patch", result, "")
 		}
 	}()
-	return map[string]any{"ok": true, "runID": run.ID, "review": review, "message": "Patch reviewed. Open Activity to Allow or Deny applying it."}
+	message := "Patch reviewed. Open Activity to Allow or Deny applying it."
+	if autoAllowed {
+		message = "Patch reviewed. Applying with your local always-allow PC control setting."
+	}
+	return map[string]any{"ok": true, "runID": run.ID, "review": review, "message": message}
 }

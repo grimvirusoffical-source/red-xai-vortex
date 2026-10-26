@@ -57,6 +57,8 @@ type Settings struct {
 }
 
 type Store struct {
+	pcPolicy       PCControlPolicy
+	pcPolicyError  error
 	mu             sync.Mutex
 	Dir            string
 	Agents         []Agent
@@ -81,6 +83,7 @@ func OpenAt(d string) *Store {
 	_ = os.MkdirAll(d, 0700)
 	s := &Store{Dir: d, Settings: Settings{BaseURL: "https://45.77.105.187/v1", ActiveID: "vortex-default"}}
 	s.load()
+	s.loadPCPolicy()
 	s.loadWorkspace()
 	if len(s.Agents) == 0 {
 		s.Agents = []Agent{{

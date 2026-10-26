@@ -25,6 +25,10 @@ type Server struct {
 	ln             net.Listener
 	mux            *http.ServeMux
 	baseCredential func(string) string // tests can isolate credential access
+	pcMu           sync.Mutex
+	pcEpoch        uint64
+	pcRevision     uint64
+	pcForceAsk     bool
 	hostingMu      sync.Mutex
 	hosts          map[string]*managedHost
 }
@@ -66,6 +70,10 @@ func frontendDir() string {
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	method := strings.TrimPrefix(r.URL.Path, "/bridge/")
+	if strings.HasPrefix(method, "pcControl.") {
+		s.handlePCControl(w, r, method)
+		return
+	}
 	if strings.HasPrefix(method, "workspace.") {
 		if !workspaceRequestAllowed(r) {
 			http.Error(w, "workspace requests require same-origin JSON POST", http.StatusForbidden)
@@ -85,6 +93,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid JSON object", http.StatusBadRequest)
 			return
 		}
+		input["__localOperator"] = pcLocalOperator(r)
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		json.NewEncoder(w).Encode(s.dispatch(method, input))
@@ -99,6 +108,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if in == nil {
 		in = map[string]any{}
 	}
+	in["__localOperator"] = pcLocalOperator(r)
 	out := s.dispatch(method, in)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
@@ -247,7 +257,7 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 	case "media.redesign":
 		return s.mediaAgain(in, true)
 	case "run.start":
-		return s.startRun(str(in, "agentID"), str(in, "task"), str(in, "chatID"))
+		return s.startRunFrom(str(in, "agentID"), str(in, "task"), str(in, "chatID"), in["__localOperator"] == true)
 	case "run.list":
 		return map[string]any{"runs": listRuns()}
 	case "run.approve":
@@ -341,7 +351,7 @@ func (s *Server) chatSend(in map[string]any) map[string]any {
 	}
 	if c.Kind == "agent" && strings.HasPrefix(strings.TrimSpace(text), "/run ") {
 		s.St.SaveChat(*c)
-		r := s.startRun(c.AgentID, strings.TrimPrefix(strings.TrimSpace(text), "/run "), c.ID)
+		r := s.startRunFrom(c.AgentID, strings.TrimPrefix(strings.TrimSpace(text), "/run "), c.ID, in["__localOperator"] == true)
 		note := "Working on it. Follow along (and Allow/Deny actions) in Activity."
 		if r["ok"] != true {
 			note = fmt.Sprint(r["message"])

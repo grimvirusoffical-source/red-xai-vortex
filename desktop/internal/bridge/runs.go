@@ -7,10 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -35,18 +33,22 @@ type Approval struct {
 }
 
 type Run struct {
-	ID      string    `json:"id"`
-	AgentID string    `json:"agentID"`
-	Agent   string    `json:"agent"`
-	Task    string    `json:"task"`
-	Status  string    `json:"status"` // running, waiting, done, stopped, error
-	Steps   int       `json:"steps"`
-	Result  string    `json:"result"`
-	Started time.Time `json:"started"`
-	Ended   time.Time `json:"ended,omitempty"`
-	Pending *Approval `json:"pending,omitempty"`
-	ChatID  string    `json:"chatID,omitempty"`
-	cancel  context.CancelFunc
+	ID            string    `json:"id"`
+	AgentID       string    `json:"agentID"`
+	Agent         string    `json:"agent"`
+	Task          string    `json:"task"`
+	Status        string    `json:"status"` // running, waiting, done, stopped, error
+	Steps         int       `json:"steps"`
+	Result        string    `json:"result"`
+	Started       time.Time `json:"started"`
+	Ended         time.Time `json:"ended,omitempty"`
+	Pending       *Approval `json:"pending,omitempty"`
+	ChatID        string    `json:"chatID,omitempty"`
+	server        *Server
+	pcRun         bool
+	pcEpoch       uint64
+	localOperator bool
+	cancel        context.CancelFunc
 }
 
 type runTable struct {
@@ -142,31 +144,27 @@ func runTools(pcOn bool) []tool {
 			if err != nil {
 				return "", err
 			}
-			os.MkdirAll(filepath.Dir(p), 0700)
 			c := str(a, "content")
-			if err := os.WriteFile(p, []byte(c), 0600); err != nil {
+			err = pcGuard(ctx, func() error {
+				if e := os.MkdirAll(filepath.Dir(p), 0700); e != nil {
+					return e
+				}
+				return os.WriteFile(p, []byte(c), 0600)
+			})
+			if err != nil {
 				return "", err
 			}
+
 			return fmt.Sprintf("wrote %d bytes to %s", len(c), p), nil
 		}},
 	}
 	if pcOn {
 		t = append(t, tool{name: "run_command", args: "command", desc: "Run a shell command on this computer (asks the user first; 60 s limit).", write: true, run: func(ctx context.Context, a map[string]any) (string, error) {
-			ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-			defer cancel()
-			var cmd *exec.Cmd
-			if runtime.GOOS == "windows" {
-				cmd = exec.CommandContext(ctx, "cmd", "/C", str(a, "command"))
-			} else {
-				cmd = exec.CommandContext(ctx, "sh", "-c", str(a, "command"))
-			}
-			cmd.Dir = homeDir()
-			out, err := cmd.CombinedOutput()
-			s := clipS(string(out), 6000)
+			out, err := runPCCommand(ctx, str(a, "command"), homeDir())
 			if err != nil {
-				return s + "\n(exit: " + err.Error() + ")", nil
+				return out + "\n(exit: " + err.Error() + ")", nil
 			}
-			return s, nil
+			return out, nil
 		}})
 	}
 	return t
@@ -215,11 +213,19 @@ func parseCall(s string) (string, map[string]any, bool) {
 }
 
 func (s *Server) log(r *Run, kind, toolName, summary, detail string) {
+	if s.Act == nil {
+		return
+	}
 	s.Act.Append(activity.Event{RunID: r.ID, AgentID: r.AgentID, Agent: r.Agent, Kind: kind, Tool: toolName, Summary: summary, Detail: detail})
 }
 
 // startRun launches the loop in the background and returns the run.
 func (s *Server) startRun(agentID, task, chatID string) map[string]any {
+	return s.startRunFrom(agentID, task, chatID, false)
+}
+
+func (s *Server) startRunFrom(agentID, task, chatID string, local bool) map[string]any {
+	epoch := s.pcCurrentEpoch()
 	task = strings.TrimSpace(task)
 	if task == "" {
 		return map[string]any{"ok": false, "message": "Type a task for the agent."}
@@ -233,15 +239,26 @@ func (s *Server) startRun(agentID, task, chatID string) map[string]any {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &Run{ID: fmt.Sprintf("r-%d", time.Now().UnixNano()), AgentID: agentID, Agent: me.Name, Task: task, Status: "running", Started: time.Now(), ChatID: chatID, cancel: cancel}
-	runs.mu.Lock()
-	runs.runs[r.ID] = r
-	runs.mu.Unlock()
+	r.localOperator = local
+	if !s.registerPCRunAt(r, epoch) {
+		cancel()
+		return map[string]any{"ok": false, "message": "PC control was stopped; start a new task."}
+	}
 	s.log(r, "run.start", "", "Task: "+task, "model "+me.Model)
+	runs.mu.Lock()
+	copy := *r
+	runs.mu.Unlock()
 	go s.loop(ctx, r, me, runTools(pcOn))
-	return map[string]any{"ok": true, "run": r}
+	return map[string]any{"ok": true, "run": copy}
 }
 
-func (s *Server) setRun(r *Run, f func()) { runs.mu.Lock(); f(); runs.mu.Unlock() }
+func (s *Server) setRun(r *Run, f func()) {
+	runs.mu.Lock()
+	if r.Status != "stopped" || r.Ended.IsZero() {
+		f()
+	}
+	runs.mu.Unlock()
+}
 
 func (s *Server) loop(ctx context.Context, r *Run, me member, ts []tool) {
 	sys := toolPrompt(ts)
@@ -254,6 +271,9 @@ func (s *Server) loop(ctx context.Context, r *Run, me member, ts []tool) {
 		agentID = ""
 	}
 	finish := func(status, result string) {
+		if ctx.Err() != nil {
+			status, result = "stopped", "Stopped by you."
+		}
 		s.setRun(r, func() { r.Status, r.Result, r.Ended, r.Pending = status, result, time.Now(), nil })
 		s.log(r, "run.end", "", status+": "+clipS(result, 300), result)
 		if r.ChatID != "" {
@@ -280,10 +300,14 @@ func (s *Server) loop(ctx context.Context, r *Run, me member, ts []tool) {
 				msgs[0]["content"] += "\n\n" + workspace
 			}
 		}
-		out, err := s.complete(agentID, me.Model, msgs, 700)
+		out, err := s.completeContext(ctx, agentID, me.Model, msgs, 700)
 		if err != nil {
 			s.log(r, "error", "", err.Error(), "")
 			finish("error", err.Error())
+			return
+		}
+		if ctx.Err() != nil {
+			finish("stopped", "Stopped by you.")
 			return
 		}
 		name, args, ok := parseCall(out)
@@ -305,7 +329,11 @@ func (s *Server) loop(ctx context.Context, r *Run, me member, ts []tool) {
 			continue
 		}
 		s.log(r, "tool.call", name, name+" "+clipS(string(aj), 200), string(aj))
-		if t.write {
+		autoAllowed := t.write && s.autoApprove(ctx, r)
+		if autoAllowed {
+			s.log(r, "approval.policy", name, "Always allow PC control enabled on this computer.", "")
+		}
+		if t.write && !autoAllowed {
 			ap := &Approval{ID: fmt.Sprintf("ap-%d", time.Now().UnixNano()), Tool: name, What: clipS(string(aj), 600), decided: make(chan bool, 1)}
 			s.setRun(r, func() { r.Status, r.Pending = "waiting", ap })
 			s.log(r, "approval.request", name, "Waiting for Allow/Deny: "+name, "")
@@ -316,6 +344,10 @@ func (s *Server) loop(ctx context.Context, r *Run, me member, ts []tool) {
 			case <-ctx.Done():
 			}
 			s.setRun(r, func() { r.Status, r.Pending = "running", nil })
+			if ctx.Err() != nil {
+				finish("stopped", "Stopped by you.")
+				return
+			}
 			if !allow {
 				s.log(r, "approval.deny", name, "Denied: "+name, "")
 				msgs = append(msgs, map[string]string{"role": "user", "content": "TOOL_RESULT " + name + ":\nThe user DENIED this action. Do not retry it; continue without it or finish."})
@@ -323,7 +355,12 @@ func (s *Server) loop(ctx context.Context, r *Run, me member, ts []tool) {
 			}
 			s.log(r, "approval.allow", name, "Allowed: "+name, "")
 		}
-		res, err := t.run(ctx, args)
+		if ctx.Err() != nil {
+			finish("stopped", "Stopped by you.")
+			return
+		}
+		toolCtx := context.WithValue(ctx, pcExecutionKey{}, pcExecution{server: s, run: r, auto: autoAllowed})
+		res, err := t.run(toolCtx, args)
 		if err != nil {
 			res = "error: " + err.Error()
 		}
@@ -366,7 +403,7 @@ func (s *Server) approve(runID string, allow bool) map[string]any {
 	runs.mu.Lock()
 	r := runs.runs[runID]
 	var decided chan bool
-	if r != nil && r.Pending != nil {
+	if r != nil && r.server == s && r.Pending != nil && r.Status == "waiting" && r.Ended.IsZero() {
 		decided = r.Pending.decided
 	}
 	runs.mu.Unlock()

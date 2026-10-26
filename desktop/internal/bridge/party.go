@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -37,11 +38,14 @@ func (s *Server) memberFor(id string) member {
 
 // complete runs one chat completion against the endpoint for agentID (with gateway retry while models load).
 func (s *Server) complete(agentID, model string, msgs []map[string]string, maxTok int) (string, error) {
+	return s.completeContext(context.Background(), agentID, model, msgs, maxTok)
+}
+func (s *Server) completeContext(ctx context.Context, agentID, model string, msgs []map[string]string, maxTok int) (string, error) {
 	base, key := s.resolveEndpoint(agentID)
 	raw, _ := json.Marshal(map[string]any{"model": model, "messages": msgs, "temperature": 0.4, "max_tokens": maxTok})
 	cli := &http.Client{Timeout: 600 * time.Second}
 	for attempt := 0; ; attempt++ {
-		req, _ := http.NewRequest("POST", base+"/chat/completions", bytes.NewReader(raw))
+		req, _ := http.NewRequestWithContext(ctx, "POST", base+"/chat/completions", bytes.NewReader(raw))
 		req.Header.Set("Content-Type", "application/json")
 		if key != "" {
 			req.Header.Set("Authorization", "Bearer "+key)
@@ -52,7 +56,11 @@ func (s *Server) complete(agentID, model string, msgs []map[string]string, maxTo
 		}
 		if r.StatusCode >= 500 && attempt < 2 {
 			r.Body.Close()
-			time.Sleep(time.Duration(6*(attempt+1)) * time.Second)
+			select {
+			case <-time.After(time.Duration(6*(attempt+1)) * time.Second):
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
 			continue
 		}
 		b, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
