@@ -10,7 +10,7 @@ $$('.tabs button').forEach(b=>b.onclick=()=>{
   $$('.panel').forEach(p=>p.classList.toggle('on', p.id==='tab-'+b.dataset.tab));
   $('#chatside').style.display = b.dataset.tab==='chat' ? '' : 'none';
   if(b.dataset.tab!=='chat') document.querySelector('main').style.gridTemplateColumns='1fr';
-  else document.querySelector('main').style.gridTemplateColumns='240px 1fr';
+  else document.querySelector('main').style.gridTemplateColumns='260px 1fr';
 });
 
 async function refresh(){
@@ -28,30 +28,35 @@ async function refresh(){
     state.models = s.models||['vortex'];
     state.chats = s.chats||[];
     renderAgents(); renderModels(); renderChats();
+    window.VortexWorkspace?.sync();
+    window.VortexWorkspace?.refreshSidebar();
   }catch(e){ $('#status').textContent = 'bridge offline'; }
 }
 function renderAgents(){
   const sel=$('#agentPick'); const cur=sel.value;
-  sel.innerHTML = state.agents.map(a=>`<option value="${a.id}">${a.name} · ${a.model}</option>`).join('') || '<option value="vortex-default">Vortex</option>';
+  sel.innerHTML = state.agents.map(a=>`<option value="${esc(a.id)}">${esc(a.name)} · ${esc(a.model)}</option>`).join('') || '<option value="vortex-default">Vortex</option>';
   if(cur) sel.value=cur;
-  $('#agentList').innerHTML = state.agents.map(a=>`<div class="row" style="margin:6px 0"><strong>${a.name}</strong> <span class="pill">${a.provider}</span> <span class="pill">${a.model}</span></div>`).join('') || '<em style="color:var(--muted)">No agents yet</em>';
+  $('#agentList').innerHTML = state.agents.map(a=>`<div class="row" style="margin:6px 0"><strong>${esc(a.name)}</strong> <span class="pill">${esc(a.provider)}</span> <span class="pill">${esc(a.model)}</span></div>`).join('') || '<em style="color:var(--muted)">No agents yet</em>';
 }
 function renderModels(){
   const sel=$('#modelPick'); const cur=sel.value;
-  sel.innerHTML = state.models.map(m=>`<option>${m}</option>`).join('');
+  sel.innerHTML = state.models.map(m=>`<option>${esc(m)}</option>`).join('');
   if(cur) sel.value=cur; else sel.value='vortex';
 }
 function esc(t){ return String(t??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function chatBtn(c,label){ return `<button data-id="${esc(c.id)}" class="${c.id===state.active?'on':''}">${esc(label||c.title||'Chat')}</button>`; }
 function renderChats(){
-  const plain=state.chats.filter(c=>!c.kind), party=state.chats.filter(c=>c.kind==='party');
-  $('#chatlist').innerHTML = plain.map(c=>chatBtn(c)).join('') || '<em class="muted">No chats yet</em>';
-  $('#partyList').innerHTML = party.map(c=>chatBtn(c,'👥 '+c.title)).join('') || '<em class="muted">None yet</em>';
+  const query=($('#chatSearch')?.value||'').trim().toLocaleLowerCase();
+  const matches=c=>!query||(c.title||'').toLocaleLowerCase().includes(query);
+  const plain=state.chats.filter(c=>!c.kind&&matches(c)), party=state.chats.filter(c=>c.kind==='party'&&matches(c));
+  $('#chatlist').innerHTML = plain.map(c=>chatBtn(c)).join('') || `<em class="muted">${query?'No matching chats':'No chats yet'}</em>`;
+  $('#partyList').innerHTML = party.map(c=>chatBtn(c,'👥 '+c.title)).join('') || `<em class="muted">${query?'No matching party chats':'None yet'}</em>`;
   // every agent appears in the sidebar; clicking opens (or creates) its chat
-  $('#agentChats').innerHTML = state.agents.map(a=>{ const c=state.chats.find(x=>x.kind==='agent'&&x.agentID===a.id);
+  $('#agentChats').innerHTML = state.agents.filter(a=>!query||`${a.name} ${a.model}`.toLocaleLowerCase().includes(query)).map(a=>{ const c=state.chats.find(x=>x.kind==='agent'&&x.agentID===a.id);
     return `<button data-agent="${esc(a.id)}" class="${c&&c.id===state.active?'on':''}">🤖 ${esc(a.name)} <span class="muted" style="font-size:11px">${esc(a.model)}</span></button>`; }).join('');
   $$('#chatside [data-id]').forEach(b=>b.onclick=()=>{ state.active=b.dataset.id; loadChat(); renderChats(); });
   $$('#agentChats [data-agent]').forEach(b=>b.onclick=async()=>{ const r=await bridge.call('agent.chat',{agent:b.dataset.agent}); state.active=r.id; await refresh(); loadChat(); });
+  window.VortexWorkspace?.refreshSidebar();
 }
 $('#newparty').onclick=()=>{
   const opts=[...state.agents.map(a=>({id:a.id,label:'🤖 '+a.name+' · '+a.model})), ...state.models.map(m=>({id:'model:'+m,label:'🧠 '+m}))];
@@ -69,8 +74,21 @@ function addMsg(role,content,name){ const d=document.createElement('div'); d.cla
   if(name){ const w=document.createElement('span'); w.className='who'; w.textContent=name; d.appendChild(w); }
   const mm=/^\[\[media:([A-Za-z0-9_-]+)\]\]$/.exec(String(content||'').trim());
   if(mm){ const box=document.createElement('div'); box.textContent='Generating…'; d.appendChild(box); fillMedia(box, mm[1], state.active); }
-  else d.appendChild(document.createTextNode(content));
-  $('#chatlog').appendChild(d); return d; }
+  else renderMessageContent(d,content);
+  $('#chatlog').appendChild(d); $('#chatEmpty').hidden=true; return d; }
+// Fenced code stays text-only and gets a copy control; arbitrary model HTML is never executed.
+function renderMessageContent(parent,content){
+  const source=String(content||''),fence=/```([^\n`]*)\n([\s\S]*?)```/g;let start=0,match;
+  while((match=fence.exec(source))){
+    if(match.index>start)parent.appendChild(document.createTextNode(source.slice(start,match.index)));
+    const bar=document.createElement('div');bar.className='code-bar';
+    const language=document.createElement('span');language.textContent=match[1].trim()||'code';
+    const copy=document.createElement('button');copy.textContent='Copy code';copy.type='button';const codeText=match[2];
+    copy.onclick=async()=>{try{await navigator.clipboard.writeText(codeText);copy.textContent='Copied';setTimeout(()=>copy.textContent='Copy code',1800);}catch(e){copy.textContent='Copy unavailable';}};
+    bar.append(language,copy);const pre=document.createElement('pre'),code=document.createElement('code');code.textContent=codeText;pre.appendChild(code);parent.append(bar,pre);start=fence.lastIndex;
+  }
+  if(start<source.length)parent.appendChild(document.createTextNode(source.slice(start)));
+}
 async function loadChat(){
   loadComposer();
   const c = await bridge.call('chat.get',{id:state.active});
@@ -79,11 +97,17 @@ async function loadChat(){
   $('#agentPick').disabled=$('#modelPick').disabled=!!c.kind;
   (c.messages||[]).forEach(m=>addMsg(m.role,m.content,m.name));
   log.scrollTop=log.scrollHeight;
+  $('#chatEmpty').hidden=!!(c.messages||[]).length;
+  window.VortexWorkspace?.sync();
 }
 $('#newchat').onclick=async()=>{ const c=await bridge.call('chat.new',{}); state.active=c.id; await refresh(); loadChat(); };
 $('#send').onclick=async()=>{
   const text=$('#prompt').value.trim(); if(!text) return;
+  if($('#send').disabled)return;
+  $('#send').disabled=true; $('#send').textContent='Sending…';
+  try{
   $('#prompt').value='';
+  $('#prompt').style.height='auto'; $('#chatEmpty').hidden=true;
   if(!state.active){ const c=await bridge.call('chat.new',{}); state.active=c.id; }
   const ms=parseMediaCmd(text);
   if(ms){ ms.chatID=state.active; const r=await bridge.call('media.submit',ms);
@@ -95,8 +119,10 @@ $('#send').onclick=async()=>{
   if(!state.comp?.perChat) await saveComposer(false);
   const r=await bridge.call('chat.send',{id:state.active, text, agent:$('#agentPick').value, model:$('#modelPick').value, modelExplicit:state.modelExplicit});
   if(r.replies&&r.replies.length){ a.remove(); r.replies.forEach(x=>addMsg('assistant',x.content,x.name)); }
-  else a.textContent = r.reply || r.error || '(no reply)';
+  else { a.textContent=''; renderMessageContent(a,r.reply || r.error || '(no reply)'); }
   log.scrollTop=log.scrollHeight; refresh();
+  }catch(e){addMsg('assistant','The message could not be completed: '+e.message);}
+  finally{$('#send').disabled=false;$('#send').textContent='Send ↗';window.VortexWorkspace?.sync();}
 };
 $('#aSave').onclick=async()=>{
   const r=await bridge.call('agent.save',{name:$('#aName').value, provider:$('#aProv').value, model:$('#aModel').value, baseURL:$('#aBase').value, apiKey:$('#aKey').value});
