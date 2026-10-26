@@ -6,6 +6,7 @@ for component in bases desktop gateway; do
 done
 node --check desktop/frontend/app.js
 node --check desktop/frontend/workspace.js
+node --check desktop/frontend/workspace-tools.js
 node --test desktop/frontend/workspace.test.cjs
 if [[ "$(uname -s)" == Darwin ]]; then
   # Copy source bytes without Finder/file-provider metadata. This also avoids
