@@ -34,7 +34,7 @@ func TestMediaSpecNormalize(t *testing.T) {
 }
 
 func TestMediaJobJPEGAndRedesign(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	t.Setenv("VORTEX_DATA_DIR", t.TempDir())
 	img := image.NewRGBA(image.Rect(0, 0, 768, 512))
 	img.Set(1, 1, color.RGBA{255, 0, 0, 255})
 	var pb bytes.Buffer

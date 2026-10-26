@@ -57,6 +57,9 @@ func (s *Server) complete(agentID, model string, msgs []map[string]string, maxTo
 		}
 		b, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		r.Body.Close()
+		if r.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("HTTP %d", r.StatusCode)
+		}
 		var p struct {
 			Choices []struct {
 				Message struct {
@@ -114,7 +117,15 @@ func (s *Server) groupSend(c *store.Chat, comp store.Composer) map[string]any {
 		ms = append(ms, s.memberFor(id))
 	}
 	maxTok, hint := lengthParams(comp)
+	query := ""
+	if len(c.Messages) > 0 {
+		query = c.Messages[len(c.Messages)-1].Content
+	}
+	if context := s.workspaceContext(c.ID, query); context != "" {
+		hint += "\n" + context
+	}
 	replies := []map[string]string{}
+	allSuccessful := true
 	for _, me := range ms {
 		others := []string{}
 		for _, o := range ms {
@@ -132,6 +143,7 @@ func (s *Server) groupSend(c *store.Chat, comp store.Composer) map[string]any {
 		}
 		reply, err := s.complete(agentID, model, transcriptFor(me, others, c, hint), maxTok)
 		if err != nil {
+			allSuccessful = false
 			reply = "(" + me.Name + " could not reply: " + err.Error() + ")"
 		}
 		c.Messages = append(c.Messages, store.Msg{Role: "assistant", Name: me.Name, Content: reply})
@@ -146,7 +158,13 @@ func (s *Server) groupSend(c *store.Chat, comp store.Composer) map[string]any {
 	if len(replies) > 0 {
 		last = replies[len(replies)-1]["content"]
 	}
-	return map[string]any{"reply": last, "replies": replies}
+	out := map[string]any{"reply": last, "replies": replies}
+	if len(ms) > 0 && allSuccessful {
+		if warning := s.captureCompletedTurn(*c, ms[0].ID, ms[0].Model); warning != "" {
+			out["warning"] = warning
+		}
+	}
+	return out
 }
 
 // agentChat opens (or creates) the sidebar chat for an agent.

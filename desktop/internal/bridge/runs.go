@@ -258,6 +258,14 @@ func (s *Server) loop(ctx context.Context, r *Run, me member, ts []tool) {
 		s.log(r, "run.end", "", status+": "+clipS(result, 300), result)
 		if r.ChatID != "" {
 			s.appendChat(r.ChatID, me.Name, "**Task "+status+"** ("+fmt.Sprint(r.Steps)+" steps): "+result)
+			if status == "done" {
+				for _, chat := range s.St.Chats {
+					if chat.ID == r.ChatID {
+						_ = s.captureCompletedTurn(chat, r.AgentID, me.Model)
+						break
+					}
+				}
+			}
 		}
 	}
 	for step := 0; step < maxRunSteps; step++ {
@@ -266,6 +274,12 @@ func (s *Server) loop(ctx context.Context, r *Run, me member, ts []tool) {
 			return
 		}
 		s.setRun(r, func() { r.Steps = step + 1 })
+		if r.ChatID != "" {
+			msgs[0]["content"] = sys
+			if workspace := s.workspaceContext(r.ChatID, r.Task); workspace != "" {
+				msgs[0]["content"] += "\n\n" + workspace
+			}
+		}
 		out, err := s.complete(agentID, me.Model, msgs, 700)
 		if err != nil {
 			s.log(r, "error", "", err.Error(), "")
@@ -349,26 +363,43 @@ func listRuns() []Run {
 }
 
 func (s *Server) approve(runID string, allow bool) map[string]any {
-	r := getRun(runID)
-	if r == nil || r.Pending == nil {
+	runs.mu.Lock()
+	r := runs.runs[runID]
+	var decided chan bool
+	if r != nil && r.Pending != nil {
+		decided = r.Pending.decided
+	}
+	runs.mu.Unlock()
+	if decided == nil {
 		return map[string]any{"ok": false, "message": "Nothing is waiting for approval."}
 	}
 	select {
-	case r.Pending.decided <- allow:
+	case decided <- allow:
 	default:
 	}
 	return map[string]any{"ok": true}
 }
-
 func (s *Server) stopRun(runID string) map[string]any {
-	r := getRun(runID)
+	runs.mu.Lock()
+	r := runs.runs[runID]
+	var cancel context.CancelFunc
+	var decided chan bool
+	if r != nil {
+		cancel = r.cancel
+		if r.Pending != nil {
+			decided = r.Pending.decided
+		}
+	}
+	runs.mu.Unlock()
 	if r == nil {
 		return map[string]any{"ok": false, "message": "No such run."}
 	}
-	r.cancel()
-	if r.Pending != nil {
+	if cancel != nil {
+		cancel()
+	}
+	if decided != nil {
 		select {
-		case r.Pending.decided <- false:
+		case decided <- false:
 		default:
 		}
 	}

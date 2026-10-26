@@ -18,7 +18,14 @@ var (
 
 func init() {
 	h, _ := os.UserHomeDir()
-	dir = filepath.Join(h, ".config", "red-xai-vortex", "secrets")
+	dir = os.Getenv("VORTEX_SECRETS_DIR")
+	if dir == "" {
+		if dataDir := os.Getenv("VORTEX_DATA_DIR"); dataDir != "" {
+			dir = filepath.Join(dataDir, "secrets")
+		} else {
+			dir = filepath.Join(h, ".config", "red-xai-vortex", "secrets")
+		}
+	}
 	_ = os.MkdirAll(dir, 0700)
 }
 

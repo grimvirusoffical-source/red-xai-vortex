@@ -41,6 +41,7 @@ main{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #1e2
 input,select,textarea{font-size:16px}.panel{padding:10px}}
 .media-card{border:1px solid #333;border-radius:10px;padding:8px;margin:4px 0;max-width:560px}
 </style>
+<link rel="stylesheet" href="workspace.css"/>
 </head>
 <body>
 <div id="gate" style="position:fixed;inset:0;background:#0b0f14;z-index:50;display:flex;align-items:center;justify-content:center;overflow:auto">
@@ -66,6 +67,7 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
   <h1>Red-XAI Vortex</h1>
   <div class="tabs">
     <button class="on" data-tab="chat">Chat</button>
+    <button data-tab="workspace">Workspace</button>
     <button data-tab="agents">Agents</button>
     <button data-tab="activity" id="actTabBtn">Activity</button>
     <button data-tab="integrations">Integrations</button>
@@ -79,8 +81,13 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
 </header>
 <main>
   <aside id="chatside">
+    <div class="sidebar-label">YOUR SPACE</div>
     <button class="primary" id="newchat" style="margin-bottom:6px">+ New chat</button>
     <button id="newparty" style="margin-bottom:10px">+ Party chat</button>
+    <label class="sr-only" for="chatSearch">Search conversations</label>
+    <input id="chatSearch" type="search" placeholder="Search conversations…" autocomplete="off"/>
+    <div class="sidehead project-heading">Projects <button id="wsNewProject" title="Create a project" aria-label="Create a project">+</button></div>
+    <div id="wsSidebarProjects"></div>
     <div id="partyPick" class="card" style="display:none;font-size:13px">
       <b>Party chat</b><div class="muted">Pick agents and models to work together.</div>
       <div id="partyOpts" style="max-height:220px;overflow:auto;margin:6px 0"></div>
@@ -93,16 +100,22 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
     <div class="sidehead">Party chats</div><div id="partyList"></div>
   </aside>
   <section class="panel on" id="tab-chat">
-    <div class="row" style="margin-bottom:8px">
+    <div class="chat-heading"><div><span class="eyebrow">VORTEX / CONVERSATION</span><h2 id="chatTitle">A little curiosity goes a long way.</h2></div><button class="ghost" id="wsChatSetup">Context &amp; memory</button></div>
+    <div class="row chat-models" style="margin-bottom:8px">
       <select id="agentPick" style="max-width:220px"></select>
       <select id="modelPick" style="max-width:220px"></select>
       <span class="pill" id="conn">offline</span>
     </div>
+    <div id="wsChatContext" class="context-strip"></div>
+    <div id="wsTurnNotice" role="status" aria-live="polite"></div>
+    <div id="chatEmpty" class="chat-empty"><div class="empty-orbit" aria-hidden="true">✳</div><p class="eyebrow">A PLACE FOR YOUR NEXT IDEA</p><h2>What shall we make possible?</h2><p>Think it through. Build something. Create a whole new world.<br/>Your models, tools, and conversations are all here.</p><div class="starter-grid"><button data-starter="Help me plan a project. Ask about the goal and suggest a practical first step."><span>↗</span><b>Start a project</b><small>Bring an idea into focus</small></button><button data-starter="Help me debug some code. Ask me for the relevant code, expected behavior, and error output."><span>⌘</span><b>Build &amp; debug</b><small>Work through code together</small></button><button data-starter="Help me create an immersive roleplay world with characters, lore, and a compelling opening scene."><span>✧</span><b>Imagine a world</b><small>Make room for a story</small></button></div></div>
     <div id="chatlog"></div>
-    <div class="row" style="margin-top:8px">
-      <textarea id="prompt" rows="2" placeholder="Message Vortex… (or /image, /speech, /music, /sfx, /video to generate media)"></textarea>
-      <button class="primary" id="send">Send</button>
+    <div class="row chat-composer" style="margin-top:8px">
+      <label class="sr-only" for="prompt">Message Vortex</label>
+      <textarea id="prompt" rows="2" placeholder="Ask, build, or imagine anything…" aria-describedby="composerHint"></textarea>
+      <button class="primary" id="send" title="Send message (Enter)">Send ↗</button>
     </div>
+    <div id="composerHint" class="composer-hint">Enter to send · Shift + Enter for a new line · /image /speech /music /sfx /video</div>
     <div class="row composer" id="composer" style="margin-top:6px;gap:12px;flex-wrap:wrap;font-size:13px">
       <label title="Fast, short answers on the quickest model"><input type="checkbox" id="cQuick"/> Quick replies</label>
       <label style="display:flex;align-items:center;gap:6px">Strength
@@ -114,6 +127,12 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
       <button id="cDefault" title="Use these settings for new chats">Set as default</button>
       <span id="cScope" style="color:var(--muted)"></span>
     </div>
+  </section>
+  <section class="panel" id="tab-workspace" style="grid-column:1/-1">
+    <div class="workspace-heading"><div><span class="eyebrow">YOUR IDEAS, WITH CONTEXT</span><h2>Workspace</h2><p>Keep projects, knowledge, and worlds close to the conversation.</p></div><span class="privacy-label">◉ Stored on this computer</span></div>
+    <nav class="workspace-nav" aria-label="Workspace sections"><button class="on" data-ws-view="projects">Projects</button><button data-ws-view="bases">XAI Bases</button><button data-ws-view="personalities">Personalities</button><button data-ws-view="memory">Memory</button><button data-ws-view="worlds">Worlds</button><button data-ws-view="coding">Coding</button></nav>
+    <div id="wsMessage" role="status" aria-live="polite"></div>
+    <div id="wsContent"><div class="workspace-empty">Loading your workspace…</div></div>
   </section>
   <section class="panel" id="tab-activity" style="grid-column:1/-1">
     <div class="card">
@@ -266,5 +285,7 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
   · <a href="#" id="fSignOut">Sign out</a> <span id="fUser"></span>
 </footer>
 <script src="app.js"></script>
+<script src="workspace.js"></script>
+<script src="workspace-tools.js"></script>
 </body>
 </html>

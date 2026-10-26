@@ -92,7 +92,10 @@ extension ChatStore {
                     var c = self.chats[j]; c.messages.removeLast(); return (c, ap, asys)
                 }) else { break }
                 let others = (snapshot.participants ?? []).filter { $0 != m }
-                let hist = GroupTurns.history(for: m, chat: snapshot, system: agentSys ?? systemPrompt, others: others, budgetChars: budget)
+                let context = await MainActor.run { WorkspaceStore.shared.context(for: snapshot, basePrompt: agentSys ?? systemPrompt, query: text, maxChars: max(0, (contextTokens - params.maxTokens) * 2)) }
+                var contextChat = snapshot
+                if let index = contextChat.messages.lastIndex(where: { $0.role == "user" }), !context.images.isEmpty { contextChat.messages[index].attachments = (contextChat.messages[index].attachments ?? []) + context.images }
+                let hist = GroupTurns.history(for: m, chat: contextChat, system: context.system, others: others, budgetChars: max(512, budget - context.system.count))
                 let buf = ReplyBuffer()
                 var reply: String
                 do {
@@ -128,7 +131,11 @@ extension ChatStore {
                     self.save()
                 }
             }
-            await MainActor.run { self?.status = Task.isCancelled ? "Stopped" : "Group: \(who.count) repl\(who.count == 1 ? "y" : "ies")"; self?.streaming = false; self?.save() }
+            let cancelled = Task.isCancelled
+            await MainActor.run {
+                self?.status = cancelled ? "Stopped" : "Group: \(who.count) repl\(who.count == 1 ? "y" : "ies")"; self?.streaming = false; self?.save()
+                if !cancelled, let self, let j = self.idx(chatID) { WorkspaceStore.shared.captureCompletedTurn(self.chats[j], params: params) }
+            }
         }
     }
     /// Opens (or creates) the sidebar chat for an agent: a one-participant chat with "agent:<id>".

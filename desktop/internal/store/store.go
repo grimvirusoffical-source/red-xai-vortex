@@ -57,19 +57,31 @@ type Settings struct {
 }
 
 type Store struct {
-	mu       sync.Mutex
-	Dir      string
-	Agents   []Agent
-	Chats    []Chat
-	Settings Settings
+	mu             sync.Mutex
+	Dir            string
+	Agents         []Agent
+	Chats          []Chat
+	Settings       Settings
+	Workspace      Workspace
+	WorkspaceError string
 }
 
 func Open() *Store {
-	h, _ := os.UserHomeDir()
-	d := filepath.Join(h, ".config", "red-xai-vortex")
+	d := os.Getenv("VORTEX_DATA_DIR")
+	if d == "" {
+		h, _ := os.UserHomeDir()
+		d = filepath.Join(h, ".config", "red-xai-vortex")
+	}
+	return OpenAt(d)
+}
+
+// OpenAt provides an explicit storage directory for managed installations and
+// isolated fixtures without changing the user's home or existing configuration.
+func OpenAt(d string) *Store {
 	_ = os.MkdirAll(d, 0700)
 	s := &Store{Dir: d, Settings: Settings{BaseURL: "https://45.77.105.187/v1", ActiveID: "vortex-default"}}
 	s.load()
+	s.loadWorkspace()
 	if len(s.Agents) == 0 {
 		s.Agents = []Agent{{
 			ID: "vortex-default", Name: "Vortex", Provider: "vortex", Model: "vortex",

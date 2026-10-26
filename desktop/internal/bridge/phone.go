@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -110,7 +111,9 @@ func (s *Server) phoneGate(next http.Handler) http.Handler {
 						return
 					}
 				}
-				next.ServeHTTP(w, r)
+				// The workspace bridge accepts a LAN host only after this gate has
+				// authenticated its phone session. A request header cannot forge this.
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), workspacePhoneSessionKey{}, true)))
 				return
 			}
 		}

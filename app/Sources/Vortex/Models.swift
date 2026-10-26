@@ -22,6 +22,16 @@ struct Chat: Identifiable, Codable, Equatable {
     var turnMode: String? = nil         // "all" (each replies in order) | "rotate" (one per turn)
     var nextTurn: Int? = nil
     var composer: ComposerSettings? = nil  // nil = use the global default
+    // Optional fields keep pre-workspace chats and exports decodable without rewriting them.
+    var projectID: UUID? = nil
+    var worldID: UUID? = nil
+    var personaID: UUID? = nil
+    var sharedMemoryEnabled: Bool? = nil
+    var baseIDs: [UUID]? = nil
+    var codingMode: String? = nil
+    var codingNotes: String? = nil
+    var memoryCapture: String? = nil   // off | review | save; opt-in only
+    var stateEvolution: String? = nil  // off | review | save; world chats only
 }
 
 struct Persona: Identifiable, Codable, Equatable, Hashable {

@@ -15,6 +15,9 @@ struct ContentView: View {
     @Local var partyHint = false
     @Local var showActivity = false
     @StateObject var agents = AgentStore.shared
+    @ObservedObject var workspace = WorkspaceStore.shared
+    @Local var showWorkspace = false
+    @Local var workspaceTab = "projects"
 
     @ViewBuilder func chatRow(_ c: Chat) -> some View {
         HStack {
@@ -43,7 +46,24 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $store.selection) {
-                Section("Chats") { ForEach(filtered.filter { ($0.participants ?? []).isEmpty }) { c in chatRow(c) } }
+                Section {
+                    Button { workspaceTab = "projects"; showWorkspace = true } label: { Label("Your workspace", systemImage: "square.grid.2x2") }.buttonStyle(.borderless)
+                    Button { workspaceTab = "bases"; showWorkspace = true } label: { Label("XAI Bases", systemImage: "externaldrive.connected.to.line.below") }.buttonStyle(.borderless)
+                    Button { workspaceTab = "worlds"; showWorkspace = true } label: { Label("Roleplay worlds", systemImage: "globe.americas") }.buttonStyle(.borderless)
+                }
+                Section("Projects") {
+                    ForEach(workspace.state.projects) { project in
+                        DisclosureGroup {
+                            ForEach(filtered.filter { $0.projectID == project.id }) { c in chatRow(c) }
+                            Button { store.newChat(projectID: project.id) } label: { Label("New project chat", systemImage: "plus") }.buttonStyle(.borderless)
+                        } label: { Label(project.name, systemImage: "folder") }
+                    }
+                    Button { workspaceTab = "projects"; showWorkspace = true } label: { Label("Manage projects", systemImage: "folder.badge.plus") }.buttonStyle(.borderless)
+                }
+                Section("Chats") { ForEach(filtered.filter { ($0.participants ?? []).isEmpty && $0.projectID == nil && $0.worldID == nil }) { c in chatRow(c) } }
+                if !filtered.filter({ $0.worldID != nil && $0.projectID == nil }).isEmpty {
+                    Section("World chats") { ForEach(filtered.filter { $0.worldID != nil && $0.projectID == nil }) { c in chatRow(c) } }
+                }
                 Section("Agents") {
                     ForEach(agents.agents) { a in
                         let c = store.chats.first { $0.participants == ["agent:" + a.id] }
@@ -83,6 +103,7 @@ struct ContentView: View {
         .onAppear {
             if useTunnel && !tunnel.running { tunnel.start(host: sshHost, local: sshLocalPort, remote: sshRemotePort, keyPath: sshKey) }
         }
+        .sheet(isPresented: $showWorkspace) { WorkspacePanel(initialTab: workspaceTab).environmentObject(store) }
         .sheet(isPresented: $partyHint) { GroupSetupView().environmentObject(store) }
         .sheet(isPresented: $showActivity) { ActivityView() }
         .alert("Rename Chat", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
@@ -115,29 +136,40 @@ struct ChatView: View {
     @StateObject var skills = SkillStore.shared
     @Local var voiceCall = false
     @Local var groupSetup = false
+    @Local var showWorkspace = false
+    @Local var workspaceTab = "projects"
 
     var params: ChatParams {
-        let base = ChatParams(baseURL: serverURL, apiKey: Keychain.get() ?? "", model: model, temperature: temperature, topP: topP,
+        let projectModel = WorkspaceStore.shared.state.projects.first(where: { $0.id == store.current?.projectID })?.model.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let base = ChatParams(baseURL: serverURL, apiKey: Keychain.get() ?? "", model: projectModel.isEmpty ? model : projectModel, temperature: temperature, topP: topP,
                    repeatPenalty: repeatPenalty, topK: topK, maxTokens: maxTokens, seed: seed)
         return AgentStore.shared.chatParams(fallback: base)
     }
 
     var body: some View {
         VStack(spacing: 0) {
+            WorkspaceContextBar { tab in workspaceTab = tab; showWorkspace = true }
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         if let c = store.current {
                             if c.messages.isEmpty {
-                                VStack(spacing: 8) {
-                                    Image(systemName: "sparkles").font(.system(size: 56)).foregroundStyle(.tint)
-                                    Text("Red-XAI Vortex").font(.largeTitle.bold())
-                                    Text("Model: \(model)").foregroundStyle(.secondary)
-                                }.frame(maxWidth: .infinity).padding(.top, 80)
+                                VStack(spacing: 14) {
+                                    Image(systemName: "sparkle").font(.system(size: 40, weight: .light)).foregroundStyle(.tint)
+                                    Text("What are we working on?").font(.system(size: 30, weight: .semibold, design: .rounded))
+                                    Text("Think, build, explore a world, or start with your own context.").foregroundStyle(.secondary)
+                                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                                        starter("Build something", detail: "Plan a change with code and files", icon: "curlybraces", prompt: "Help me plan a code change. First, ask for the files and goal you need.")
+                                        starter("Review a change", detail: "Find issues in a diff", icon: "text.magnifyingglass", prompt: "Review the diff I will provide for bugs, regressions, and security issues.")
+                                        starter("Connect your knowledge", detail: "Work with an XAI Base", icon: "externaldrive", tab: "bases")
+                                        starter("Enter a world", detail: "Create an immersive story", icon: "globe.americas", tab: "worlds")
+                                    }.frame(maxWidth: 560).padding(.top, 12)
+                                    Text("\(Defaults.displayName(params.model)) · Your tools and existing features are ready").font(.caption).foregroundStyle(.tertiary)
+                                }.frame(maxWidth: .infinity).padding(.top, 64).padding(.bottom, 40)
                             }
                             ForEach(c.messages) { m in BubbleView(message: m).id(m.id) }
                         }
-                    }.padding()
+                    }.padding(24).frame(maxWidth: 1000).frame(maxWidth: .infinity)
                 }
                 .onChange(of: store.current?.messages.last?.content) { _, _ in
                     if let id = store.current?.messages.last?.id { proxy.scrollTo(id, anchor: .bottom) }
@@ -169,6 +201,7 @@ struct ChatView: View {
                 Text(sendOnEnter ? "Enter to send · Shift+Enter for newline" : "⌘Enter to send").font(.caption2).foregroundStyle(.tertiary)
             }.padding(.horizontal, 12).padding(.bottom, 6)
         }
+        .sheet(isPresented: $showWorkspace) { WorkspacePanel(initialTab: workspaceTab).environmentObject(store) }
         .sheet(isPresented: $groupSetup) { GroupSetupView().environmentObject(store) }
         .sheet(isPresented: $voiceCall) { VoiceCallView { t in input = t; send() }.environmentObject(store) }
         .overlay { if dropTarget { RoundedRectangle(cornerRadius: 12).stroke(Color.accent(accent), lineWidth: 3).padding(4).allowsHitTesting(false) } }
@@ -201,6 +234,18 @@ struct ChatView: View {
         .task { ChatStoreRef.store = store; await refreshModels(); try? await HubStore.shared.loadMerges() }
     }
 
+    @ViewBuilder func starter(_ title: String, detail: String, icon: String, prompt: String? = nil, tab: String? = nil) -> some View {
+        Button {
+            if let tab { workspaceTab = tab; showWorkspace = true }
+            if let prompt { input = prompt }
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: icon).foregroundStyle(.tint).frame(width: 22)
+                VStack(alignment: .leading, spacing: 4) { Text(title).font(.callout.weight(.medium)); Text(detail).font(.caption).foregroundStyle(.secondary) }
+                Spacer(minLength: 0)
+            }.padding(14).frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+        }.buttonStyle(.plain).background(RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(0.04))).overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.08)))
+    }
     func refreshModels() async {
         if let m = try? await API.models(base: serverURL, key: Keychain.get() ?? ""), !m.isEmpty { store.availableModels = m }
     }
@@ -288,7 +333,7 @@ struct BubbleView: View {
                 Group {
                     if message.content.isEmpty { TypingIndicator() }
                     else if let mid = MediaCard.mediaID(message.content) { MediaCard(id: mid, chat: ChatStoreRef.store) }
-                    else { rendered }
+                    else { WorkspaceMessageBody(content: message.content, markdown: markdown) }
                 }
                 .font(.system(size: fontSize))
                 .textSelection(.enabled)

@@ -39,6 +39,11 @@ any app that speaks the **OpenAI** or **Ollama** API, using your own API keys.
 
 ## Features
 
+- **Projects and workspace context**: local projects, XAI Bases, portable personalities,
+  quota-controlled manual memory, isolated roleplay worlds, and selected coding context
+  in both clients. See [the workspace guide](docs/WORKSPACES.md) and
+  [authenticated Base hosting](bases/README.md) for supported behavior and setup.
+
 - **Model library**: download, uninstall (frees disk) and set a default from the app, with size, RAM needed and expected speed per model; disk and RAM checks before each download.
 - **Your own API keys**: `redx_ai_…` keys per app, each with a name, allowed models, requests/min, usage counts and last-used time, and a revoke button. The plaintext is shown once and stored only as an HMAC hash.
 - **Merges**: several models answer as one virtual model, `redx-merge-<name>`.

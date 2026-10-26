@@ -20,11 +20,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         Process.launchedProcess(launchPath: "/usr/bin/pkill", arguments: ["-f", "Vortex.app/Contents/Resources/ggml-rpc-server"])
-        MainActor.assumeIsolated { _ = PluginStore.shared; _ = SkillStore.shared; _ = AgentStore.shared; Task { await MCPStore.shared.connectEnabled() }; Task { await ServerStore.shared.healthCheckActive() }; Updater.shared.start() }   // seed starter plugins/skills on first launch
+        MainActor.assumeIsolated { _ = PluginStore.shared; _ = SkillStore.shared; _ = AgentStore.shared; _ = ManagedBaseHosting.shared; Task { await MCPStore.shared.connectEnabled() }; Task { await ServerStore.shared.healthCheckActive() }; Updater.shared.start() }   // seed starter plugins/skills on first launch
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { SelfTest.arg == nil }
     func applicationWillTerminate(_ n: Notification) { MainActor.assumeIsolated {
-        NodeManager.shared.shutdown(); LocalRuntime.shared.stop(); MCPStore.shared.stopAll(); ServerStore.shared.stopAll(); RedXLink.shared.stop(); ModelBrowserServer.shared.stop()
+        ManagedBaseHosting.shared.stopAll(); NodeManager.shared.shutdown(); LocalRuntime.shared.stop(); MCPStore.shared.stopAll(); ServerStore.shared.stopAll(); RedXLink.shared.stop(); ModelBrowserServer.shared.stop()
         // make sure no SSH tunnel or local model outlives the app
         let k = Process(); k.executableURL = URL(fileURLWithPath: "/usr/bin/pkill"); k.arguments = ["-P", "\(ProcessInfo.processInfo.processIdentifier)"]; try? k.run(); k.waitUntilExit() } }
 }
