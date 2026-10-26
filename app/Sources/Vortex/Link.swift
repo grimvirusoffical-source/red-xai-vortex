@@ -25,12 +25,12 @@ final class RedXLink: ObservableObject {
     }
     static var enabled: Bool { mode == "link" }
     /// Secure chat (Red-SecretsXAI): carry all Link traffic as red-X barcode images. Per device, on by default.
-    static var secure: Bool {
+    nonisolated static var secure: Bool {
         get { UserDefaults.standard.object(forKey: "secureChat") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "secureChat") }
     }
     /// Phone chat over the local network (PIN-protected web page served by the helper).
-    static var phone: Bool {
+    nonisolated static var phone: Bool {
         get { UserDefaults.standard.bool(forKey: "phoneChat") }
         set { UserDefaults.standard.set(newValue, forKey: "phoneChat") }
     }
