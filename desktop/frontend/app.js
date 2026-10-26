@@ -21,6 +21,9 @@ async function refresh(){
     $('#conn').className = 'pill '+(s.connected?'ok':'bad');
     if(s.baseURL) $('#baseURL').value = s.baseURL;
     if('autoUpdate' in s) $('#autoUpdate').checked = s.autoUpdate;
+    if('secureChat' in s) $('#secureChat').checked = s.secureChat;
+    if('phoneChat' in s) $('#phoneChat').checked = s.phoneChat;
+    if(s.link){ const L=s.link; $('#linkInfo').textContent = (L.error? L.error : (L.secure? 'Secure chat active · red-X barcode transport' : 'Secure chat off · direct HTTPS')) + (L.phoneURL? ' · Phone: open '+L.phoneURL+' · PIN '+L.phonePIN : ''); }
     state.agents = s.agents||[];
     state.models = s.models||['vortex'];
     state.chats = s.chats||[];
@@ -180,7 +183,7 @@ async function loadMine(){ const el=$('#myMsg'); el.className='muted'; el.textCo
 $('#refreshStore').onclick=loadStore; $('#refreshMine').onclick=loadMine;
 document.querySelector('[data-tab="plugins"]').addEventListener('click',()=>{ loadStore(); loadMine(); });
 $('#saveSettings').onclick=async()=>{
-  const r=await bridge.call('settings.save',{baseURL:$('#baseURL').value, apiKey:$('#apiKey').value, autoUpdate:$('#autoUpdate').checked});
+  const r=await bridge.call('settings.save',{baseURL:$('#baseURL').value, apiKey:$('#apiKey').value, autoUpdate:$('#autoUpdate').checked, secureChat:$('#secureChat').checked, phoneChat:$('#phoneChat').checked});
   $('#apiKey').value=''; $('#setMsg').textContent=r.message||'Saved'; $('#setMsg').className=r.ok?'ok':'bad'; refresh();
 };
 $('#probe').onclick=async()=>{ const r=await bridge.call('settings.probe',{}); $('#setMsg').textContent=r.message||''; $('#setMsg').className=r.ok?'ok':'bad'; };

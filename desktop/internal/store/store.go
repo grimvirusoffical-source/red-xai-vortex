@@ -29,9 +29,9 @@ type Chat struct {
 	Messages []Msg     `json:"messages"`
 	Updated  time.Time `json:"updated"`
 	Composer *Composer `json:"composer,omitempty"` // per-chat composer settings; nil = global default
-	Kind     string    `json:"kind,omitempty"`    // "" (model chat) | "agent" | "party"
-	AgentID  string    `json:"agentID,omitempty"` // agent chats: the agent
-	Members  []string  `json:"members,omitempty"` // party chats: agent IDs (or "model:<id>") that reply in turn
+	Kind     string    `json:"kind,omitempty"`     // "" (model chat) | "agent" | "party"
+	AgentID  string    `json:"agentID,omitempty"`  // agent chats: the agent
+	Members  []string  `json:"members,omitempty"`  // party chats: agent IDs (or "model:<id>") that reply in turn
 }
 
 // Composer holds the chat composer controls: strength tier, reply length and Quick replies.
@@ -47,10 +47,13 @@ type Msg struct {
 }
 
 type Settings struct {
-	BaseURL      string `json:"baseURL"`
-	ActiveID     string `json:"activeAgent"`
+	BaseURL      string   `json:"baseURL"`
+	ActiveID     string   `json:"activeAgent"`
 	NoAutoUpdate bool     `json:"noAutoUpdate"`
-	Composer     Composer `json:"composer"` // global default for new chats
+	Composer     Composer `json:"composer"`   // global default for new chats
+	PlainChat    bool     `json:"plainChat"`  // false = Secure chat (Red-SecretsXAI) on
+	PhoneChat    bool     `json:"phoneChat"`  // serve the LAN phone chat page
+	LinkServer   string   `json:"linkServer"` // RedX Link host:port (default 45.77.105.187:8093)
 }
 
 type Store struct {

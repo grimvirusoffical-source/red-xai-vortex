@@ -24,6 +24,41 @@ final class RedXLink: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "connectionMode") }
     }
     static var enabled: Bool { mode == "link" }
+    /// Secure chat (Red-SecretsXAI): carry all Link traffic as red-X barcode images. Per device, on by default.
+    static var secure: Bool {
+        get { UserDefaults.standard.object(forKey: "secureChat") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "secureChat") }
+    }
+    /// Phone chat over the local network (PIN-protected web page served by the helper).
+    static var phone: Bool {
+        get { UserDefaults.standard.bool(forKey: "phoneChat") }
+        set { UserDefaults.standard.set(newValue, forKey: "phoneChat") }
+    }
+    static let phonePort = 18192
+    /// "http://<lan-ip>:18192" and PIN written by the helper, if phone chat is running.
+    static func phoneInfo() -> (url: String, pin: String)? {
+        let f = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".redx-link-phone")
+        guard let t = try? String(contentsOf: f, encoding: .utf8) else { return nil }
+        let l = t.split(separator: "\n").map(String.init)
+        guard l.count >= 2 else { return nil }
+        return ("http://\(lanIP() ?? "this-mac"):\(phonePort)", l[1])
+    }
+    static func lanIP() -> String? {
+        var ifa: UnsafeMutablePointer<ifaddrs>?; guard getifaddrs(&ifa) == 0, let first = ifa else { return nil }
+        defer { freeifaddrs(ifa) }
+        var p: UnsafeMutablePointer<ifaddrs>? = first
+        while let c = p {
+            let a = c.pointee.ifa_addr.pointee
+            let name = String(cString: c.pointee.ifa_name)
+            if a.sa_family == UInt8(AF_INET), name.hasPrefix("en") {
+                var h = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                getnameinfo(c.pointee.ifa_addr, socklen_t(a.sa_len), &h, socklen_t(h.count), nil, 0, NI_NUMERICHOST)
+                return String(cString: h)
+            }
+            p = c.pointee.ifa_next
+        }
+        return nil
+    }
     static var binary: URL? {
         guard let u = Bundle.main.url(forResource: "redx-link", withExtension: nil),
               FileManager.default.isExecutableFile(atPath: u.path) else { return nil }
@@ -55,11 +90,17 @@ final class RedXLink: ObservableObject {
         Task.detached(priority: .utility) {
             if let old, old.isRunning { old.terminate(); old.waitUntilExit() }
             // a stale helper from a previous app run may still own the port: ask it, never kill foreign processes
-            if TunnelManager.portOpen(Self.port), old == nil {
+            if TunnelManager.portOpen(Self.port), old == nil, !force {
                 if await Self.statusOK() { await MainActor.run { RedXLink.shared.running = true; RedXLink.shared.status = "connected (existing helper)" }; return }
             }
             let p = Process(); p.executableURL = bin
-            p.arguments = ["proxy", "-listen", "127.0.0.1:\(Self.port)", "-servers", list.joined(separator: ",")]
+            var args = ["proxy", "-listen", "127.0.0.1:\(Self.port)", "-servers", list.joined(separator: ",")]
+            if Self.secure { args.append("-barcode") }
+            if Self.phone, let key = Keychain.get(), !key.isEmpty {
+                args += ["-phone", "0.0.0.0:\(Self.phonePort)"]
+                var env = ProcessInfo.processInfo.environment; env["REDX_LINK_KEY"] = key; p.environment = env
+            }
+            p.arguments = args
             p.standardOutput = FileHandle.nullDevice
             FileManager.default.createFile(atPath: log.path, contents: nil)
             p.standardError = try? FileHandle(forWritingTo: log)
@@ -70,7 +111,7 @@ final class RedXLink: ObservableObject {
             let ok = await Self.statusOK()
             await MainActor.run {
                 RedXLink.shared.proc = p; RedXLink.shared.running = ok
-                RedXLink.shared.status = ok ? "connected · \(list.count) server(s), encrypted with Red-SecretsXAI (forward secrecy)" : "helper started but not answering"
+                RedXLink.shared.status = ok ? "connected · \(list.count) server(s), Red-SecretsXAI (forward secrecy)" + (Self.secure ? " · red-X barcode transport" : "") : "helper started but not answering"
             }
         }
     }
@@ -112,6 +153,8 @@ struct LinkSettingsBox: View {
     @StateObject var link = RedXLink.shared
     @StateObject var ss = ServerStore.shared
     @AppStorage("connectionMode") var mode = "link"
+    @AppStorage("secureChat") var secure = true
+    @AppStorage("phoneChat") var phone = false
     @Local var keyText = ""
     @Local var addrEdit: [String: String] = [:]
     @Local var checking = false
@@ -146,6 +189,17 @@ struct LinkSettingsBox: View {
                         SecureField("Your API key (redx_ai_… or redx_xai_…)", text: $keyText)
                         Button("Save key") { Keychain.set(keyText.trimmingCharacters(in: .whitespacesAndNewlines)); keyText = ""; Task { await ChatStoreRef.refresh() } }
                             .disabled(!(keyText.hasPrefix("redx_ai_") || keyText.hasPrefix("redx_xai_")))
+                    }
+                    Toggle("Secure chat (Red-SecretsXAI)", isOn: $secure)
+                        .onChange(of: secure) { _, _ in link.start(force: true) }
+                    Text(secure ? "On: every byte to the server travels as red-X barcode images carrying Red-SecretsXAI-sealed data — a network capture shows only PNG barcodes." : "Off: requests are still sealed with Red-SecretsXAI, but sent as plain Link HTTP frames (faster, smaller).").font(.caption).foregroundStyle(.secondary)
+                    Toggle("Phone chat on this network", isOn: $phone)
+                        .onChange(of: phone) { _, _ in link.start(force: true) }
+                    if phone {
+                        if let i = RedXLink.phoneInfo() {
+                            Text("On your phone (same Wi-Fi) open \(i.url) · PIN \(i.pin)").font(.caption.monospaced()).textSelection(.enabled)
+                        } else { Text("Starting… (needs a saved API key)").font(.caption) }
+                        Text("The phone page has its own Secure chat checkbox. The phone↔Mac Wi-Fi hop is plain HTTP on your LAN; Mac↔server uses Red-SecretsXAI.").font(.caption).foregroundStyle(.secondary)
                     }
                     if !report.isEmpty { Text(report).font(.caption.monospaced()).textSelection(.enabled) }
                     Text("Every request and reply is encrypted end-to-end with Red-SecretsXAI and authenticated with your API key (fresh session keys, replay protection). Apps on this Mac can use \(RedXLink.chatURL) with your key.").font(.caption).foregroundStyle(.secondary)

@@ -231,6 +231,9 @@ button.ghost{background:transparent;border:1px solid #243041;color:var(--fg);bor
       <input id="baseURL" placeholder="https://ai.red-xai.com/v1 or http://127.0.0.1:18091/v1"/>
       <label>API key (stored in OS keychain)</label>
       <input id="apiKey" type="password" placeholder="redx_ai_…"/>
+      <label><input type="checkbox" id="secureChat" checked style="width:auto"/> Secure chat (Red-SecretsXAI) — chat is sealed with Red-SecretsXAI and every byte to the server travels as red-X barcode images. Off: direct HTTPS.</label>
+      <label><input type="checkbox" id="phoneChat" style="width:auto"/> Phone chat on this network (PIN-protected page; the phone page has its own Secure chat checkbox)</label>
+      <p id="linkInfo" class="muted"></p>
       <label><input type="checkbox" id="autoUpdate" checked style="width:auto"/> Auto-update from GitHub Releases (checks on launch and every 4 hours, SHA256-verified)</label>
       <div class="row" style="margin-top:10px">
         <button class="primary" id="saveSettings">Save</button>

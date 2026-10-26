@@ -546,7 +546,7 @@ struct KeysView: View {
                     }
                 }.padding(6)
             }.padding([.horizontal, .top])
-            Table(hub.keys) {
+            Table(hub.keys.filter { !$0.revoked }) {
                 TableColumn("Name") { k in Text(k.name).strikethrough(k.revoked) }
                 TableColumn("Key") { k in Text(k.prefix).font(.caption.monospaced()) }
                 TableColumn("Models") { k in Text(k.models.isEmpty ? "All" : k.models.joined(separator: ", ")).lineLimit(1) }
@@ -563,7 +563,7 @@ struct KeysView: View {
                 TableColumn("Last used") { k in if let d = k.lastUsed { Text(d, style: .relative) } else { Text("never").foregroundStyle(.secondary) } }
                 TableColumn("") { k in
                     if k.revoked { Text("Revoked").foregroundStyle(.secondary) }
-                    else { HStack { Button("Edit") { editing = k }.controlSize(.small); Button("Revoke", role: .destructive) { confirmRevoke = k }.controlSize(.small) } }
+                    else { HStack { Button("Edit") { editing = k }.controlSize(.small); Button("Delete", role: .destructive) { confirmRevoke = k }.controlSize(.small) } }
                 }.width(130)
             }
         }
@@ -578,8 +578,8 @@ struct KeysView: View {
         }
         .sheet(item: $editing) { k in KeyEditSheet(key: k, models: modelIDs) }
         .task { try? await hub.loadKeys() }
-        .confirmationDialog("Revoke \(confirmRevoke?.name ?? "")'s key?", isPresented: Binding(get: { confirmRevoke != nil }, set: { if !$0 { confirmRevoke = nil } })) {
-            Button("Revoke", role: .destructive) { if let k = confirmRevoke { hub.revoke(k.id) }; confirmRevoke = nil }
+        .confirmationDialog("Delete \(confirmRevoke?.name ?? "")'s key? It stops working immediately and is removed.", isPresented: Binding(get: { confirmRevoke != nil }, set: { if !$0 { confirmRevoke = nil } })) {
+            Button("Delete", role: .destructive) { if let k = confirmRevoke { hub.revoke(k.id) }; confirmRevoke = nil }
         } message: { Text("Apps using it stop working immediately.") }
     }
 }

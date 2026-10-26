@@ -34,6 +34,7 @@ func Start(st *store.Store) (*Server, error) {
 	mux.HandleFunc("/bridge/", s.handle)
 	mux.Handle("/", http.FileServer(http.Dir(frontendDir())))
 	go http.Serve(ln, mux)
+	s.applyLink()
 	return s, nil
 }
 
@@ -73,6 +74,7 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		models, connected := s.listModels()
 		return map[string]any{
 			"ok": true, "connected": connected, "baseURL": s.St.Settings.BaseURL, "autoUpdate": !s.St.Settings.NoAutoUpdate,
+			"secureChat": !s.St.Settings.PlainChat, "phoneChat": s.St.Settings.PhoneChat, "link": s.linkStatus(),
 			"agents": s.St.Agents, "models": models, "chats": chatSummaries(s.St.Chats),
 		}
 	case "settings.save":
@@ -86,7 +88,14 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		if k, _ := in["apiKey"].(string); k != "" {
 			_ = keyring.Set("vortex-api-key", strings.TrimSpace(k))
 		}
+		if v, ok := in["secureChat"].(bool); ok {
+			st.PlainChat = !v
+		}
+		if v, ok := in["phoneChat"].(bool); ok {
+			st.PhoneChat = v
+		}
 		s.St.SetSettings(st)
+		s.applyLink()
 		return map[string]any{"ok": true, "message": "Saved. Key stored in OS credential store."}
 	case "settings.probe":
 		models, ok := s.listModels()
@@ -224,7 +233,7 @@ func chatSummaries(cs []store.Chat) []map[string]any {
 
 func (s *Server) listModels() ([]string, bool) {
 	key := keyring.Get("vortex-api-key")
-	req, _ := http.NewRequest("GET", s.St.Settings.BaseURL+"/models", nil)
+	req, _ := http.NewRequest("GET", s.chatBase()+"/models", nil)
 	if key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
@@ -355,7 +364,7 @@ func (s *Server) chatSend(in map[string]any) map[string]any {
 }
 
 func (s *Server) resolveEndpoint(agentID string) (base, key string) {
-	base = s.St.Settings.BaseURL
+	base = s.chatBase()
 	key = keyring.Get("vortex-api-key")
 	for _, a := range s.St.Agents {
 		if a.ID != agentID {
@@ -429,7 +438,7 @@ func (s *Server) testVortex() map[string]any {
 		"max_tokens": 32, "temperature": 0,
 	}
 	raw, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", s.St.Settings.BaseURL+"/chat/completions", bytes.NewReader(raw))
+	req, _ := http.NewRequest("POST", s.chatBase()+"/chat/completions", bytes.NewReader(raw))
 	req.Header.Set("Content-Type", "application/json")
 	if key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)

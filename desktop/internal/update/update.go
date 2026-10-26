@@ -180,6 +180,17 @@ func Apply(r *Release) error {
 		}
 		_ = os.RemoveAll(old + ".old")
 	}
+	// RedX Link helper (prebuilt, shipped next to the app): rename aside and replace
+	for _, n := range []string{"redx-link", "redx-link.exe"} {
+		if _, err := os.Stat(filepath.Join(stage, n)); err == nil {
+			h := filepath.Join(dir, n)
+			_ = os.Remove(h + ".old")
+			_ = os.Rename(h, h+".old")
+			if os.Rename(filepath.Join(stage, n), h) == nil {
+				_ = os.Chmod(h, 0755)
+			}
+		}
+	}
 	// binary: rename running exe aside (works on Windows too), move new into place
 	_ = os.Remove(exe + ".old")
 	if err := os.Rename(exe, exe+".old"); err != nil {
