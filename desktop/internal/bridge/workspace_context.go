@@ -108,6 +108,9 @@ func (s *Server) workspaceContext(chatID, query string) string {
 	for _, id := range baseIDs {
 		baseSet[id] = true
 	}
+	s.refreshDocumentSources(baseSet)
+	w = s.St.WorkspaceSnapshot()
+	s.filterUnavailableDocuments(&w)
 	w = s.refreshContextBases(w, baseSet)
 	for _, b := range w.Bases {
 		if !baseSet[b.ID] || !b.Permissions.Read || !b.Permissions.Search || b.Status == "revoked" || b.Status == "disconnected" || b.Status == "offline" {

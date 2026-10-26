@@ -51,6 +51,74 @@ trusted channel. Give each client its own grant; do not commit credentials or Ba
 data into Git. `status` lists grant IDs and expiry without exposing their hashes or
 tokens. Owner filesystem access is trusted; use disk encryption for data at rest.
 
+## Managed desktop/native publishing
+
+The Vortex applications can maintain a Base through the same local owner CLI.
+Initialize its private directory once, then publish a complete JSON snapshot:
+
+```sh
+./vortex-base sync -dir /absolute/private/my-base -snapshot /absolute/private/snapshot.json
+./vortex-base grant -dir /absolute/private/my-base -name "Reader" -out /absolute/private/reader-token -json
+./vortex-base serve -dir /absolute/private/my-base -listen 127.0.0.1:0 -ready-file /absolute/private/ready.json
+```
+
+`publish` is an alias for `sync`; `-file` can replace `-snapshot`. These commands
+require an initialized `catalog.json` and never replace the Base identity, quota,
+or access grants. A snapshot contains the entire intended source collection:
+
+```json
+{
+  "name": "My project reference",
+  "sources": [
+    {
+      "id": "native-or-desktop-source-id",
+      "name": "Architecture notes",
+      "kind": "text",
+      "mimeType": "text/plain",
+      "text": "Optional supplied reference text or media transcript",
+      "attachmentPath": "/absolute/local/notes.txt",
+      "bytes": 100,
+      "updatedAt": "2026-10-26T12:00:00Z"
+    }
+  ]
+}
+```
+
+`url` is an optional HTTPS document reference subject to the same restrictions as
+`import`. Sources may contain text, a URL, an attachment, or a combination. Every
+source requires a unique, nonempty ID and name. The helper deterministically maps
+any client ID to the first 16 bytes of its SHA-256 digest as hexadecimal. Reusing
+the same client ID preserves the hosted source ID on future publishes. An empty
+source array removes the published sources while retaining the Base and grants.
+
+Attachment paths must explicitly name absolute regular local files; directories
+and symlinks are rejected. The helper copies the files into private immutable
+storage and never includes their local paths in HTTP responses. Files can be up
+to 128 MiB each. Supplied text is limited to 1 MiB per source; UTF-8 text files up
+to that size are indexed automatically if no text was supplied. The `bytes`
+field is advisory: quota checks use measured attachment bytes plus stored text.
+The existing 1,000-source and 32 MiB serialized-index limits also apply.
+
+Publishing stages and validates all sources, then atomically switches the
+catalog. Failed validation, copying, or quota/index checks preserve the previous
+catalog and files. Removed or replaced attachment objects are pruned only after
+the new catalog is committed. Perform owner mutations sequentially, including
+publishes, imports, grants, and revocations. A serving process reloads this catalog
+for every request, so successful local publishes are immediately available.
+
+`sync` prints JSON containing `id`, `name`, `revision`, and the source count in
+`sources`. `grant -json` prints `id`, `tokenFile`, `scopes`, and `expiresAt`; the
+credential itself remains only in its new private token file. An application can
+move it into an OS credential store and remove that file after a successful move.
+
+The ready file is private (`0600`) JSON containing `endpoint`, `baseID`, and `pid`.
+Its endpoint contains the actual chosen port, including when `-listen` requests
+port zero. It appears only after the listener and any TLS configuration are ready.
+SIGINT and SIGTERM stop the server gracefully and remove its own ready file.
+After an abrupt kill a stale file can remain, so process managers should confirm
+the recorded process and authenticated health before treating it as live. These
+local management commands do not add remote HTTP write endpoints.
+
 ## Connect and expose securely
 
 The default listener is `127.0.0.1:7941`. For a local client, connect using that
@@ -110,4 +178,7 @@ failures report unavailable/unauthorized status without returning credential val
 `go test -race ./...` covers authentication, expiry, scoped access, immediate
 revocation, deletion, quotas, document references, bounded manifests, token-file
 permissions, traversal/symlink refusal, and the refusal of public plaintext serving.
+Managed publishing tests also cover deterministic source IDs, identity/grant
+preservation, changes/removals, shared attachment cleanup, quota rollback, private
+machine output, safe attachment paths, and real listener readiness and shutdown.
 These tests use temporary private data and never access an existing user Base.

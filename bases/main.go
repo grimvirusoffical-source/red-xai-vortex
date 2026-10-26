@@ -14,7 +14,6 @@ import (
 	"io"
 	"log"
 	"mime"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -41,6 +40,9 @@ type Source struct {
 	Bytes     int64  `json:"bytes"`
 	UpdatedAt string `json:"updatedAt"`
 	SHA256    string `json:"sha256,omitempty"`
+	// ObjectID is private catalog storage metadata. It is omitted from HTTP
+	// responses so local publishing details do not become client context.
+	ObjectID string `json:"objectID,omitempty"`
 }
 
 type Grant struct {
@@ -319,10 +321,12 @@ func (h *Host) remove(id string) error {
 		return e
 	}
 	found := false
+	object := ""
 	ss := []Source{}
 	for _, s := range c.Sources {
 		if s.ID == id {
 			found = true
+			object, _ = sourceObjectID(s)
 		} else {
 			ss = append(ss, s)
 		}
@@ -335,7 +339,15 @@ func (h *Host) remove(id string) error {
 	if e = h.save(c); e != nil {
 		return e
 	}
-	e = os.Remove(filepath.Join(h.dir, "objects", id))
+	for _, s := range c.Sources {
+		if other, ok := sourceObjectID(s); ok && other == object {
+			return nil
+		}
+	}
+	if object == "" {
+		return nil
+	}
+	e = os.Remove(filepath.Join(h.dir, "objects", object))
 	if os.IsNotExist(e) {
 		return nil
 	}
@@ -419,6 +431,7 @@ func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		budget := maxManifestText
 		ss := make([]Source, 0, len(c.Sources))
 		for _, s := range c.Sources {
+			s.ObjectID = ""
 			s.Text = snippet(s.Text, min(16384, budget))
 			budget -= len(s.Text)
 			ss = append(ss, s)
@@ -449,6 +462,7 @@ func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				score += strings.Count(hay, word)
 			}
 			if score > 0 {
+				s.ObjectID = ""
 				s.Text = snippet(s.Text, 16384)
 				hits = append(hits, hit{s, score})
 			}
@@ -476,7 +490,12 @@ func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, s := range c.Sources {
 			if s.ID == id {
-				p := filepath.Join(h.dir, "objects", id)
+				object, ok := sourceObjectID(s)
+				if !ok {
+					respond(w, 404, map[string]string{"error": "not_found"})
+					return
+				}
+				p := filepath.Join(h.dir, "objects", object)
 				info, e := os.Lstat(p)
 				if e != nil {
 					respond(w, 404, map[string]string{"error": "reference_only"})
@@ -504,13 +523,15 @@ func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: vortex-base init|import|grant|revoke|delete|status|serve [flags]")
+		return errors.New("usage: vortex-base init|import|sync|publish|grant|revoke|delete|status|serve [flags]")
 	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	dir := fs.String("dir", "", "private Base directory (required)")
 	name := fs.String("name", "", "display name (defaults to file name when importing)")
 	quota := fs.Int64("quota-mib", 2048, "Base storage quota in MiB")
 	file := fs.String("file", "", "file to import")
+	snapshot := fs.String("snapshot", "", "local JSON source snapshot for sync/publish")
+	jsonOutput := fs.Bool("json", false, "machine-readable output (grant)")
 	sourceURL := fs.String("url", "", "document reference URL (HTTPS, no query credentials)")
 	textFile := fs.String("text-file", "", "UTF-8 text/transcript file for a document/media reference")
 	out := fs.String("out", "", "new token file (0600), never overwritten")
@@ -520,6 +541,8 @@ func run(args []string) error {
 	listen := fs.String("listen", "127.0.0.1:7941", "listen address")
 	cert := fs.String("tls-cert", "", "TLS certificate path")
 	key := fs.String("tls-key", "", "TLS private key path")
+	parentPID := fs.Int("parent-pid", 0, "stop when the launching app exits (managed hosting only)")
+	readyFile := fs.String("ready-file", "", "private JSON readiness file removed on shutdown")
 	if e := fs.Parse(args[1:]); e != nil {
 		return e
 	}
@@ -562,10 +585,37 @@ func run(args []string) error {
 			fmt.Println("Imported source", s.ID)
 		}
 		return e
+	case "sync", "publish":
+		if *snapshot == "" {
+			*snapshot = *file
+		}
+		if *snapshot == "" {
+			return errors.New("-snapshot is required")
+		}
+		c, e := h.syncFile(*snapshot)
+		if e == nil {
+			b, _ := json.Marshal(map[string]any{"id": c.ID, "name": c.Name, "revision": c.Revision, "sources": len(c.Sources)})
+			fmt.Println(string(b))
+		}
+		return e
 	case "grant":
 		g, e := h.grant(*name, *out, *scope, *days)
 		if e == nil {
-			fmt.Println("Grant", g, "saved to", *out, "(keep private; revoke with this ID)")
+			if *jsonOutput {
+				c, err := h.load()
+				if err != nil {
+					return err
+				}
+				for _, grant := range c.Grants {
+					if grant.ID == g {
+						b, _ := json.Marshal(map[string]any{"id": g, "tokenFile": *out, "scopes": grant.Scopes, "expiresAt": grant.ExpiresAt})
+						fmt.Println(string(b))
+						break
+					}
+				}
+			} else {
+				fmt.Println("Grant", g, "saved to", *out, "(keep private; revoke with this ID)")
+			}
 		}
 		return e
 	case "revoke":
@@ -591,23 +641,7 @@ func run(args []string) error {
 		fmt.Println(string(b))
 		return nil
 	case "serve":
-		if _, e := h.load(); e != nil {
-			return e
-		}
-		host, _, e := net.SplitHostPort(*listen)
-		if e != nil {
-			return e
-		}
-		ip := net.ParseIP(host)
-		if (ip == nil || !ip.IsLoopback()) && (*cert == "" || *key == "") {
-			return errors.New("non-loopback listeners require -tls-cert and -tls-key; prefer a loopback listener behind an authenticated HTTPS tunnel")
-		}
-		s := &http.Server{Addr: *listen, Handler: h, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
-		log.Println("XAI Base host ready (authenticated, read-only)")
-		if *cert != "" && *key != "" {
-			return s.ListenAndServeTLS(*cert, *key)
-		}
-		return s.ListenAndServe()
+		return serveWithSignals(h, serveOptions{Listen: *listen, Cert: *cert, Key: *key, ReadyFile: *readyFile, ParentPID: *parentPID})
 	default:
 		return errors.New("unknown command")
 	}

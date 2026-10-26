@@ -1,0 +1,9 @@
+{
+  "assets": {
+    "Red-XAI-Vortex-linux-amd64.tar.gz": "d5ae6ff6aa986c3f478d88917a9643fe7f466492ef9d810ee9053f2dc85eaa9a",
+    "Red-XAI-Vortex-windows-amd64.zip": "21138ded712d5830f9e58543991b4f9158c0159f30b59de3ecfc65e28eefc13c",
+    "Vortex-2.8-mac.dmg": "cc9834916155b47b86e4668e7e3a0b0c3c657b4c944c66c4d1753ed6dc4d9f10",
+    "Vortex-2.8-mac.zip": "323d49e92f9a01c7367b6d0a5c40ea9217eacb57a1f276aa73b8500d0010eeb9"
+  },
+  "version": "2.8"
+}

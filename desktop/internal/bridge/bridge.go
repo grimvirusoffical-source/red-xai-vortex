@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/activity"
@@ -24,6 +25,8 @@ type Server struct {
 	ln             net.Listener
 	mux            *http.ServeMux
 	baseCredential func(string) string // tests can isolate credential access
+	hostingMu      sync.Mutex
+	hosts          map[string]*managedHost
 }
 
 func Start(st *store.Store) (*Server, error) {
@@ -39,6 +42,7 @@ func Start(st *store.Store) (*Server, error) {
 	go http.Serve(ln, mux)
 	s.applyLink()
 	s.applyPhone()
+	go s.restoreManagedHosts()
 	return s, nil
 }
 
@@ -402,13 +406,20 @@ func (s *Server) chatSend(in map[string]any) map[string]any {
 			}
 		}
 	}
+	successfulReply := res.StatusCode == http.StatusOK && reply != ""
 	if reply == "" {
 		reply = fmt.Sprintf("(HTTP %d)", res.StatusCode)
 	}
 	c.Messages = append(c.Messages, store.Msg{Role: "assistant", Content: reply})
 	c.Updated = time.Now()
 	s.St.SaveChat(*c)
-	return map[string]any{"reply": reply}
+	out := map[string]any{"reply": reply}
+	if successfulReply {
+		if warning := s.captureCompletedTurn(*c, agentID, model); warning != "" {
+			out["warning"] = warning
+		}
+	}
+	return out
 }
 
 func (s *Server) resolveEndpoint(agentID string) (base, key string) {

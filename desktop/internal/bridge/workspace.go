@@ -23,8 +23,12 @@ func workspaceError(err error) map[string]any {
 	return map[string]any{"ok": false, "error": err.Error(), "message": err.Error()}
 }
 func (s *Server) workspaceResult() map[string]any {
+	s.cleanupDocumentSubscriptions()
 	w := s.St.WorkspaceSnapshot()
 	out := map[string]any{"ok": true, "workspace": w, "usageBytes": w.MemoryUsage()}
+	if w.MemoryUsage() > w.Memory.QuotaBytes {
+		out["warning"] = "Memory usage exceeds the quota after text extraction; remove entries or increase the quota."
+	}
 	if s.St.WorkspaceError != "" {
 		out["warning"] = s.St.WorkspaceError
 		out["readOnly"] = true
@@ -165,6 +169,7 @@ func (s *Server) workspaceSave(in map[string]any) map[string]any {
 			for _, old := range w.Bases {
 				if old.ID == b.ID {
 					existing = true
+					b.Hosting = old.Hosting
 					b.Endpoint = old.Endpoint
 					b.RemoteID = old.RemoteID
 					b.Status = old.Status
@@ -300,7 +305,11 @@ func (s *Server) workspaceSave(in map[string]any) map[string]any {
 	if err != nil {
 		return workspaceError(err)
 	}
+	syncErr := s.syncStartedHosts()
 	out := s.workspaceResult()
+	if syncErr != nil {
+		out["warning"] = syncErr.Error()
+	}
 	out["id"] = id
 	return out
 }
@@ -392,6 +401,9 @@ func (s *Server) workspaceDelete(in map[string]any) map[string]any {
 		return workspaceError(err)
 	}
 	if kind == "base" {
+		if err := s.deleteManagedPublication(id); err != nil {
+			return workspaceError(errors.New("Base deleted, but its stopped hosting copy could not be removed"))
+		}
 		if err = keyring.Set("base-token-"+id, ""); err != nil {
 			return workspaceError(err)
 		}
@@ -432,6 +444,12 @@ func validateSource(src store.Source) error {
 func (s *Server) workspaceAction(in map[string]any) map[string]any {
 	action := str(in, "action")
 	switch action {
+	case "host.start", "host.stop", "host.status", "host.sync", "host.grant", "host.revoke":
+		return s.workspaceHostAction(in)
+	case "proposal.accept", "proposal.reject":
+		return s.workspaceProposalAction(in)
+	case "source.fetch", "source.refresh", "source.disconnect", "attachment.extract", "ingestion.status", "ingestion.configure":
+		return s.workspaceIngestionAction(in)
 	case "base.connect", "base.health", "base.disconnect", "base.revoke":
 		return s.workspaceBaseAction(action, in)
 	case "base.search":
@@ -568,8 +586,13 @@ func (s *Server) workspaceAction(in map[string]any) map[string]any {
 			return workspaceError(err)
 		}
 		out := s.workspaceResult()
+		if err := s.syncStartedHosts(); err != nil {
+			out["warning"] = err.Error()
+		}
 		out["source"] = src
 		return out
+	case "coding.patch.review", "coding.patch.apply":
+		return s.workspacePatchAction(in)
 	case "coding.context":
 		context := s.workspaceContext(str(in, "chatID"), str(in, "query"))
 		return map[string]any{"ok": true, "context": context, "characters": len(context), "capabilities": map[string]any{"text": true, "attachments": "metadata and text extracts; binary media is not transcribed automatically", "repoFiles": "explicit selected files only"}}

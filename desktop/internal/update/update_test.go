@@ -1,0 +1,51 @@
+package update
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestHelperUpdatesInstallHostingAndPreserveFailedTarget(t *testing.T) {
+	stage, installed := t.TempDir(), t.TempDir()
+	for _, name := range []string{"redx-link", "vortex-base"} {
+		_ = os.WriteFile(filepath.Join(stage, name), []byte("new-"+name), 0600)
+		_ = os.WriteFile(filepath.Join(installed, name), []byte("old-"+name), 0700)
+	}
+	if err := installHelpers(stage, installed, []string{"redx-link", "vortex-base"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"redx-link", "vortex-base"} {
+		data, _ := os.ReadFile(filepath.Join(installed, name))
+		if string(data) != "new-"+name {
+			t.Fatalf("helper %s was omitted", name)
+		}
+		if info, _ := os.Stat(filepath.Join(installed, name)); info.Mode().Perm()&0100 == 0 {
+			t.Fatal("helper is not executable")
+		}
+	}
+	_ = os.Mkdir(filepath.Join(stage, "vortex-base"), 0700)
+	if err := installHelpers(stage, installed, []string{"vortex-base"}); err == nil {
+		t.Fatal("invalid staged helper accepted")
+	}
+	data, _ := os.ReadFile(filepath.Join(installed, "vortex-base"))
+	if string(data) != "new-vortex-base" {
+		t.Fatal("failed helper update removed installed helper")
+	}
+}
+func TestLinuxInstalledExecutableAliasResolvesCanonicalPackage(t *testing.T) {
+	stage := t.TempDir()
+	_ = os.WriteFile(filepath.Join(stage, "vortex-linux-amd64"), []byte("new"), 0700)
+	path, err := stagedExecutable(stage, "vortex")
+	if err != nil || filepath.Base(path) != "vortex-linux-amd64" {
+		t.Fatal("Linux installed executable alias is not updateable")
+	}
+}
+func TestUnsignedBuildStillRefusesUpdate(t *testing.T) {
+	old := Verifier
+	Verifier = nil
+	t.Cleanup(func() { Verifier = old })
+	if err := Apply(&Release{}); err == nil {
+		t.Fatal("unsigned build accepted an update")
+	}
+}

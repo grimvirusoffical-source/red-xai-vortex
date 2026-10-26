@@ -165,9 +165,16 @@ func Apply(r *Release) error {
 	if err != nil {
 		return err
 	}
-	newExe := filepath.Join(stage, filepath.Base(exe))
-	if _, err := os.Stat(newExe); err != nil {
-		return errors.New("package does not contain " + filepath.Base(exe))
+	newExe, err := stagedExecutable(stage, filepath.Base(exe))
+	if err != nil {
+		return err
+	}
+	requiredHelper := "vortex-base"
+	if runtime.GOOS == "windows" {
+		requiredHelper += ".exe"
+	}
+	if info, e := os.Lstat(filepath.Join(stage, requiredHelper)); e != nil || !info.Mode().IsRegular() {
+		return errors.New("package does not contain required hosting helper " + requiredHelper)
 	}
 	// rsx-runtime (bundled Python for secure chat): best-effort swap; if files are
 	// in use (Windows) the previous runtime stays until the next update.
@@ -192,16 +199,10 @@ func Apply(r *Release) error {
 		}
 		_ = os.RemoveAll(old + ".old")
 	}
-	// RedX Link helper (prebuilt, shipped next to the app): rename aside and replace
-	for _, n := range []string{"redx-link", "redx-link.exe"} {
-		if _, err := os.Stat(filepath.Join(stage, n)); err == nil {
-			h := filepath.Join(dir, n)
-			_ = os.Remove(h + ".old")
-			_ = os.Rename(h, h+".old")
-			if os.Rename(filepath.Join(stage, n), h) == nil {
-				_ = os.Chmod(h, 0755)
-			}
-		}
+	// Install both connection and hosting helpers. Each helper rolls back on a
+	// failed swap so a locked/invalid target cannot silently remove a working one.
+	if err := installHelpers(stage, dir, []string{"redx-link", "redx-link.exe", "vortex-base", "vortex-base.exe"}); err != nil {
+		return err
 	}
 	// binary: rename running exe aside (works on Windows too), move new into place
 	_ = os.Remove(exe + ".old")
@@ -309,6 +310,65 @@ func unzip(b []byte, dst string) error {
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func stagedExecutable(stage, installedName string) (string, error) {
+	names := []string{installedName, "vortex-linux-amd64", "vortex", "vortex.exe"}
+	for _, name := range names {
+		path := filepath.Join(stage, name)
+		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() {
+			return path, nil
+		}
+	}
+	return "", errors.New("package does not contain " + installedName)
+}
+func installHelpers(stage, dir string, names []string) error {
+	for _, name := range names {
+		source, target := filepath.Join(stage, name), filepath.Join(dir, name)
+		info, err := os.Lstat(source)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("helper %s must be a regular file", name)
+		}
+		previous := false
+		if current, e := os.Lstat(target); e == nil {
+			if !current.Mode().IsRegular() {
+				return fmt.Errorf("installed helper %s is not a regular file", name)
+			}
+			previous = true
+		} else if !os.IsNotExist(e) {
+			return e
+		}
+		backup := target + ".old"
+		if e := os.Remove(backup); e != nil && !os.IsNotExist(e) {
+			return e
+		}
+		if previous {
+			if e := os.Rename(target, backup); e != nil {
+				return e
+			}
+		}
+		if e := os.Rename(source, target); e != nil {
+			if previous {
+				_ = os.Rename(backup, target)
+			}
+			return e
+		}
+		if e := os.Chmod(target, 0755); e != nil {
+			_ = os.Remove(target)
+			if previous {
+				_ = os.Rename(backup, target)
+			}
+			return e
+		}
+		_ = os.Remove(backup)
 	}
 	return nil
 }

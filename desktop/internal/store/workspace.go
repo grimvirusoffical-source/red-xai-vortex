@@ -14,6 +14,8 @@ const WorkspaceVersion = 1
 const DefaultMemoryQuota = int64(64 << 20)
 const MaxAttachmentBytes = int64(32 << 20)
 
+var ErrMemoryQuotaExceeded = errors.New("memory quota exceeded; remove entries or increase the quota")
+
 // Workspace is additive: legacy chats, agents and settings remain in their original files.
 // It only contains user-selected context. No credentials or attachment bytes belong here.
 type Workspace struct {
@@ -25,6 +27,7 @@ type Workspace struct {
 	Worlds        []World        `json:"worlds"`
 	ChatSettings  []ChatSettings `json:"chatSettings"`
 	Attachments   []Attachment   `json:"attachments"`
+	Proposals     []Proposal     `json:"proposals"`
 }
 type Project struct {
 	ID            string            `json:"id"`
@@ -75,6 +78,25 @@ type Base struct {
 	LastChecked *time.Time      `json:"lastChecked,omitempty"`
 	LastError   string          `json:"lastError,omitempty"`
 	UpdatedAt   time.Time       `json:"updatedAt"`
+	Hosting     *HostingConfig  `json:"hosting,omitempty"`
+}
+type HostingConfig struct {
+	Enabled        bool   `json:"enabled"`
+	Listen         string `json:"listen"`
+	PublicEndpoint string `json:"publicEndpoint,omitempty"`
+	TLSCert        string `json:"tlsCert,omitempty"`
+	TLSKey         string `json:"tlsKey,omitempty"`
+}
+type Proposal struct {
+	ID            string    `json:"id"`
+	Kind          string    `json:"kind"`
+	ChatID        string    `json:"chatID"`
+	Scope         string    `json:"scope"`
+	ScopeID       string    `json:"scopeID,omitempty"`
+	Title         string    `json:"title"`
+	Text          string    `json:"text"`
+	CreatedAt     time.Time `json:"createdAt"`
+	OriginalState string    `json:"originalState,omitempty"`
 }
 type Memory struct {
 	QuotaBytes int64         `json:"quotaBytes"`
@@ -90,6 +112,8 @@ type MemoryEntry struct {
 	Tags          []string  `json:"tags,omitempty"`
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
+	Origin        string    `json:"origin,omitempty"`
+	ChatID        string    `json:"chatID,omitempty"`
 }
 type World struct {
 	ID            string    `json:"id"`
@@ -115,14 +139,16 @@ type CodingContext struct {
 	Files    []CodeFile `json:"files"`
 }
 type ChatSettings struct {
-	ChatID        string        `json:"chatID"`
-	ProjectID     string        `json:"projectID"`
-	PersonalityID string        `json:"personalityID"`
-	BaseIDs       []string      `json:"baseIDs"`
-	SharedMemory  bool          `json:"sharedMemory"`
-	WorldID       string        `json:"worldID"`
-	Mode          string        `json:"mode"`
-	Coding        CodingContext `json:"coding"`
+	ChatID         string        `json:"chatID"`
+	ProjectID      string        `json:"projectID"`
+	PersonalityID  string        `json:"personalityID"`
+	BaseIDs        []string      `json:"baseIDs"`
+	SharedMemory   bool          `json:"sharedMemory"`
+	WorldID        string        `json:"worldID"`
+	Mode           string        `json:"mode"`
+	Coding         CodingContext `json:"coding"`
+	MemoryCapture  string        `json:"memoryCapture,omitempty"`
+	StateEvolution string        `json:"stateEvolution,omitempty"`
 }
 type Attachment struct {
 	ID        string    `json:"id"`
@@ -134,7 +160,7 @@ type Attachment struct {
 }
 
 func NewWorkspace() Workspace {
-	return Workspace{Version: WorkspaceVersion, Projects: []Project{}, Personalities: []Personality{}, Bases: []Base{}, Memory: Memory{QuotaBytes: DefaultMemoryQuota, Entries: []MemoryEntry{}}, Worlds: []World{}, ChatSettings: []ChatSettings{}, Attachments: []Attachment{}}
+	return Workspace{Version: WorkspaceVersion, Projects: []Project{}, Personalities: []Personality{}, Bases: []Base{}, Memory: Memory{QuotaBytes: DefaultMemoryQuota, Entries: []MemoryEntry{}}, Worlds: []World{}, ChatSettings: []ChatSettings{}, Attachments: []Attachment{}, Proposals: []Proposal{}}
 }
 func (w *Workspace) Normalize() {
 	if w.Version == 0 {
@@ -161,12 +187,18 @@ func (w *Workspace) Normalize() {
 	if w.ChatSettings == nil {
 		w.ChatSettings = []ChatSettings{}
 	}
+	if w.Proposals == nil {
+		w.Proposals = []Proposal{}
+	}
 	if w.Attachments == nil {
 		w.Attachments = []Attachment{}
 	}
 }
 func (w Workspace) MemoryUsage() int64 {
 	var total int64
+	for _, p := range w.Proposals {
+		total += int64(len(p.Title) + len(p.Text) + len(p.OriginalState))
+	}
 	used := map[string]bool{}
 	for _, e := range w.Memory.Entries {
 		total += int64(len(e.Title) + len(e.Text))
@@ -176,7 +208,7 @@ func (w Workspace) MemoryUsage() int64 {
 	}
 	for _, a := range w.Attachments {
 		if used[a.ID] {
-			total += a.Bytes
+			total += a.Bytes + int64(len(a.Text))
 		}
 	}
 	return total
@@ -188,8 +220,15 @@ func (w Workspace) Validate() error {
 	if w.Memory.QuotaBytes < 1024 || w.Memory.QuotaBytes > 100<<30 {
 		return errors.New("memory quota must be between 1 KiB and 100 GiB")
 	}
-	if w.MemoryUsage() > w.Memory.QuotaBytes {
-		return errors.New("memory quota exceeded; remove entries or increase the quota")
+	if len(w.Proposals) > 100 {
+		return errors.New("at most 100 pending proposals; review or dismiss older ones")
+	}
+	for _, c := range w.ChatSettings {
+		for _, mode := range []string{c.MemoryCapture, c.StateEvolution} {
+			if mode != "" && mode != "off" && mode != "review" && mode != "save" {
+				return errors.New("automatic context setting must be off, review or save")
+			}
+		}
 	}
 	for _, e := range w.Memory.Entries {
 		if e.Scope != "global" && e.Scope != "project" && e.Scope != "world" {
@@ -198,6 +237,9 @@ func (w Workspace) Validate() error {
 		if e.Scope != "global" && e.ScopeID == "" {
 			return errors.New("scoped memory requires a project or world ID")
 		}
+	}
+	if w.MemoryUsage() > w.Memory.QuotaBytes {
+		return ErrMemoryQuotaExceeded
 	}
 	return nil
 }
@@ -252,7 +294,7 @@ func (s *Store) loadWorkspace() {
 		return
 	}
 	w.Normalize()
-	if err = w.Validate(); err != nil {
+	if err = w.Validate(); err != nil && !errors.Is(err, ErrMemoryQuotaExceeded) {
 		s.WorkspaceError = err.Error()
 		return
 	}

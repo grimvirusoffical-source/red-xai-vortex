@@ -111,3 +111,34 @@ func TestWorkspaceSnapshotIsIndependent(t *testing.T) {
 		t.Fatal("snapshot mutated store")
 	}
 }
+
+func TestExtractedTextCountsTowardQuotaAndCanBeRecoveredAfterUpgrade(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	st := Open()
+	if err := st.UpdateWorkspace(func(w *Workspace) error {
+		w.Memory.QuotaBytes = 1024
+		w.Attachments = []Attachment{{ID: "a", Bytes: 500, Text: strings.Repeat("x", 600)}}
+		w.Memory.Entries = []MemoryEntry{{ID: "m", Scope: "global", AttachmentIDs: []string{"a"}}}
+		return nil
+	}); err == nil {
+		t.Fatal("extracted text bypassed memory quota")
+	}
+	// A pre-upgrade quota may be exceeded once extracted text starts counting.
+	// Preserve the content and permit the user to raise the quota or remove it.
+	raw := NewWorkspace()
+	raw.Memory.QuotaBytes = 1024
+	raw.Attachments = []Attachment{{ID: "a", Bytes: 500, Text: strings.Repeat("x", 600)}}
+	raw.Memory.Entries = []MemoryEntry{{ID: "m", Scope: "global", AttachmentIDs: []string{"a"}}}
+	data, _ := json.Marshal(raw)
+	if err := os.WriteFile(filepath.Join(st.Dir, "workspace.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	reopened := Open()
+	if reopened.WorkspaceError != "" || len(reopened.Workspace.Memory.Entries) != 1 {
+		t.Fatal("over-quota migrated memory became unrecoverable")
+	}
+	if err := reopened.UpdateWorkspace(func(w *Workspace) error { w.Memory.QuotaBytes = 2048; return nil }); err != nil {
+		t.Fatal(err)
+	}
+}
