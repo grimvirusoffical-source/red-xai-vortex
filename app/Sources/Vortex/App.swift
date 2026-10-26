@@ -32,6 +32,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct VortexApp: App {
     init() {
+        // New installs start with the royal palette; explicit Appearance choices survive.
+        if UserDefaults.standard.object(forKey: "theme") == nil { UserDefaults.standard.set("dark", forKey: "theme") }
+        if UserDefaults.standard.object(forKey: "accent") == nil { UserDefaults.standard.set("gold", forKey: "accent") }
         // Chat must use the public gateway (18091), not the admin port (18092).
         let u = UserDefaults.standard.string(forKey: "serverURL") ?? ""
         if u.contains(":18092") {
@@ -53,14 +56,21 @@ struct VortexApp: App {
     @StateObject var store = ChatStore()
     @StateObject var tunnel = TunnelManager()
     @AppStorage("theme") var theme = "system"
+    @AppStorage("royalPalette") var royalPalette = "gold"
 
     var body: some Scene {
         WindowGroup("Red-XAI Vortex") {
-            GateView { ContentView().environmentObject(store).environmentObject(tunnel) }
-                .preferredColorScheme(theme == "dark" ? .dark : theme == "light" ? .light : nil)
-                .frame(minWidth: 760, minHeight: 500)
+            RoyalWindowFrame { GateView { ContentView().environmentObject(store).environmentObject(tunnel) } }
+                .environment(\.royalPalette, royalPalette)
+                .preferredColorScheme(RoyalTheme.colorScheme(palette: royalPalette, preference: theme))
+                .frame(minWidth: 760, minHeight: 540)
         }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1180, height: 820)
         .commands {
+            CommandGroup(after: .windowArrangement) {
+                Button("Toggle Full Screen") { NSApp.keyWindow?.toggleFullScreen(nil) }.keyboardShortcut("f", modifiers: [.command, .control])
+            }
             CommandGroup(replacing: .appInfo) { OpenAboutButton() }
             CommandGroup(after: .appInfo) {
                 Button("Sign Out of RedX") { Task { await AccountGate.shared.signOut() } }
@@ -84,7 +94,8 @@ struct VortexApp: App {
             .commands { CommandMenu("Models") { OpenHubButton(); Button("Browse Models in Browser…") { ModelBrowserServer.shared.open() }.keyboardShortcut("b", modifiers: [.command, .shift]) } }
         Settings {
             SettingsView().environmentObject(store).environmentObject(tunnel)
-                .preferredColorScheme(theme == "dark" ? .dark : theme == "light" ? .light : nil)
+                .environment(\.royalPalette, royalPalette)
+                .preferredColorScheme(RoyalTheme.colorScheme(palette: royalPalette, preference: theme))
         }
     }
 }
@@ -106,6 +117,7 @@ struct OpenHubButton: View {
 extension Color {
     static func accent(_ name: String) -> Color {
         switch name {
+        case "gold": return RoyalTheme.gold
         case "blue": return .blue; case "teal": return .teal; case "purple": return .purple
         case "orange": return .orange; case "green": return .green; case "pink": return .pink
         default: return Color(red: 0.86, green: 0.08, blue: 0.12)

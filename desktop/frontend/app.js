@@ -286,7 +286,10 @@ async function fillMedia(el, id, chatID){
     await new Promise(r=>setTimeout(r,2000)); } }
 // Parse "/image prompt --size 768x512 --quality high --style \"oil paint\" --format jpeg"
 function parseMediaCmd(text){
-  const m=text.match(/^\/(image|img|speech|tts|say|music|sfx|sound|video)\b\s*([\s\S]*)$/i); if(!m) return null;
+  let source=String(text||'').trim();
+  const natural=/^(?:(?:please|can you|could you|would you)\s+)*(?:generate|create|make|draw|render|paint)\s+(?:me\s+)?(?:(?:a|an|some|short)\s+)*(image|picture|photo|illustration|artwork|video|clip|music|song|sound effect|sound|speech|voiceover)\s+(?!\s*(?:prompt|editor|player|(?:generation\s+)?(?:code|script))\b)(?:(?:of|showing|about|for|that says|saying)\s+)?([\s\S]+)$/i.exec(source);
+  if(natural){const kinds={picture:'image',photo:'image',illustration:'image',artwork:'image',clip:'video',song:'music','sound effect':'sfx',sound:'sfx',voiceover:'speech'};source='/'+(kinds[natural[1].toLowerCase()]||natural[1].toLowerCase())+' '+natural[2];}
+  const m=source.match(/^\/(image|img|speech|tts|say|music|sfx|sound|video)\b\s*([\s\S]*)$/i); if(!m) return null;
   const type={img:'image',tts:'speech',say:'speech',sound:'sfx'}[m[1].toLowerCase()]||m[1].toLowerCase();
   const spec={type}; let rest=m[2];
   rest=rest.replace(/--(size|quality|style|format|duration|speed|frames)\s+("([^"]*)"|'([^']*)'|(\S+))/gi,(_,k,__,a,b,c)=>{ const v=a??b??c; k=k.toLowerCase();

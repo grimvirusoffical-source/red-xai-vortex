@@ -4,8 +4,8 @@ import Vision
 import ApplicationServices
 
 /// PC control: lets the Vortex / Red-XAI models act on this Mac through tools.
-/// Every control type has its own switch, all OFF by default. Destructive actions always ask first
-/// (Agent shows "Allow once / Deny"). A floating indicator with a Stop button appears while actions run,
+/// Every control type has its own switch, all OFF by default. Changes ask first unless the
+/// local user explicitly enables Always allow. A persistent Stop indicator is shown in that mode,
 /// and every action is written to pc-actions.log.
 enum PCKind: String, CaseIterable, Identifiable {
     case filesRead, filesWrite, shell, apps, input, screenshot, browser, clipboard
@@ -39,6 +39,8 @@ enum PCKind: String, CaseIterable, Identifiable {
 @MainActor final class PCControl: ObservableObject {
     static let shared: PCControl = { PCTools.startWatching(); return PCControl() }()
     @Published var active = false
+    @Published private(set) var alwaysAllow = PCAlwaysAllowGrant.allowed(killed: UserDefaults.standard.bool(forKey: "pc.killed"), grantPresent: PCAlwaysAllowGrant.present())
+    @Published private(set) var permissionError = ""
     @Published var killed = UserDefaults.standard.bool(forKey: "pc.killed")
     /// Master switch (on by default). When on, vortex/red-xai always get the PC tools, no 🔧 needed;
     /// a type that is switched off makes the chat show a "Turn on …" button instead.
@@ -55,20 +57,55 @@ enum PCKind: String, CaseIterable, Identifiable {
     func isOn(_ k: PCKind) -> Bool { UserDefaults.standard.bool(forKey: k.key) }
     func set(_ k: PCKind, _ v: Bool) {
         UserDefaults.standard.set(v, forKey: k.key); tick += 1
+        if !v { PCExecutionState.shared.revoke(stopped: killed) }
         if v && k == .input { _ = Self.accessibility(prompt: true) }
         if v && k == .screenshot && !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
         Self.logAction("setting \(k.rawValue) = \(v ? "ON" : "OFF")")
     }
-    func setEnabled(_ v: Bool) { enabled = v; UserDefaults.standard.set(v, forKey: "pc.enabled"); tick += 1; Self.logAction("PC control master switch = \(v ? "ON" : "OFF")") }
+    func setEnabled(_ v: Bool) {
+        enabled = v; UserDefaults.standard.set(v, forKey: "pc.enabled"); tick += 1
+        if !v { setAlwaysAllow(false); PCExecutionState.shared.revoke(stopped: killed); hide() }
+        else if alwaysAllow && !killed { flash() }
+        Self.logAction("PC control master switch = \(v ? "ON" : "OFF")")
+    }
+    func setAlwaysAllow(_ value: Bool) {
+        guard !value || !killed else { return }
+        do { try PCAlwaysAllowGrant.set(value); permissionError = "" }
+        catch { permissionError = "Could not save PC permission: " + error.localizedDescription; if value { return } }
+        alwaysAllow = value; UserDefaults.standard.set(value, forKey: "pc.alwaysAllow")
+        if value { enable(PCKind.allCases); flash() }
+        else { PCExecutionState.shared.revoke(stopped: killed); hide() }
+        tick += 1
+        Self.logAction("Always allow PC tools on this Mac = \(value ? "ON" : "OFF; per-action approvals restored")")
+    }
+    func needsApproval(for tool: ToolSpec) -> Bool {
+        PCApprovalPolicy.needsApproval(source: tool.source, destructive: tool.destructive,
+            alwaysAllow: alwaysAllow, enabled: enabled, killed: killed,
+            kindEnabled: PCKind(source: tool.source).map(isOn) ?? false)
+    }
     func enable(_ kinds: [PCKind]) { if !enabled { setEnabled(true) }; for k in kinds where !isOn(k) { set(k, true) } }
     func kill() {
         killed = true; UserDefaults.standard.set(true, forKey: "pc.killed")
-        ChatStoreRef.store?.stop(); hide(); Self.logAction("KILL SWITCH pressed: all PC control stopped")
+        do { try PCAlwaysAllowGrant.set(false); permissionError = "" }
+        catch { permissionError = "Control stopped. Could not remove the saved grant: " + error.localizedDescription }
+        alwaysAllow = false; UserDefaults.standard.set(false, forKey: "pc.alwaysAllow")
+        PCExecutionState.shared.revoke(stopped: true)
+        Confirm.cancelPCApproval()
+        ChatStoreRef.store?.stop(); hide(); tick += 1
+        Self.logAction("KILL SWITCH pressed: PC runs and child commands cancelled; unattended control revoked")
     }
-    func resume() { killed = false; UserDefaults.standard.set(false, forKey: "pc.killed"); Self.logAction("kill switch reset") }
+    func resume() {
+        setAlwaysAllow(false)
+        guard !PCAlwaysAllowGrant.present() else {
+            permissionError = "Control remains stopped because its saved permission could not be revoked."
+            return
+        }
+        PCExecutionState.shared.resume(); killed = false; UserDefaults.standard.set(false, forKey: "pc.killed")
+        tick += 1; Self.logAction("kill switch reset; per-action approval mode")
+    }
 
     func tools(for model: String) -> [ToolSpec] {
-        guard enabled, !killed, Self.eligible(model) else { return [] }
+        guard enabled, !killed else { return [] }
         return PCKind.allCases.flatMap(PCTools.make)   // off types are offered too; Agent turns a call into a "Turn on" button
     }
 
@@ -77,13 +114,14 @@ enum PCKind: String, CaseIterable, Identifiable {
         active = true
         if panel == nil {
             let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 250, height: 44), styleMask: [.nonactivatingPanel, .hudWindow, .utilityWindow], backing: .buffered, defer: false)
-            p.level = .statusBar; p.isFloatingPanel = true; p.hidesOnDeactivate = false; p.collectionBehavior = [.canJoinAllSpaces, .stationary]
+            p.level = .statusBar; p.isFloatingPanel = true; p.worksWhenModal = true; p.hidesOnDeactivate = false; p.collectionBehavior = [.canJoinAllSpaces, .stationary]
             p.contentView = NSHostingView(rootView: PCIndicator())
             panel = p
         }
         if let s = NSScreen.main?.visibleFrame, let p = panel { p.setFrameOrigin(NSPoint(x: s.maxX - 266, y: s.maxY - 60)) }
         panel?.orderFrontRegardless()
         hideWork?.cancel()
+        if alwaysAllow { return }
         let w = DispatchWorkItem { [weak self] in self?.hide() }; hideWork = w
         DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: w)
     }
@@ -107,10 +145,11 @@ enum PCKind: String, CaseIterable, Identifiable {
 }
 
 struct PCIndicator: View {
+    @ObservedObject var pc = PCControl.shared
     var body: some View {
         HStack(spacing: 8) {
             Circle().fill(.red).frame(width: 10, height: 10)
-            Text("Vortex is controlling this Mac").font(.caption.bold())
+            Text(pc.alwaysAllow ? "PC control · always allowed" : "Vortex is controlling this Mac").font(.caption.bold())
             Spacer()
             Button("Stop") { PCControl.shared.kill() }.controlSize(.small)
         }.padding(.horizontal, 12).frame(width: 250, height: 44)
@@ -132,13 +171,14 @@ enum PCTools {
         return URL(fileURLWithPath: (s as NSString).expandingTildeInPath).standardizedFileURL
     }
     static func guardOn(_ k: PCKind) async throws {
+        try PCExecutionContext.check()
         let ok = await MainActor.run { () -> Bool in
-            let c = PCControl.shared; guard !c.killed, c.isOn(k) else { return false }; c.flash(); return true
+            let c = PCControl.shared; guard c.enabled, !c.killed, c.isOn(k) else { return false }; c.flash(); return true
         }
         if !ok { throw PCError.msg("PC control for \(k.rawValue) is off or stopped") }
     }
     static func tool(_ k: PCKind, _ name: String, _ desc: String, _ schema: [String: Any], destructive: Bool = false, _ run: @escaping ([String: Any]) async throws -> String) -> ToolSpec {
-        ToolSpec(name: name, description: desc, schema: schema, source: "pc:\(k.rawValue)", destructive: destructive) { a in try await guardOn(k); return try await run(a) }
+        ToolSpec(name: name, description: desc, schema: schema, source: "pc:\(k.rawValue)", destructive: destructive) { a in try await guardOn(k); try PCExecutionContext.check(); return try await run(a) }
     }
 
     static func make(_ k: PCKind) -> [ToolSpec] {
@@ -149,18 +189,19 @@ enum PCTools {
                 return items.prefix(300).map { i in let v = try? i.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey]); return (v?.isDirectory == true ? "📁 " : "📄 ") + i.lastPathComponent + (v?.fileSize.map { " (\($0) B)" } ?? "") }.joined(separator: "\n")
             },
             tool(k, "pc_read_file", "Read a text file on this Mac (first 200 KB).", obj(["path": "string"], ["path"])) { a in
-                let d = try Data(contentsOf: try path(a)); return String(decoding: d.prefix(200_000), as: UTF8.self)
+                let handle = try FileHandle(forReadingFrom: try path(a)); defer { try? handle.close() }; let d = try handle.read(upToCount: 200_000) ?? Data(); return String(decoding: d, as: UTF8.self)
             }]
         case .filesWrite: return [
             tool(k, "pc_write_file", "Create or overwrite a text file.", obj(["path": "string", "content": "string"], ["path", "content"]), destructive: true) { a in
                 let u = try path(a); try FileManager.default.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try PCExecutionContext.check()
                 try (a["content"] as? String ?? "").write(to: u, atomically: true, encoding: .utf8); return "wrote \(u.path)"
             },
             tool(k, "pc_move_file", "Move or rename a file or folder.", obj(["from": "string", "to": "string"], ["from", "to"]), destructive: true) { a in
-                let f = try path(a, "from"), t = try path(a, "to"); try FileManager.default.moveItem(at: f, to: t); return "moved to \(t.path)"
+                let f = try path(a, "from"), t = try path(a, "to"); try PCExecutionContext.check(); try FileManager.default.moveItem(at: f, to: t); return "moved to \(t.path)"
             },
             tool(k, "pc_delete_file", "Move a file or folder to the Trash.", obj(["path": "string"], ["path"]), destructive: true) { a in
-                let u = try path(a); var out: NSURL?; try FileManager.default.trashItem(at: u, resultingItemURL: &out); return "moved to Trash: \(u.path)"
+                let u = try path(a); var out: NSURL?; try PCExecutionContext.check(); try FileManager.default.trashItem(at: u, resultingItemURL: &out); return "moved to Trash: \(u.path)"
             }]
         case .shell: return [
             tool(k, "pc_shell", "Run a zsh command on this Mac and return its output (60 s limit).", obj(["command": "string"], ["command"]), destructive: true) { a in
@@ -170,7 +211,7 @@ enum PCTools {
         case .apps: return [
             tool(k, "pc_open_app", "Open (or bring forward) an app by name, e.g. Safari.", obj(["name": "string"], ["name"])) { a in
                 guard let n = a["name"] as? String, !n.isEmpty else { throw PCError.msg("missing name") }
-                if ["browser", "default browser", "web browser", "internet"].contains(n.lowercased()) { await MainActor.run { _ = NSWorkspace.shared.open(URL(string: "https://www.google.com")!) }; return "opened the default browser" }
+                if ["browser", "default browser", "web browser", "internet"].contains(n.lowercased()) { try await MainActor.run { try PCExecutionContext.check(); _ = NSWorkspace.shared.open(URL(string: "https://www.google.com")!) }; return "opened the default browser" }
                 return try await runProcess("/usr/bin/open", ["-a", n], timeout: 20).isEmpty ? "opened \(n)" : "could not open \(n)"
             },
             tool(k, "pc_list_apps", "List running apps.", obj([:], [])) { _ in
@@ -178,33 +219,41 @@ enum PCTools {
             },
             tool(k, "pc_quit_app", "Quit a running app by name.", obj(["name": "string"], ["name"]), destructive: true) { a in
                 let n = (a["name"] as? String ?? "").lowercased()
-                return await MainActor.run {
+                return try await MainActor.run {
+                    try PCExecutionContext.check()
                     let apps = NSWorkspace.shared.runningApplications.filter { $0.localizedName?.lowercased() == n }
                     apps.forEach { $0.terminate() }; return apps.isEmpty ? "no app named \(n) is running" : "asked \(n) to quit"
                 }
             }]
         case .input: return [
             tool(k, "pc_type_text", "Type text into the focused app.", obj(["text": "string"], ["text"]), destructive: true) { a in
-                try needAX(); let t = a["text"] as? String ?? ""; target = await targetApp(); defer { target = nil }
-                for ch in t { let s = Array(String(ch).utf16)
-                    for down in [true, false] { let e = CGEvent(keyboardEventSource: CGEventSource(stateID: .hidSystemState), virtualKey: 0, keyDown: down); e?.keyboardSetUnicodeString(stringLength: s.count, unicodeString: s); PCTools.send(e) }
-                    try await Task.sleep(nanoseconds: 8_000_000) }
+                try needAX(); let t = a["text"] as? String ?? ""; let target = try await targetApp(); try PCExecutionContext.check()
+                let units = Array(t.utf16); var offset = 0
+                while offset < units.count {
+                    try PCExecutionContext.check()
+                    var end = min(offset + 20, units.count)
+                    if end < units.count && (0xD800...0xDBFF).contains(units[end - 1]) { end -= 1 }
+                    let chunk = Array(units[offset..<end])
+                    for down in [true, false] { let event = CGEvent(keyboardEventSource: CGEventSource(stateID: .hidSystemState), virtualKey: 0, keyDown: down); event?.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: chunk); try PCTools.send(event, to: target) }
+                    offset = end
+                    try await Task.sleep(nanoseconds: 12_000_000)
+                }
                 return "typed \(t.count) characters"
             },
             tool(k, "pc_key", "Press a key or shortcut, e.g. \"cmd+s\", \"return\", \"cmd+shift+t\".", obj(["keys": "string"], ["keys"]), destructive: true) { a in
-                try needAX(); target = await targetApp(); defer { target = nil }; let parts = (a["keys"] as? String ?? "").lowercased().split(separator: "+").map(String.init)
+                try needAX(); let target = try await targetApp(); try PCExecutionContext.check(); let parts = (a["keys"] as? String ?? "").lowercased().split(separator: "+").map(String.init)
                 var flags: CGEventFlags = []; var code: CGKeyCode?
                 for p in parts { switch p {
                     case "cmd", "command": flags.insert(.maskCommand); case "shift": flags.insert(.maskShift)
                     case "opt", "option", "alt": flags.insert(.maskAlternate); case "ctrl", "control": flags.insert(.maskControl)
                     default: code = keyCodes[p] } }
                 guard let c = code else { throw PCError.msg("unknown key in \(parts.joined(separator: "+"))") }
-                for down in [true, false] { let e = CGEvent(keyboardEventSource: CGEventSource(stateID: .hidSystemState), virtualKey: c, keyDown: down); e?.flags = flags; PCTools.send(e) }
+                for down in [true, false] { let e = CGEvent(keyboardEventSource: CGEventSource(stateID: .hidSystemState), virtualKey: c, keyDown: down); e?.flags = flags; try PCTools.send(e, to: target) }
                 return "pressed \(parts.joined(separator: "+"))"
             },
             tool(k, "pc_click", "Click at screen point x,y (top-left origin).", obj(["x": "number", "y": "number"], ["x", "y"]), destructive: true) { a in
                 try needAX(); let p = CGPoint(x: (a["x"] as? NSNumber)?.doubleValue ?? 0, y: (a["y"] as? NSNumber)?.doubleValue ?? 0)
-                for t in [CGEventType.leftMouseDown, .leftMouseUp] { CGEvent(mouseEventSource: CGEventSource(stateID: .hidSystemState), mouseType: t, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap) }
+                for t in [CGEventType.leftMouseDown, .leftMouseUp] { try PCExecutionContext.check(); CGEvent(mouseEventSource: CGEventSource(stateID: .hidSystemState), mouseType: t, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap) }
                 return "clicked \(Int(p.x)),\(Int(p.y))"
             }]
         case .screenshot: return [
@@ -217,16 +266,23 @@ enum PCTools {
                 guard let img = NSImage(contentsOf: u)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw PCError.msg("screenshot failed") }
                 let req = VNRecognizeTextRequest(); req.recognitionLevel = .accurate
                 try VNImageRequestHandler(cgImage: img).perform([req])
-                let text = (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+                let bounds = CGDisplayBounds(CGMainDisplayID())
+                let text = (req.results ?? []).compactMap { item -> String? in
+                    guard let value = item.topCandidates(1).first?.string else { return nil }
+                    let x = bounds.minX + item.boundingBox.midX * bounds.width
+                    let y = bounds.minY + (1 - item.boundingBox.midY) * bounds.height
+                    return "[x:\(Int(x)), y:\(Int(y))] " + value
+                }.joined(separator: "\n")
                 return "Saved \(u.path) (\(img.width)x\(img.height)). Text on screen:\n" + (text.isEmpty ? "(none found)" : text)
             }]
         case .browser: return [
             tool(k, "pc_open_url", "Open a web page in the default browser.", obj(["url": "string"], ["url"])) { a in
                 guard let s = a["url"] as? String, let u = URL(string: s), ["http", "https"].contains(u.scheme ?? "") else { throw PCError.msg("need an http(s) url") }
-                await MainActor.run { _ = NSWorkspace.shared.open(u) }; return "opened \(s)"
+                try await MainActor.run { try PCExecutionContext.check(); _ = NSWorkspace.shared.open(u) }; return "opened \(s)"
             },
             tool(k, "pc_browser_tab", "Get the title and URL of the front tab in Safari or Chrome.", obj([:], [])) { _ in
-                await MainActor.run {
+                try await MainActor.run {
+                    try PCExecutionContext.check()
                     for (app, s) in [("Safari", "tell application \"Safari\" to return (name of front document) & \" | \" & (URL of front document)"),
                                      ("Google Chrome", "tell application \"Google Chrome\" to return (title of active tab of front window) & \" | \" & (URL of active tab of front window)")]
                     where NSWorkspace.shared.runningApplications.contains(where: { $0.localizedName == app }) {
@@ -238,10 +294,10 @@ enum PCTools {
             }]
         case .clipboard: return [
             tool(k, "pc_clipboard_read", "Read the text on the clipboard.", obj([:], [])) { _ in
-                await MainActor.run { NSPasteboard.general.string(forType: .string) ?? "(clipboard has no text)" }
+                try await MainActor.run { try PCExecutionContext.check(); return NSPasteboard.general.string(forType: .string) ?? "(clipboard has no text)" }
             },
             tool(k, "pc_clipboard_write", "Replace the clipboard with text.", obj(["text": "string"], ["text"]), destructive: true) { a in
-                await MainActor.run { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(a["text"] as? String ?? "", forType: .string) }; return "clipboard set"
+                try await MainActor.run { try PCExecutionContext.check(); NSPasteboard.general.clearContents(); NSPasteboard.general.setString(a["text"] as? String ?? "", forType: .string) }; return "clipboard set"
             }]
         }
     }
@@ -258,17 +314,30 @@ enum PCTools {
         }
     }
     /// If Vortex itself is in front (the user just typed the request here), hand focus back to the app they were using.
-    static func targetApp() async -> pid_t? {
-        if let f = NSWorkspace.shared.frontmostApplication, f.processIdentifier != getpid() { return f.processIdentifier }
-        guard let o = lastOther, !o.isTerminated else { return nil }
-        o.activate(); try? await Task.sleep(nanoseconds: 400_000_000); return o.processIdentifier
+    static func targetApp() async throws -> pid_t? {
+        try PCExecutionContext.check()
+        let (pid, activated) = try await MainActor.run { () throws -> (pid_t?, Bool) in
+            try PCExecutionContext.check()
+            if let f = NSWorkspace.shared.frontmostApplication, f.processIdentifier != getpid() { return (f.processIdentifier, false) }
+            guard let other = lastOther, !other.isTerminated else { return (nil, false) }
+            other.activate(); return (other.processIdentifier, true)
+        }
+        if activated { try await Task.sleep(nanoseconds: 400_000_000) }
+        try PCExecutionContext.check()
+        return pid
     }
-    nonisolated(unsafe) static var target: pid_t?
-    static func send(_ e: CGEvent?) {
+    static func send(_ e: CGEvent?, to target: pid_t?) throws {
+        try PCExecutionContext.check()
         guard let e else { return }
         if let pid = target ?? NSWorkspace.shared.frontmostApplication?.processIdentifier { e.postToPid(pid) } else { e.post(tap: .cghidEventTap) }
     }
-    static func needAX() throws { if !CGPreflightPostEventAccess() { _ = CGRequestPostEventAccess() }; if !PCControl.accessibility(prompt: true) || !CGPreflightPostEventAccess() { throw PCError.msg("Accessibility permission is needed (System Settings → Privacy & Security → Accessibility → Red-XAI Vortex)") } }
+    static func needAX() throws {
+        try PCExecutionContext.check()
+        if !CGPreflightPostEventAccess() { _ = CGRequestPostEventAccess() }
+        try PCExecutionContext.check()
+        if !PCControl.accessibility(prompt: true) || !CGPreflightPostEventAccess() { throw PCError.msg("Accessibility permission is needed (System Settings → Privacy & Security → Accessibility → Red-XAI Vortex)") }
+        try PCExecutionContext.check()
+    }
 
     static let keyCodes: [String: CGKeyCode] = {
         var m: [String: CGKeyCode] = ["return": 36, "enter": 36, "tab": 48, "space": 49, "delete": 51, "backspace": 51, "escape": 53, "esc": 53,
@@ -279,19 +348,8 @@ enum PCTools {
     }()
 
     static func runProcess(_ exe: String, _ args: [String], timeout: Double) async throws -> String {
-        try await withCheckedThrowingContinuation { cont in
-            DispatchQueue.global().async {
-                let p = Process(); p.executableURL = URL(fileURLWithPath: exe); p.arguments = args
-                let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe
-                do { try p.run() } catch { cont.resume(throwing: error); return }
-                let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
-                DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
-                let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit(); killer.cancel()
-                var s = String(decoding: d.prefix(20_000), as: UTF8.self)
-                if p.terminationStatus != 0 { s += "\n(exit \(p.terminationStatus))" }
-                cont.resume(returning: s.trimmingCharacters(in: .whitespacesAndNewlines))
-            }
-        }
+        try PCExecutionContext.check()
+        return try await PCCancellableProcess().run(exe, args, timeout: timeout, token: PCExecutionContext.token)
     }
 }
 
@@ -305,9 +363,9 @@ struct PCControlView: View {
         Form {
             Section {
                 Toggle(isOn: Binding(get: { _ = pc.tick; return pc.enabled }, set: { pc.setEnabled($0) })) {
-                    VStack(alignment: .leading) { Text("PC Control").font(.headline); Text("When on, just ask **vortex** or **red-xai** to do something on this Mac (no 🔧 needed).").font(.caption).foregroundStyle(.secondary) }
+                    VStack(alignment: .leading) { Text("PC Control").font(.headline); Text("When on, ask your selected model to use the computer tools on this Mac.").font(.caption).foregroundStyle(.secondary) }
                 }
-                Text("Each type below has its own switch. If you ask for something whose type is off, the chat shows a **Turn on** button. Destructive actions (writing, moving or deleting files, shell commands, typing, clicking, quitting apps, replacing the clipboard) always ask Allow / Deny first.")
+                Text("Each type below has its own switch. Changes ask Allow / Deny unless you explicitly turn on Always allow. Stop control cancels current PC runs and commands and restores approval mode.")
                     .font(.caption).fixedSize(horizontal: false, vertical: true)
                 HStack {
                     if pc.killed {
@@ -319,6 +377,14 @@ struct PCControlView: View {
                     }
                 }
             }
+            Section("Approval mode") {
+                Toggle("Always allow full PC control on this Mac", isOn: Binding(get: { pc.alwaysAllow }, set: { pc.setAlwaysAllow($0) }))
+                    .disabled(pc.killed)
+                Text("Enables all PC tool types and remembers your choice. Vortex can change files, run commands and control apps without asking each time. macOS permissions still apply. Stop control cancels active work; resetting Stop returns to per-action approvals.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if !pc.permissionError.isEmpty { Text(pc.permissionError).foregroundStyle(.red).font(.caption) }
+                if pc.alwaysAllow { Label("Always allowed · Stop remains visible above other windows", systemImage: "bolt.shield.fill").foregroundStyle(.orange) }
+            }
             Section {
                 HStack {
                     Button("Enable all safe") { pc.enable(PCKind.safe) }.help("Files, apps, screenshots, browser and clipboard. Changes still ask first.")
@@ -329,7 +395,7 @@ struct PCControlView: View {
             Section("What the model may do") {
                 ForEach(PCKind.allCases) { k in
                     Toggle(isOn: Binding(get: { _ = pc.tick; return pc.isOn(k) }, set: { pc.set(k, $0) })) {
-                        VStack(alignment: .leading) { Text(k.title); Text(k.note).font(.caption).foregroundStyle(.secondary) }
+                        VStack(alignment: .leading) { Text(k.title); Text(pc.alwaysAllow ? "Allowed without per-action prompts while this type is on." : k.note).font(.caption).foregroundStyle(.secondary) }
                     }
                 }
             }
@@ -367,5 +433,30 @@ struct PCTurnOnButton: View {
         Button { pc.enable([kind]) } label: {
             Label(on ? "\(kind.title): on — ask again" : "Turn on \(kind.title)", systemImage: on ? "checkmark.circle.fill" : "power")
         }.buttonStyle(.borderedProminent).tint(on ? .green : .red).controlSize(.small).disabled(on)
+    }
+}
+
+
+/// Always available in the main window, including between tool actions.
+struct PCControlStatusView: View {
+    @ObservedObject var pc = PCControl.shared
+    var body: some View {
+        HStack(spacing: 7) {
+            Menu {
+                Toggle("PC control", isOn: Binding(get: { pc.enabled }, set: { pc.setEnabled($0) }))
+                Toggle("Always allow on this Mac", isOn: Binding(get: { pc.alwaysAllow }, set: { pc.setAlwaysAllow($0) })).disabled(pc.killed)
+                Text("Always allow enables every PC tool. macOS permissions still apply.")
+                if pc.killed { Button("Reset Stop · ask each time") { pc.resume() } }
+            } label: {
+                Label(pc.killed ? "PC stopped" : !pc.enabled ? "PC off" : pc.alwaysAllow ? "Always allowed" : "Ask each time", systemImage: pc.killed ? "hand.raised.fill" : pc.alwaysAllow ? "bolt.shield.fill" : "desktopcomputer")
+            }
+            .help("PC control permissions and approval mode")
+            if pc.enabled && !pc.killed {
+                Button(role: .destructive) { pc.kill() } label: { Label("Stop control", systemImage: "stop.fill") }
+                    .help("Cancel PC tasks and commands, and turn off Always allow")
+                    .keyboardShortcut(".", modifiers: [.command, .shift])
+            }
+        }.controlSize(.small)
+        .onAppear { if pc.enabled && pc.alwaysAllow && !pc.killed { pc.flash() } }
     }
 }

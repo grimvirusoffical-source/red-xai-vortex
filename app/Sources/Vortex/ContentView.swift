@@ -1,6 +1,8 @@
 import SwiftUI
+import AppKit
 
 struct ContentView: View {
+    @Environment(\.royalPalette) private var palette
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var tunnel: TunnelManager
     @AppStorage("accent") var accent = "red"
@@ -18,17 +20,22 @@ struct ContentView: View {
     @ObservedObject var workspace = WorkspaceStore.shared
     @Local var showWorkspace = false
     @Local var workspaceTab = "projects"
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     @ViewBuilder func chatRow(_ c: Chat) -> some View {
-        HStack {
-            if c.pinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(Color.accent(accent)) }
-            if (c.participants?.count ?? 0) >= 2 { Image(systemName: "person.3.fill").font(.caption) }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(c.title).lineLimit(1)
-                Text(c.updated, style: .relative).font(.caption2).foregroundStyle(.secondary)
+        HStack(spacing: 9) {
+            RoundedRectangle(cornerRadius: 2).fill(store.selection == c.id ? RoyalTheme.accent : .clear).frame(width: 3, height: 27)
+            Image(systemName: c.worldID != nil ? "globe.americas" : (c.participants?.count ?? 0) >= 2 ? "person.3" : "bubble.left")
+                .font(.system(size: 12)).foregroundStyle(RoyalTheme.accent.opacity(0.8)).frame(width: 17)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(c.title).font(.system(size: 13, weight: store.selection == c.id ? .semibold : .regular)).lineLimit(1).foregroundStyle(RoyalTheme.text)
+                Text(c.updated, style: .relative).font(.system(size: 10)).foregroundStyle(RoyalTheme.secondary)
             }
-        }
+            Spacer(minLength: 0)
+            if c.pinned { Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(Color.accent(accent)) }
+        }.padding(.vertical, 5)
         .tag(c.id)
+        .listRowBackground(store.selection == c.id ? RoyalTheme.selection : Color.clear)
         .contextMenu {
             Button("Rename") { renaming = c.id; renameText = c.title }
             Button(c.pinned ? "Unpin" : "Pin") { store.togglePin(c.id) }
@@ -44,62 +51,77 @@ struct ContentView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
-            List(selection: $store.selection) {
-                Section {
-                    Button { workspaceTab = "projects"; showWorkspace = true } label: { Label("Your workspace", systemImage: "square.grid.2x2") }.buttonStyle(.borderless)
-                    Button { workspaceTab = "bases"; showWorkspace = true } label: { Label("XAI Bases", systemImage: "externaldrive.connected.to.line.below") }.buttonStyle(.borderless)
-                    Button { workspaceTab = "worlds"; showWorkspace = true } label: { Label("Roleplay worlds", systemImage: "globe.americas") }.buttonStyle(.borderless)
-                }
-                Section("Projects") {
-                    ForEach(workspace.state.projects) { project in
-                        DisclosureGroup {
-                            ForEach(filtered.filter { $0.projectID == project.id }) { c in chatRow(c) }
-                            Button { store.newChat(projectID: project.id) } label: { Label("New project chat", systemImage: "plus") }.buttonStyle(.borderless)
-                        } label: { Label(project.name, systemImage: "folder") }
+        let _ = palette
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 15) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Your space").font(.system(size: 23, weight: .semibold, design: .rounded)).foregroundStyle(RoyalTheme.text)
+                        Text("Chats, knowledge & worlds").font(.system(size: 12)).foregroundStyle(RoyalTheme.secondary)
                     }
-                    Button { workspaceTab = "projects"; showWorkspace = true } label: { Label("Manage projects", systemImage: "folder.badge.plus") }.buttonStyle(.borderless)
-                }
-                Section("Chats") { ForEach(filtered.filter { ($0.participants ?? []).isEmpty && $0.projectID == nil && $0.worldID == nil }) { c in chatRow(c) } }
-                if !filtered.filter({ $0.worldID != nil && $0.projectID == nil }).isEmpty {
-                    Section("World chats") { ForEach(filtered.filter { $0.worldID != nil && $0.projectID == nil }) { c in chatRow(c) } }
-                }
-                Section("Agents") {
-                    ForEach(agents.agents) { a in
-                        let c = store.chats.first { $0.participants == ["agent:" + a.id] }
-                        HStack { Image(systemName: "cpu").foregroundStyle(Color.accent(accent)); Text(a.name).lineLimit(1); Spacer(); Text(a.model).font(.caption2).foregroundStyle(.secondary) }
-                            .tag(c?.id ?? UUID())
-                            .contentShape(Rectangle())
-                            .onTapGesture { store.openAgentChat(a) }
+                    Button { store.newChat() } label: { HStack { Image(systemName: "plus"); Text("New conversation"); Spacer(); Image(systemName: "square.and.pencil") }.frame(maxWidth: .infinity) }
+                        .buttonStyle(RoyalButtonStyle(prominent: true)).help("New Chat · ⌘N")
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(RoyalTheme.secondary)
+                        TextField("Search chats", text: $search).textFieldStyle(.plain).font(.system(size: 12)).accessibilityLabel("Search chats")
+                        if !search.isEmpty { Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.plain).help("Clear search").accessibilityLabel("Clear search") }
+                    }.padding(10).background(RoundedRectangle(cornerRadius: 10).fill(RoyalTheme.background)).overlay(RoundedRectangle(cornerRadius: 10).stroke(RoyalTheme.line))
+                }.padding(.horizontal, 19).padding(.top, 24).padding(.bottom, 12)
+                List(selection: $store.selection) {
+                    Section {
+                        workspaceLink("Workspace", icon: "square.grid.2x2", tab: "projects")
+                        workspaceLink("XAI Bases", icon: "externaldrive.connected.to.line.below", tab: "bases")
+                        workspaceLink("Roleplay worlds", icon: "globe.americas", tab: "worlds")
                     }
-                }
-                Section("Party chats") {
-                    ForEach(filtered.filter { ($0.participants?.count ?? 0) >= 2 || ($0.participants == nil && $0.title == "Party chat") }) { c in chatRow(c) }
-                    Button { store.newParty(); partyHint = true } label: { Label("New party chat", systemImage: "person.3") }.buttonStyle(.borderless)
-                }
-                Section("Activity") {
-                    Button { showActivity = true } label: { Label("Activity and dashboard", systemImage: "list.bullet.rectangle") }.buttonStyle(.borderless)
-                }
-            }
-            .searchable(text: $search, placement: .sidebar)
-            .safeAreaInset(edge: .bottom) {
-                HStack {
-                    Circle().fill(tunnel.running ? .green : (useTunnel ? .orange : .gray)).frame(width: 8, height: 8)
-                    Text(useTunnel ? (tunnel.running ? (tunnel.external ? "Tunnel up (shared)" : "Tunnel up") : "Tunnel down") : "Direct").font(.caption)
-                    Spacer()
-                    if useTunnel {
-                        Button(tunnel.running ? (tunnel.external ? "Connected" : "Stop") : "Connect") {
-                            (tunnel.running && !tunnel.external) ? tunnel.stop() : tunnel.start(host: sshHost, local: sshLocalPort, remote: sshRemotePort, keyPath: sshKey)
-                        }.controlSize(.small)
+                    Section("Projects") {
+                        ForEach(workspace.state.projects) { project in
+                            DisclosureGroup {
+                                ForEach(filtered.filter { $0.projectID == project.id }) { c in chatRow(c) }
+                                Button { store.newChat(projectID: project.id) } label: { Label("New project chat", systemImage: "plus") }.buttonStyle(.borderless)
+                            } label: { Label(project.name, systemImage: "folder").font(.system(size: 12, weight: .medium)) }
+                        }
+                        Button { workspaceTab = "projects"; showWorkspace = true } label: { Label("Manage projects", systemImage: "folder.badge.plus") }.buttonStyle(.borderless).font(.system(size: 12))
                     }
-                }.padding(8)
-            }
-            .toolbar { Button { store.newChat() } label: { Image(systemName: "square.and.pencil") }.help("New Chat") }
-            .navigationSplitViewColumnWidth(min: 200, ideal: 240)
+                    Section("Chats") { ForEach(filtered.filter { ($0.participants ?? []).isEmpty && $0.projectID == nil && $0.worldID == nil }) { c in chatRow(c) } }
+                    if !filtered.filter({ $0.worldID != nil && $0.projectID == nil }).isEmpty {
+                        Section("World chats") { ForEach(filtered.filter { $0.worldID != nil && $0.projectID == nil }) { c in chatRow(c) } }
+                    }
+                    Section("Agents") {
+                        ForEach(agents.agents) { a in
+                            let c = store.chats.first { $0.participants == ["agent:" + a.id] }
+                            HStack(spacing: 9) { Image(systemName: "cpu").foregroundStyle(RoyalTheme.accent); Text(a.name).lineLimit(1); Spacer(); Text(a.model).font(.system(size: 10)).foregroundStyle(RoyalTheme.secondary) }
+                                .font(.system(size: 12)).padding(.vertical, 5)
+                                .tag(c?.id ?? UUID()).contentShape(Rectangle()).onTapGesture { store.openAgentChat(a) }
+                        }
+                    }
+                    Section("Party chats") {
+                        ForEach(filtered.filter { ($0.participants?.count ?? 0) >= 2 || ($0.participants == nil && $0.title == "Party chat") }) { c in chatRow(c) }
+                        Button { store.newParty(); partyHint = true } label: { Label("New party chat", systemImage: "person.3") }.buttonStyle(.borderless).font(.system(size: 12))
+                    }
+                    Section("Activity") {
+                        Button { showActivity = true } label: { Label("Activity and dashboard", systemImage: "list.bullet.rectangle") }.buttonStyle(.borderless).font(.system(size: 12))
+                    }
+                }.listStyle(.sidebar).scrollContentBackground(.hidden).background(RoyalTheme.sidebar)
+                VStack(spacing: 0) {
+                    Rectangle().fill(RoyalTheme.line).frame(height: 1)
+                    HStack(spacing: 8) {
+                        Circle().fill(tunnel.running ? .green : (useTunnel ? .orange : RoyalTheme.secondary)).frame(width: 6, height: 6)
+                        Text(useTunnel ? (tunnel.running ? (tunnel.external ? "Tunnel up (shared)" : "Tunnel up") : "Tunnel down") : "Direct connection").font(.system(size: 11)).foregroundStyle(RoyalTheme.secondary)
+                        Spacer(minLength: 4)
+                        if useTunnel {
+                            Button(tunnel.running ? (tunnel.external ? "Connected" : "Stop") : "Connect") {
+                                (tunnel.running && !tunnel.external) ? tunnel.stop() : tunnel.start(host: sshHost, local: sshLocalPort, remote: sshRemotePort, keyPath: sshKey)
+                            }.buttonStyle(RoyalButtonStyle(compact: true))
+                        }
+                    }.padding(15)
+                }
+            }.background(RoyalTheme.sidebar)
+                .navigationSplitViewColumnWidth(min: 225, ideal: 270, max: 350)
         } detail: {
-            ChatView()
+            ChatView(toggleSidebar: { columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly })
         }
-        .tint(Color.accent(accent))
+        .toolbar(.hidden, for: .windowToolbar)
+        .background(RoyalTheme.background).foregroundStyle(RoyalTheme.text).tint(Color.accent(accent))
         .onAppear {
             if useTunnel && !tunnel.running { tunnel.start(host: sshHost, local: sshLocalPort, remote: sshRemotePort, keyPath: sshKey) }
         }
@@ -112,9 +134,17 @@ struct ContentView: View {
             Button("Cancel", role: .cancel) { renaming = nil }
         }
     }
+
+    func workspaceLink(_ title: String, icon: String, tab: String) -> some View {
+        Button { workspaceTab = tab; showWorkspace = true } label: {
+            HStack(spacing: 10) { Image(systemName: icon).foregroundStyle(RoyalTheme.accent).frame(width: 17); Text(title).font(.system(size: 12, weight: .medium)); Spacer(); Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(RoyalTheme.secondary) }.padding(.vertical, 6).contentShape(Rectangle())
+        }.buttonStyle(.plain)
+    }
 }
 
 struct ChatView: View {
+    @Environment(\.royalPalette) private var palette
+    var toggleSidebar: () -> Void = {}
     @EnvironmentObject var store: ChatStore
     @AppStorage("serverURL") var serverURL = Defaults.serverURL
     @AppStorage("model") var model = Defaults.model
@@ -147,60 +177,49 @@ struct ChatView: View {
     }
 
     var body: some View {
+        let _ = palette
         VStack(spacing: 0) {
+            conversationHeader
             WorkspaceContextBar { tab in workspaceTab = tab; showWorkspace = true }
+                .font(.system(size: 11)).background(RoyalTheme.surface.opacity(0.65))
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
+                    LazyVStack(alignment: .leading, spacing: 28) {
                         if let c = store.current {
-                            if c.messages.isEmpty {
-                                VStack(spacing: 14) {
-                                    Image(systemName: "sparkle").font(.system(size: 40, weight: .light)).foregroundStyle(.tint)
-                                    Text("What are we working on?").font(.system(size: 30, weight: .semibold, design: .rounded))
-                                    Text("Think, build, explore a world, or start with your own context.").foregroundStyle(.secondary)
-                                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                                        starter("Build something", detail: "Plan a change with code and files", icon: "curlybraces", prompt: "Help me plan a code change. First, ask for the files and goal you need.")
-                                        starter("Review a change", detail: "Find issues in a diff", icon: "text.magnifyingglass", prompt: "Review the diff I will provide for bugs, regressions, and security issues.")
-                                        starter("Connect your knowledge", detail: "Work with an XAI Base", icon: "externaldrive", tab: "bases")
-                                        starter("Enter a world", detail: "Create an immersive story", icon: "globe.americas", tab: "worlds")
-                                    }.frame(maxWidth: 560).padding(.top, 12)
-                                    Text("\(Defaults.displayName(params.model)) · Your tools and existing features are ready").font(.caption).foregroundStyle(.tertiary)
-                                }.frame(maxWidth: .infinity).padding(.top, 64).padding(.bottom, 40)
-                            }
+                            if c.messages.isEmpty { welcome }
                             ForEach(c.messages) { m in BubbleView(message: m).id(m.id) }
                         }
-                    }.padding(24).frame(maxWidth: 1000).frame(maxWidth: .infinity)
+                    }.padding(.horizontal, 30).padding(.vertical, 30).frame(maxWidth: RoyalTheme.contentWidth).frame(maxWidth: .infinity)
                 }
                 .onChange(of: store.current?.messages.last?.content) { _, _ in
                     if let id = store.current?.messages.last?.id { proxy.scrollTo(id, anchor: .bottom) }
                 }
             }
-            Divider()
-            ActiveItemsBar()
-            if !pending.isEmpty || !attachError.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    if !pending.isEmpty { AttachmentChips(items: pending) { a in pending.removeAll { $0.id == a.id } } }
-                    if !attachError.isEmpty { Text(attachError).font(.caption).foregroundStyle(.red) }
-                }.padding(.horizontal, 10).padding(.top, 8)
-            }
-            ComposerBar()
-            HStack(alignment: .bottom, spacing: 8) {
-                ChatPlusMenu(upload: pickFiles) { tab in HubNav.open(tab) }
-                ComposeField(text: $input, sendOnEnter: sendOnEnter, fontSize: fontSize, onSend: send)
-                    .frame(minHeight: 36, maxHeight: 140)
-                if store.streaming {
-                    Button { store.stop() } label: { Image(systemName: "stop.circle.fill").font(.title) }.buttonStyle(.plain)
-                } else {
-                    Button { send() } label: { Image(systemName: "arrow.up.circle.fill").font(.title) }
-                        .buttonStyle(.plain).foregroundStyle(Color.accent(accent)).disabled(input.isEmpty && pending.isEmpty)
-                }
-            }.padding(10)
-            HStack {
-                Text(store.status).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                Spacer()
-                Text(sendOnEnter ? "Enter to send · Shift+Enter for newline" : "⌘Enter to send").font(.caption2).foregroundStyle(.tertiary)
-            }.padding(.horizontal, 12).padding(.bottom, 6)
-        }
+            VStack(spacing: 9) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ActiveItemsBar()
+                    if !pending.isEmpty { AttachmentChips(items: pending) { a in pending.removeAll { $0.id == a.id } }.padding(.horizontal, 12) }
+                    if !attachError.isEmpty { Label(attachError, systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.red).padding(.horizontal, 12) }
+                    HStack(alignment: .bottom, spacing: 10) {
+                        ChatPlusMenu(upload: pickFiles) { tab in HubNav.open(tab) }.padding(.bottom, 8)
+                        ComposeField(text: $input, sendOnEnter: sendOnEnter, fontSize: fontSize, onSend: send).frame(minHeight: 58, maxHeight: 140)
+                        if store.streaming {
+                            Button { store.stop() } label: { Image(systemName: "stop.fill").frame(width: 17, height: 20) }.buttonStyle(RoyalButtonStyle(prominent: true)).help("Stop generating").accessibilityLabel("Stop generating")
+                        } else {
+                            Button { send() } label: { Image(systemName: "arrow.up").font(.system(size: 17, weight: .semibold)).frame(width: 17, height: 20) }
+                                .buttonStyle(RoyalButtonStyle(prominent: true)).help("Send message").accessibilityLabel("Send message").disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && pending.isEmpty)
+                        }
+                    }.padding(.horizontal, 14).padding(.bottom, 4)
+                    Rectangle().fill(RoyalTheme.line).frame(height: 1).padding(.horizontal, 14)
+                    ComposerBar().padding(.horizontal, 14).padding(.bottom, 11)
+                }.padding(.top, 7).background(RoundedRectangle(cornerRadius: 20).fill(RoyalTheme.surface)).overlay(RoundedRectangle(cornerRadius: 20).stroke(RoyalTheme.accent.opacity(0.28))).shadow(color: .black.opacity(0.13), radius: 16, y: 5)
+                HStack(spacing: 8) {
+                    Text(store.status.isEmpty ? "Make space for your next idea." : store.status).font(.system(size: 10)).foregroundStyle(RoyalTheme.secondary).lineLimit(1)
+                    Spacer(minLength: 5)
+                    Text(sendOnEnter ? "Enter to send · Shift+Enter for a new line" : "⌘Enter to send").font(.system(size: 10)).foregroundStyle(RoyalTheme.secondary)
+                }.padding(.horizontal, 7)
+            }.frame(maxWidth: RoyalTheme.contentWidth).padding(.horizontal, 25).padding(.top, 8).padding(.bottom, 16).frame(maxWidth: .infinity).background(RoyalTheme.background)
+        }.background(RoyalTheme.background)
         .sheet(isPresented: $showWorkspace) { WorkspacePanel(initialTab: workspaceTab).environmentObject(store) }
         .sheet(isPresented: $groupSetup) { GroupSetupView().environmentObject(store) }
         .sheet(isPresented: $voiceCall) { VoiceCallView { t in input = t; send() }.environmentObject(store) }
@@ -211,40 +230,62 @@ struct ChatView: View {
             }
             return true
         }
-        .navigationTitle(store.current?.title ?? "Red-XAI Vortex")
-        .toolbar {
-            ToolbarItemGroup {
-                Picker("Model", selection: $model) {
-                    ForEach(Array(Set(store.availableModels + LocalRuntime.shared.models.map { "local:\($0)" } + [model])).sorted(), id: \.self) { Text(Defaults.displayName($0)).tag($0) }
-                }.frame(width: 240)
-                Toggle(isOn: Binding(get: { ToolRegistry.chatToolsOn }, set: { ToolRegistry.chatToolsOn = $0; store.objectWillChange.send() })) {
-                    Image(systemName: "wrench.and.screwdriver")
-                }.toggleStyle(.button).help("Let the model call tools (plugins, MCP, PC control)")
-                Button { groupSetup = true } label: { Image(systemName: (store.current?.participants?.isEmpty == false) ? "person.3.fill" : "person.3") }
-                    .help("Group chat: several models reply in turn; @mention one to ask only it")
-                Button { voiceCall = true } label: { Image(systemName: "phone.fill") }.help("Voice call (whisper.cpp + Piper on this Mac)")
-                Button { if let u = URL(string: UserDefaults.standard.string(forKey: "cloudpc.url") ?? "https://45.77.105.187/vortex/cloudpc/") { NSWorkspace.shared.open(u) } } label: { Image(systemName: "cloud") }
-                    .help("Cloud PC: open your private Linux desktop in the browser")
-                Button { store.regenerate(systemPrompt: systemPrompt, contextTokens: contextTokens, params: params) } label: {
-                    Image(systemName: "arrow.clockwise") }.help("Regenerate last reply").disabled(store.streaming)
-                OpenHubToolbar()
-                SettingsLink { Image(systemName: "gearshape") }
-            }
-        }
         .task { ChatStoreRef.store = store; await refreshModels(); try? await HubStore.shared.loadMerges() }
     }
 
+    var conversationHeader: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Button(action: toggleSidebar) { Image(systemName: "sidebar.left").frame(width: 15, height: 16) }.buttonStyle(RoyalButtonStyle(compact: true)).help("Show or hide sidebar").accessibilityLabel("Show or hide sidebar")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(store.current?.title ?? "New conversation").font(.system(size: 18, weight: .semibold)).lineLimit(1)
+                    Text(store.streaming ? "Vortex is responding…" : "A little context. Endless possibilities.").font(.system(size: 11)).foregroundStyle(RoyalTheme.secondary)
+                }
+                Spacer(minLength: 4)
+                PCControlStatusView()
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 7) {
+                    Picker("Model", selection: $model) {
+                        ForEach(Array(Set(store.availableModels + LocalRuntime.shared.models.map { "local:\($0)" } + [model])).sorted(), id: \.self) { Text(Defaults.displayName($0)).tag($0) }
+                    }.frame(width: 210).controlSize(.small).help("Choose a model")
+                    Toggle(isOn: Binding(get: { ToolRegistry.chatToolsOn }, set: { ToolRegistry.chatToolsOn = $0; store.objectWillChange.send() })) { Label("Tools", systemImage: "wrench.and.screwdriver") }.toggleStyle(.button).help("Let the model call tools (plugins, MCP, PC control)")
+                    Button { groupSetup = true } label: { Image(systemName: (store.current?.participants?.isEmpty == false) ? "person.3.fill" : "person.3") }.help("Group chat: several models reply in turn; @mention one to ask only it").accessibilityLabel("Group chat")
+                    Button { voiceCall = true } label: { Image(systemName: "phone") }.help("Voice call (whisper.cpp + Piper on this Mac)").accessibilityLabel("Start voice call")
+                    Button { if let u = URL(string: UserDefaults.standard.string(forKey: "cloudpc.url") ?? "https://45.77.105.187/vortex/cloudpc/") { NSWorkspace.shared.open(u) } } label: { Image(systemName: "cloud") }.help("Cloud PC: open your private Linux desktop in the browser").accessibilityLabel("Open Cloud PC")
+                    Button { store.regenerate(systemPrompt: systemPrompt, contextTokens: contextTokens, params: params) } label: { Image(systemName: "arrow.clockwise") }.help("Regenerate last reply").accessibilityLabel("Regenerate last reply").disabled(store.streaming)
+                    OpenHubToolbar()
+                    SettingsLink { Image(systemName: "gearshape") }.help("Settings").accessibilityLabel("Settings")
+                }.buttonStyle(RoyalButtonStyle(compact: true)).padding(.vertical, 1)
+            }
+        }.padding(.horizontal, 25).padding(.vertical, 18).background(RoyalTheme.background).overlay(alignment: .bottom) { Rectangle().fill(RoyalTheme.line).frame(height: 1) }
+    }
+    var welcome: some View {
+        VStack(alignment: .leading, spacing: 17) {
+            HStack(spacing: 9) { Rectangle().fill(RoyalTheme.accent).frame(width: 24, height: 1); Text("ROOM FOR YOUR NEXT IDEA").font(.system(size: 10, weight: .semibold)).tracking(2).foregroundStyle(RoyalTheme.accent) }
+            Text("What shall we\ncreate today?").font(.system(size: 43, weight: .medium, design: .serif)).tracking(-1).foregroundStyle(RoyalTheme.text).fixedSize(horizontal: false, vertical: true)
+            Text("Build something useful, follow your curiosity, or step into a world of your own.").font(.system(size: 14)).foregroundStyle(RoyalTheme.secondary).lineSpacing(4).frame(maxWidth: 440, alignment: .leading)
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 11) {
+                starter("Build something", detail: "Turn a goal into working code", icon: "curlybraces", prompt: "Help me plan a code change. First, ask for the files and goal you need.")
+                starter("Review a change", detail: "A second look at your diff", icon: "text.magnifyingglass", prompt: "Review the diff I will provide for bugs, regressions, and security issues.")
+                starter("Your knowledge", detail: "Connect files and XAI Bases", icon: "externaldrive", tab: "bases")
+                starter("Enter a world", detail: "Give your next story a home", icon: "globe.americas", tab: "worlds")
+            }.frame(maxWidth: 610).padding(.top, 12)
+            HStack(spacing: 6) { Circle().fill(RoyalTheme.accent).frame(width: 4, height: 4); Text(Defaults.displayName(params.model)).font(.system(size: 10)).foregroundStyle(RoyalTheme.secondary) }
+        }.frame(maxWidth: 650, alignment: .leading).padding(.top, 32).padding(.bottom, 26).frame(maxWidth: .infinity)
+    }
     @ViewBuilder func starter(_ title: String, detail: String, icon: String, prompt: String? = nil, tab: String? = nil) -> some View {
         Button {
             if let tab { workspaceTab = tab; showWorkspace = true }
             if let prompt { input = prompt }
         } label: {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: icon).foregroundStyle(.tint).frame(width: 22)
-                VStack(alignment: .leading, spacing: 4) { Text(title).font(.callout.weight(.medium)); Text(detail).font(.caption).foregroundStyle(.secondary) }
+            HStack(alignment: .top, spacing: 11) {
+                Image(systemName: icon).font(.system(size: 17, weight: .light)).foregroundStyle(RoyalTheme.accent).frame(width: 23, height: 25)
+                VStack(alignment: .leading, spacing: 5) { Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(RoyalTheme.text); Text(detail).font(.system(size: 11)).foregroundStyle(RoyalTheme.secondary).fixedSize(horizontal: false, vertical: true) }
                 Spacer(minLength: 0)
-            }.padding(14).frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
-        }.buttonStyle(.plain).background(RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(0.04))).overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.08)))
+                Image(systemName: "arrow.up.right").font(.system(size: 9)).foregroundStyle(RoyalTheme.accent.opacity(0.7))
+            }.padding(17).frame(maxWidth: .infinity, minHeight: 84, alignment: .leading)
+        }.buttonStyle(.plain).background(RoundedRectangle(cornerRadius: 15).fill(RoyalTheme.surface)).overlay(RoundedRectangle(cornerRadius: 15).stroke(RoyalTheme.line))
     }
     func refreshModels() async {
         if let m = try? await API.models(base: serverURL, key: Keychain.get() ?? ""), !m.isEmpty { store.availableModels = m }
@@ -283,16 +324,20 @@ struct ChatView: View {
 }
 
 struct ComposeField: View {
+    @Environment(\.royalPalette) private var palette
     @Binding var text: String
     var sendOnEnter: Bool
     var fontSize: Double
     var onSend: () -> Void
     var body: some View {
+        let _ = palette
         TextEditor(text: $text)
             .font(.system(size: fontSize))
             .scrollContentBackground(.hidden)
-            .padding(6)
-            .background(RoundedRectangle(cornerRadius: 10).fill(.quaternary.opacity(0.5)))
+            .foregroundStyle(RoyalTheme.text)
+            .padding(.vertical, 8)
+            .overlay(alignment: .topLeading) { if text.isEmpty { Text("Message Vortex…").font(.system(size: fontSize)).foregroundStyle(RoyalTheme.secondary).padding(.top, 14).padding(.leading, 5).allowsHitTesting(false) } }
+            .accessibilityLabel("Message Vortex")
             .onKeyPress(.return, phases: .down) { press in
                 if sendOnEnter && !press.modifiers.contains(.shift) { onSend(); return .handled }
                 if !sendOnEnter && press.modifiers.contains(.command) { onSend(); return .handled }
@@ -302,6 +347,7 @@ struct ComposeField: View {
 }
 
 struct BubbleView: View {
+    @Environment(\.royalPalette) private var palette
     let message: Message
     @AppStorage("bubbleStyle") var bubbleStyle = "rounded"
     @AppStorage("markdown") var markdown = true
@@ -316,10 +362,16 @@ struct BubbleView: View {
         return Text(message.content)
     }
     var body: some View {
-        HStack(alignment: .top) {
-            if isUser { Spacer(minLength: 60) } else { Image(systemName: "sparkles").font(.title2) }
-            VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
-                if let who = message.model { Text(GroupTurns.label(who)).font(.caption.bold()).foregroundStyle(GroupColors.color(who)) }
+        let _ = palette
+        HStack(alignment: .top, spacing: 12) {
+            if isUser { Spacer(minLength: 48) }
+            if !isUser { avatar }
+            VStack(alignment: isUser ? .trailing : .leading, spacing: 9) {
+                HStack(spacing: 6) {
+                    Text(isUser ? "You" : message.model.map(GroupTurns.label) ?? "Vortex").font(.system(size: 11, weight: .semibold)).foregroundStyle(isUser ? RoyalTheme.secondary : RoyalTheme.accent)
+                    if let who = message.model, !isUser { Circle().fill(GroupColors.color(who)).frame(width: 4, height: 4) }
+                    if showTimestamps { Text(message.date, style: .time).font(.system(size: 10)).foregroundStyle(RoyalTheme.secondary) }
+                }
                 if let a = message.attachments, !a.isEmpty { AttachmentChips(items: a) }
                 if let l = message.toolLog {
                     let off = Array(Set(l.compactMap { $0.hasPrefix(PCControl.offMarker) ? PCKind(rawValue: String($0.dropFirst(PCControl.offMarker.count))) : nil }))
@@ -327,50 +379,64 @@ struct BubbleView: View {
                 }
                 if let l = message.toolLog, !l.isEmpty {
                     DisclosureGroup("\(l.count) tool call(s)") {
-                        VStack(alignment: .leading, spacing: 2) { ForEach(Array(l.enumerated()), id: \.offset) { Text($0.element).font(.caption.monospaced()).textSelection(.enabled) } }
-                    }.font(.caption).foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 4) { ForEach(Array(l.enumerated()), id: \.offset) { Text($0.element).font(.caption.monospaced()).textSelection(.enabled) } }
+                    }.font(.system(size: 11)).foregroundStyle(RoyalTheme.secondary).padding(11).background(RoundedRectangle(cornerRadius: 11).fill(RoyalTheme.surface))
                 }
                 Group {
                     if message.content.isEmpty { TypingIndicator() }
                     else if let mid = MediaCard.mediaID(message.content) { MediaCard(id: mid, chat: ChatStoreRef.store) }
                     else { WorkspaceMessageBody(content: message.content, markdown: markdown) }
                 }
-                .font(.system(size: fontSize))
+                .font(.system(size: fontSize)).lineSpacing(5)
                 .textSelection(.enabled)
-                .padding(bubbleStyle == "minimal" ? 4 : 10)
+                .padding(bubbleStyle == "minimal" ? 4 : 17)
                 .background(bg)
-                .foregroundStyle(isUser && bubbleStyle != "minimal" ? .white : .primary)
+                .foregroundStyle(RoyalTheme.text)
                 .contextMenu {
                     Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(message.content, forType: .string) }
                 }
-                if showTimestamps { Text(message.date, style: .time).font(.caption2).foregroundStyle(.secondary) }
                 FeedbackBar(message: message)
             }
-            if !isUser { Spacer(minLength: 60) }
+            if isUser { avatar }
+            if !isUser { Spacer(minLength: 20) }
         }
     }
+    var avatar: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10).fill(isUser ? Color.accent(accent).opacity(0.12) : RoyalTheme.surface)
+            RoundedRectangle(cornerRadius: 10).stroke(isUser ? Color.accent(accent).opacity(0.3) : RoyalTheme.line)
+            Image(systemName: isUser ? "person.fill" : "sparkle").font(.system(size: 14)).foregroundStyle(isUser ? Color.accent(accent) : RoyalTheme.accent)
+        }.frame(width: 33, height: 33).accessibilityHidden(true)
+    }
     @ViewBuilder var bg: some View {
-        let fill: Color = isUser ? Color.accent(accent) : Color.gray.opacity(0.18)
+        let fill = isUser ? Color.accent(accent).opacity(0.12) : RoyalTheme.surface
+        let stroke = isUser ? Color.accent(accent).opacity(0.22) : RoyalTheme.line
         switch bubbleStyle {
-        case "square": RoundedRectangle(cornerRadius: 3).fill(fill)
+        case "square": RoundedRectangle(cornerRadius: 3).fill(fill).overlay(RoundedRectangle(cornerRadius: 3).stroke(stroke))
         case "minimal": Color.clear
-        default: RoundedRectangle(cornerRadius: 16).fill(fill)
+        default: RoundedRectangle(cornerRadius: 17).fill(fill).overlay(RoundedRectangle(cornerRadius: 17).stroke(stroke))
         }
     }
 }
 
 /// Three pulsing dots shown while Vortex writes a reply.
 struct TypingIndicator: View {
+    @Environment(\.royalPalette) private var palette
     @Local var on = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
+        let _ = palette
         HStack(spacing: 5) {
             ForEach(0..<3) { i in
                 Circle().frame(width: 7, height: 7).opacity(on ? 1 : 0.25)
-                    .animation(.easeInOut(duration: 0.6).repeatForever().delay(Double(i) * 0.2), value: on)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.6).repeatForever().delay(Double(i) * 0.2), value: on)
             }
         }
         .padding(.vertical, 4)
-        .onAppear { on = true }
+        .foregroundStyle(RoyalTheme.accent)
+        .onAppear { on = !reduceMotion }
+        .onChange(of: reduceMotion) { _, value in on = !value }
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Vortex is typing")
     }
 }

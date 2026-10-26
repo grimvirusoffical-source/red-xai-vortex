@@ -1,21 +1,19 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
 // Access controls: global IP allow/deny, per-key IP rules, roles, expiry,
-// enable/disable, download permission, and an append-only audit log.
+// enable/disable, download permission, and a bounded owner audit log.
 
 type ACL struct {
 	Allow []string `json:"allow"` // empty = any
@@ -25,7 +23,6 @@ type ACL struct {
 var (
 	acl   ACL
 	aclMu sync.Mutex
-	audMu sync.Mutex
 )
 
 func loadACL() {
@@ -135,67 +132,11 @@ func applyKeyPatch(k *Key, m map[string]any) {
 	}
 }
 
-func audit(r *http.Request, k *Key, action string, code int) {
-	e := map[string]any{"t": time.Now().Unix(), "ip": clientIP(r), "method": r.Method, "path": r.URL.Path, "action": action}
-	if k != nil {
-		e["key"] = k.ID
-		e["name"] = k.Name
-	}
-	if code != 0 {
-		e["code"] = code
-	}
-	b, _ := json.Marshal(e)
-	audMu.Lock()
-	defer audMu.Unlock()
-	f, err := os.OpenFile(filepath.Join(dir, "audit.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		return
-	}
-	f.Write(append(b, '\n'))
-	f.Close()
-}
-
-func readAudit(n int) []map[string]any {
-	audMu.Lock()
-	defer audMu.Unlock()
-	f, err := os.Open(filepath.Join(dir, "audit.jsonl"))
-	if err != nil {
-		return []map[string]any{}
-	}
-	defer f.Close()
-	var lines []string
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64<<10), 1<<20)
-	for sc.Scan() {
-		lines = append(lines, sc.Text())
-		if len(lines) > n*4 {
-			lines = lines[len(lines)-n:]
-		}
-	}
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	out := make([]map[string]any, 0, len(lines))
-	for i := len(lines) - 1; i >= 0; i-- {
-		var m map[string]any
-		if json.Unmarshal([]byte(lines[i]), &m) == nil {
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
 // accessAdmin handles /admin/acl, /admin/audit and PATCH /admin/keys/{id}.
 func accessAdmin(w http.ResponseWriter, r *http.Request, p string, caller *Key) bool {
 	switch {
-	case p == "/admin/audit" && r.Method == "GET":
-		n, _ := strconv.Atoi(r.URL.Query().Get("n"))
-		if n <= 0 || n > 2000 {
-			n = 200
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"events": readAudit(n)})
-		return true
+	case strings.HasPrefix(p, "/admin/audit"):
+		return handleAuditAdmin(w, r, p, caller)
 	case p == "/admin/acl" && r.Method == "GET":
 		aclMu.Lock()
 		defer aclMu.Unlock()

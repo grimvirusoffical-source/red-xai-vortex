@@ -72,7 +72,7 @@ enum GroupTurns {
 
 extension ChatStore {
     func generateGroup(chatIndex i: Int, text: String, systemPrompt: String, contextTokens: Int, params: ChatParams) {
-        let chatID = chats[i].id
+        let chatID = chats[i].id, runID = beginGeneration()
         let (who, next) = GroupTurns.responders(text, chat: chats[i])
         chats[i].nextTurn = next
         chats[i].updated = Date(); streaming = true
@@ -80,16 +80,17 @@ extension ChatStore {
         task = Task { [weak self] in
             for (n, m) in who.enumerated() {
                 if Task.isCancelled { break }
-                guard let (snapshot, agentP, agentSys) = await MainActor.run(body: { () -> (Chat, ChatParams?, String?)? in
-                    guard let self, let j = self.idx(chatID) else { return nil }
+                guard let (snapshot, agentP, agentSys, messageID) = await MainActor.run(body: { () -> (Chat, ChatParams?, String?, UUID)? in
+                    guard let self, self.acceptsGeneration(runID), let j = self.idx(chatID) else { return nil }
                     GroupTurns.agentNames = Dictionary(uniqueKeysWithValues: AgentStore.shared.agents.map { ("agent:" + $0.id, $0.name) })
                     var ap: ChatParams? = nil, asys: String? = nil
                     if m.hasPrefix("agent:"), let a = AgentStore.shared.agents.first(where: { $0.id == String(m.dropFirst(6)) }) {
                         ap = AgentStore.shared.chatParams(for: a.id, fallback: params); asys = a.systemPrompt
                     }
-                    self.chats[j].messages.append(Message(role: "assistant", content: "", model: m))
+                    let assistant = Message(role: "assistant", content: "", model: m)
+                    self.chats[j].messages.append(assistant)
                     self.status = "\(GroupTurns.label(m)) is replying (\(n + 1)/\(who.count))…"
-                    var c = self.chats[j]; c.messages.removeLast(); return (c, ap, asys)
+                    var c = self.chats[j]; c.messages.removeLast(); return (c, ap, asys, assistant.id)
                 }) else { break }
                 let others = (snapshot.participants ?? []).filter { $0 != m }
                 let context = await MainActor.run { WorkspaceStore.shared.context(for: snapshot, basePrompt: agentSys ?? systemPrompt, query: text, maxChars: max(0, (contextTokens - params.maxTokens) * 2)) }
@@ -111,7 +112,7 @@ extension ChatStore {
                     if !tools.isEmpty {
                         // Agent chat: the agent can act (tools, PC control) step by step; every step is logged.
                         let (t, _) = try await ActivityLog.$agent.withValue(who) {
-                            try await Agent.run(p, history: hist, tools: tools) { st in Task { @MainActor in self?.status = "\(who.name): \(st)" } }
+                            try await Agent.run(p, history: hist, tools: tools) { st in Task { @MainActor in self?.setStatus("\(who.name): \(st)", runID: runID) } }
                         }
                         buf.append(t)
                     } else {
@@ -126,15 +127,17 @@ extension ChatStore {
                 } catch is CancellationError { reply = buf.text.isEmpty ? "(stopped)" : buf.text }
                   catch { reply = "⚠️ \(m): \(error.localizedDescription)" }
                 await MainActor.run {
-                    guard let self, let j = self.idx(chatID), !self.chats[j].messages.isEmpty else { return }
-                    self.chats[j].messages[self.chats[j].messages.count - 1].content = reply
+                    guard let self, let (j, k) = self.messageIndex(chatID: chatID, messageID: messageID, runID: runID) else { return }
+                    self.chats[j].messages[k].content = reply
                     self.save()
                 }
             }
             let cancelled = Task.isCancelled
             await MainActor.run {
-                self?.status = cancelled ? "Stopped" : "Group: \(who.count) repl\(who.count == 1 ? "y" : "ies")"; self?.streaming = false; self?.save()
-                if !cancelled, let self, let j = self.idx(chatID) { WorkspaceStore.shared.captureCompletedTurn(self.chats[j], params: params) }
+                guard let self, self.acceptsGeneration(runID) else { return }
+                self.status = cancelled ? "Stopped" : "Group: \(who.count) repl\(who.count == 1 ? "y" : "ies")"
+                if !cancelled, let j = self.idx(chatID) { WorkspaceStore.shared.captureCompletedTurn(self.chats[j], params: params) }
+                self.finishGeneration(runID)
             }
         }
     }

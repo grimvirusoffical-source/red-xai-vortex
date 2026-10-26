@@ -46,17 +46,31 @@ if [ "$SIGN_ID" != "-" ]; then
     [ -d "$APP/Contents/Resources/$runtime" ] || { echo "Missing required runtime: $runtime (set VORTEX_RESOURCE_SEED)." >&2; exit 1; }
   done
 fi
-command -v go >/dev/null 2>&1 || { echo "Go is required to package the Base and phone helpers." >&2; exit 1; }
-GO_WORK="$(mktemp -d "${TMPDIR:-/tmp}/vortex-go-helpers.XXXXXX")"
-trap 'rm -rf "$GO_WORK"' EXIT
+# A build host may supply helpers cross-compiled from this exact source checkout.
+# Verify architecture before using them; otherwise build them locally as before.
 BASE_PARTS=(); PHONE_PARTS=(); VERIFY_PARTS=()
-for arch in $ARCHS; do
-  case "$arch" in arm64) goarch=arm64;; x86_64) goarch=amd64;; *) echo "Unsupported Mac architecture: $arch" >&2; exit 1;; esac
-  (cd ../bases && CGO_ENABLED=0 GOOS=darwin GOARCH="$goarch" go build -buildvcs=false -trimpath -ldflags="-s -w" -o "$GO_WORK/base-$arch" .)
-  bash ../scripts/build-desktop-with-helper.sh darwin "$goarch" "$GO_WORK/phone-$arch"
-  (cd ../desktop && CGO_ENABLED=0 GOOS=darwin GOARCH="$goarch" go build -buildvcs=false -trimpath -ldflags="-s -w" -o "$GO_WORK/verify-$arch" ./cmd/redx-verify)
-  BASE_PARTS+=("$GO_WORK/base-$arch"); PHONE_PARTS+=("$GO_WORK/phone-$arch/vortex-darwin-$goarch"); VERIFY_PARTS+=("$GO_WORK/verify-$arch")
-done
+if [ -n "${VORTEX_GO_HELPER_DIR:-}" ]; then
+  for arch in $ARCHS; do
+    case "$arch" in arm64) goarch=arm64;; x86_64) goarch=amd64;; *) echo "Unsupported Mac architecture: $arch" >&2; exit 1;; esac
+    helper_dir="$VORTEX_GO_HELPER_DIR/darwin-$goarch"
+    for helper in vortex-base vortex-phone redx-verify; do
+      [ -f "$helper_dir/$helper" ] || { echo "Missing prebuilt helper: $helper_dir/$helper" >&2; exit 1; }
+      lipo -verify_arch "$arch" "$helper_dir/$helper"
+    done
+    BASE_PARTS+=("$helper_dir/vortex-base"); PHONE_PARTS+=("$helper_dir/vortex-phone"); VERIFY_PARTS+=("$helper_dir/redx-verify")
+  done
+else
+  command -v go >/dev/null 2>&1 || { echo "Go is required to package the Base and phone helpers." >&2; exit 1; }
+  GO_WORK="$(mktemp -d "${TMPDIR:-/tmp}/vortex-go-helpers.XXXXXX")"
+  trap 'rm -rf "$GO_WORK"' EXIT
+  for arch in $ARCHS; do
+    case "$arch" in arm64) goarch=arm64;; x86_64) goarch=amd64;; *) echo "Unsupported Mac architecture: $arch" >&2; exit 1;; esac
+    (cd ../bases && CGO_ENABLED=0 GOOS=darwin GOARCH="$goarch" go build -buildvcs=false -trimpath -ldflags="-s -w" -o "$GO_WORK/base-$arch" .)
+    bash ../scripts/build-desktop-with-helper.sh darwin "$goarch" "$GO_WORK/phone-$arch"
+    (cd ../desktop && CGO_ENABLED=0 GOOS=darwin GOARCH="$goarch" go build -buildvcs=false -trimpath -ldflags="-s -w" -o "$GO_WORK/verify-$arch" ./cmd/redx-verify)
+    BASE_PARTS+=("$GO_WORK/base-$arch"); PHONE_PARTS+=("$GO_WORK/phone-$arch/vortex-darwin-$goarch"); VERIFY_PARTS+=("$GO_WORK/verify-$arch")
+  done
+fi
 lipo -create "${BASE_PARTS[@]}" -output "$APP/Contents/Resources/vortex-base"
 lipo -create "${PHONE_PARTS[@]}" -output "$APP/Contents/Resources/vortex-phone"
 lipo -create "${VERIFY_PARTS[@]}" -output "$APP/Contents/Resources/redx-verify"
@@ -71,7 +85,7 @@ done
 iconutil -c icns "$IS" -o "$APP/Contents/Resources/AppIcon.icns"
 cp redx-256.png "$APP/Contents/Resources/"
 mkdir -p "$APP/Contents/Resources/Help"; cp help/*.md "$APP/Contents/Resources/Help/"
-for guide in RELEASE-2.10 RELEASE-VERIFICATION; do
+for guide in RELEASE-2.10 RELEASE-2.11 RELEASE-VERIFICATION MACOS-NOTARIZATION; do
   if [ -f "../docs/$guide.md" ]; then cp "../docs/$guide.md" "$APP/Contents/Resources/Help/$guide.md"; fi
 done
 if [ -f server/install.sh ]; then cp server/install.sh "$APP/Contents/Resources/install.sh"; elif [ -f "$RESOURCE_SEED/install.sh" ]; then cp "$RESOURCE_SEED/install.sh" "$APP/Contents/Resources/install.sh"; fi
@@ -85,8 +99,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleExecutable</key><string>Vortex</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>2.10</string>
-<key>CFBundleVersion</key><string>45</string>
+<key>CFBundleShortVersionString</key><string>2.11</string>
+<key>CFBundleVersion</key><string>46</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
