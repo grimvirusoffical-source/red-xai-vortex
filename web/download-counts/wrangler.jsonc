@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "redx-download-counts",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-26",
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.01 }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "redx-download-counts",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
