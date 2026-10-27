@@ -197,24 +197,53 @@ func (s *Server) cancelAgentRuns(agentID string) {
 }
 
 func (s *Server) agentKillAll(in map[string]any) map[string]any {
-    if err:=s.markAgentsStopped(true);err!=nil {return map[string]any{"ok":false,"message":"Failed to persist emergency stop."}}
-    remoteFailures:=[]string{}
+    if err:=s.markAgentsStopped(true);err!=nil {
+        return map[string]any{"ok":false,"message":"Failed to persist emergency stop."}
+    }
+    // Interrupt local subprocesses and revoke the PC approval epoch BEFORE
+    // any remote network operation. A remote outage cannot delay local Stop.
+    count,pcErr:=s.stopPCControl()
+    remoteProfiles:=[]store.Agent{}
     for _,a:=range s.St.Agents {
-        if a.Running || a.AlwaysAllow {
-            if a.Running && (agentRemoteMode(a)=="server" || agentRemoteMode(a)=="cloudpc") {
-                if err:=s.toggleServerAgent(a.ID,false);err!=nil {
-                    remoteFailures=append(remoteFailures,a.Name+": "+err.Error())
-                }
+        if a.Running && (agentRemoteMode(a)=="server" || agentRemoteMode(a)=="cloudpc") {
+            remoteProfiles=append(remoteProfiles,a)
+        } else if a.Running {
+            a.Running=false
+        }
+        if a.AlwaysAllow {a.AlwaysAllow=false}
+        s.St.SaveAgent(a)
+    }
+    markRemoteStopped:=func(id string) {
+        for _,a:=range s.St.Agents {
+            if a.ID==id && a.Running {
+                a.Running=false
+                s.St.SaveAgent(a)
+                break
             }
-            a.Running=false;a.AlwaysAllow=false;s.St.SaveAgent(a)
         }
     }
-    count,err:=s.stopPCControl()
-    if len(remoteFailures)>0 {
-        return map[string]any{"ok":false,"stopped":count,"message":"Local agents stopped. Confirm the following remote agents stopped before considering them safe: "+strings.Join(remoteFailures,"; ")}
+    problems:=[]string{}
+    result:=s.gw("POST","/agents/stop-all",map[string]any{})
+    if result["ok"]==true {
+        for _,a:=range remoteProfiles {markRemoteStopped(a.ID)}
+    }else{
+        for _,a:=range remoteProfiles {
+            if err:=s.toggleServerAgent(a.ID,false);err!=nil {
+                problems=append(problems,a.Name+": "+err.Error())
+            } else {markRemoteStopped(a.ID)}
+        }
+        if len(problems)==0 {
+            problems=append(problems,"Gateway-wide cancellation could not be verified: "+fmt.Sprint(result["message"]))
+        }
     }
-    if err!=nil {return map[string]any{"ok":true,"stopped":count,"warning":err.Error()}}
-    return map[string]any{"ok":true,"stopped":count}
+    if pcErr!=nil {
+        problems=append(problems,"Local stop policy could not be persisted: "+pcErr.Error())
+    }
+    if len(problems)>0 {
+        return map[string]any{"ok":false,"stopped":count,
+            "message":"Local tasks were interrupted. Check remote cancellations and local policy: "+strings.Join(problems,"; ")}
+    }
+    return map[string]any{"ok":true,"stopped":count,"message":"All local and remote agent schedules stopped; outstanding worker leases were revoked."}
 }
 func (s *Server) agentResume(in map[string]any) map[string]any {
     if in["__localOperator"]!=true {return map[string]any{"ok":false,"message":"Only the local operator may reset Emergency Stop."}}
