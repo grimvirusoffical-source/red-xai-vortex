@@ -109,3 +109,84 @@ jobs:
         run: node --test desktop/frontend/*.test.cjs
       - name: Build Linux package executables
         run: VORTEX_VERSION=2.11.3 bash scripts/build-desktop-with-helper.sh linux amd64 "$PWD/dist/linux"
+
+  published-windows-real-browser:
+    name: Published Windows 2.11.3 browser + login (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Download the actual published 2.11.3 Windows ZIP and signed manifest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force dist/published | Out-Null
+          gh release download v2.11.3 -R grimvirusoffical-source/red-xai-vortex -D dist/published -p 'Red-XAI-Vortex-windows-amd64.zip' -p 'release-manifest.json' -p 'release-manifest.sig'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not fetch the published Vortex ZIP' }
+          $root = (Resolve-Path dist/published).Path
+          Push-Location desktop
+          try {
+            go run ./cmd/redx-verify (Join-Path $root 'release-manifest.json') (Join-Path $root 'release-manifest.sig') (Join-Path $root 'Red-XAI-Vortex-windows-amd64.zip')
+            if ($LASTEXITCODE -ne 0) { throw 'The official Windows archive signature did not verify' }
+          } finally { Pop-Location }
+          Expand-Archive -Path (Join-Path $root 'Red-XAI-Vortex-windows-amd64.zip') -DestinationPath dist/published/app
+          foreach ($file in @('vortex.exe','vortex-base.exe','redx-link.exe','frontend/index.html','frontend/app.js')) {
+            if (-not (Test-Path (Join-Path 'dist/published/app' $file))) { throw "Required installed asset missing: $file" }
+          }
+          $signature = Get-AuthenticodeSignature 'dist/published/app/vortex.exe'
+          Write-Host "WINDOWS_BINARY_AUTHENTICODE_STATUS $($signature.Status)"
+      - name: Install browser automation using built-in Microsoft Edge
+        shell: pwsh
+        run: npm install --no-save --ignore-scripts playwright-core@1.56.1
+      - name: Launch full desktop and click through live Red-XAI Quick Login
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $folder = (Resolve-Path 'dist/published/app').Path
+          $stdout = Join-Path $folder 'vortex-windows-boot.log'
+          $stderr = Join-Path $folder 'vortex-windows-errors.log'
+          $exe = Join-Path $folder 'vortex.exe'
+          # Real user mode: no -headless. The former startup test bypassed this.
+          $proc = Start-Process -FilePath $exe -ArgumentList @('-no-update') -WorkingDirectory $folder -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          try {
+            $address = $null
+            for ($i=0; $i -lt 100; $i++) {
+              Start-Sleep -Milliseconds 350
+              if ($proc.HasExited) { throw "Released Vortex.exe exited early with code $($proc.ExitCode)" }
+              if (Test-Path $stdout) {
+                $output = Get-Content $stdout -Raw -ErrorAction SilentlyContinue
+                if ($output -match 'bridge on (http://127\.0\.0\.1:\d+)') {
+                  $address = $Matches[1]
+                  break
+                }
+              }
+            }
+            if (-not $address) { throw 'Released desktop did not start its local service' }
+            node scripts/windows-browser-e2e.cjs $address
+            if ($LASTEXITCODE -ne 0) { throw 'Real browser Quick Login integration failed' }
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          }
+      - name: Attach sanitized boot diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: published-win-login-${{ matrix.os }}
+          path: |
+            dist/published/app/vortex-windows-boot.log
+            dist/published/app/vortex-windows-errors.log
+          if-no-files-found: warn
+          retention-days: 5

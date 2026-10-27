@@ -4,8 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
-	"runtime"
 
 	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/bridge"
 	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/store"
@@ -55,18 +53,11 @@ func main() {
 }
 
 func openUI(url string) {
-	// Prefer system browser / webview host. On Linux try webkit gtk app if present; else xdg-open.
-	switch runtime.GOOS {
-	case "windows":
-		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	case "darwin":
-		_ = exec.Command("open", url).Start()
-	default:
-		if p, err := exec.LookPath("vortex-webview"); err == nil {
-			_ = exec.Command(p, url).Start()
-			return
-		}
-		_ = exec.Command("xdg-open", url).Start()
+	if err := openDesktopUI(url); err != nil {
+		// Users launching the Windows ZIP by double-clicking must get a
+		// useful diagnosis rather than a silent failed rundll32 launch.
+		fmt.Fprintln(os.Stderr, "Vortex could not open its default browser:", err)
+		fmt.Fprintln(os.Stderr, "Open this local Vortex address manually:", url)
 	}
 }
 
