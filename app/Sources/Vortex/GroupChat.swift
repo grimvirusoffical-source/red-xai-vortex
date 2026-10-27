@@ -100,7 +100,11 @@ extension ChatStore {
                 let context = await MainActor.run { WorkspaceStore.shared.context(for: snapshot, basePrompt: agentSys ?? systemPrompt, query: text, maxChars: max(0, (contextTokens - params.maxTokens) * 2)) }
                 var contextChat = snapshot
                 if let index = contextChat.messages.lastIndex(where: { $0.role == "user" }), !context.images.isEmpty { contextChat.messages[index].attachments = (contextChat.messages[index].attachments ?? []) + context.images }
-                let hist = GroupTurns.history(for: m, chat: contextChat, system: context.system, others: others, budgetChars: max(512, budget - context.system.count))
+                var hist = GroupTurns.history(for: m, chat: contextChat, system: context.system, others: others, budgetChars: max(512, budget - context.system.count))
+                if coordinated {
+                    let guidance = n == 0 ? "You are the team leader. Delegate clear, authorized tasks. A plan is not evidence of work." : n == who.count - 1 ? "You are the team leader. Review workers' actual evidence and distinguish completed, blocked and pending tasks." : "You are a worker directed by the leader. Execute only the permitted subtask and report verified outcomes."
+                    hist[0].content += "\n\nTEAM RULES: " + guidance + "\n" + (snapshot.groupInstructions ?? "")
+                }
                 let buf = ReplyBuffer()
                 var reply: String
                 do {
