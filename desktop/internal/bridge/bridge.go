@@ -220,7 +220,7 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		id, _ := in["id"].(string)
 		for _, c := range s.St.Chats {
 			if c.ID == id {
-				return map[string]any{"id": c.ID, "title": c.Title, "messages": c.Messages, "kind": c.Kind, "agentID": c.AgentID, "members": c.Members}
+				return map[string]any{"id": c.ID, "title": c.Title, "messages": c.Messages, "kind": c.Kind, "agentID": c.AgentID, "members": c.Members, "leaderID": c.LeaderID, "groupWorkspaceID": c.WorkspaceID}
 			}
 		}
 		return map[string]any{"messages": []any{}}
@@ -237,7 +237,7 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 				}
 			}
 		}
-		return s.partyNew(str(in, "title"), ms)
+		return s.partyNewWithLeader(str(in,"title"),ms,str(in,"leaderID"),str(in,"workspaceName"),str(in,"instructions"))
 	case "chat.delete":
 		s.St.DeleteChat(str(in, "id"))
 		return map[string]any{"ok": true}
