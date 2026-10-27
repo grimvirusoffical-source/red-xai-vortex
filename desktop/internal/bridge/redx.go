@@ -49,6 +49,9 @@ func (s *Server) termsFile() string { return filepath.Join(s.St.Dir, "terms-acce
 
 func (s *Server) isOwner() bool {
 	k := keyring.Get("admin-primary")
+	if s.baseCredential != nil {
+		k = s.baseCredential("admin-primary") // isolate owner checks in tests
+	}
 	if k == "" {
 		return false
 	}
