@@ -79,7 +79,12 @@ enum PCKind: String, CaseIterable, Identifiable {
         Self.logAction("Always allow PC tools on this Mac = \(value ? "ON" : "OFF; per-action approvals restored")")
     }
     func needsApproval(for tool: ToolSpec) -> Bool {
-        PCApprovalPolicy.needsApproval(source: tool.source, destructive: tool.destructive,
+        // Per-agent approval is an additional restriction: global Always allow
+        // alone never grants automatic writes to a different agent.
+        if tool.destructive && tool.source.hasPrefix("pc:") && AgentPermissionScope.alwaysAllow == false {
+            return true
+        }
+        return PCApprovalPolicy.needsApproval(source: tool.source, destructive: tool.destructive,
             alwaysAllow: alwaysAllow, enabled: enabled, killed: killed,
             kindEnabled: PCKind(source: tool.source).map(isOn) ?? false)
     }
