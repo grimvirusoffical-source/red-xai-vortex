@@ -99,6 +99,14 @@ func (s *Server) saveUnifiedAgent(in map[string]any) map[string]any {
     if v,ok:=in["nonstop"].(bool);ok { a.Nonstop=v }
     if a.Nonstop { a.ScheduleS=15 }
     if v,ok:=in["running"].(bool);ok { a.Running=v }
+    if v,ok:=in["runOn"].(string);ok { a.RunOn=strings.TrimSpace(v) }
+    switch agentRemoteMode(a) {
+    case "local", "server":
+    case "cloudpc":
+        if a.Running { return map[string]any{"ok":false,"message":"Cloud PC computer-action worker is not connected; no remote actions have been scheduled."} }
+    default:
+        return map[string]any{"ok":false,"message":"Run on must be Local, Server, or a connected Cloud PC worker."}
+    }
     if a.Running && (a.ScheduleS==0 || strings.TrimSpace(a.Goal)=="") {
         return map[string]any{"ok":false,"message":"Scheduled agents need a goal and run frequency."}
     }
