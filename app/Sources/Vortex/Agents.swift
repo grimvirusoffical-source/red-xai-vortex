@@ -125,7 +125,13 @@ struct AgentsView: View {
     @Local var draft = AgentProfile(id: "", name: "", model: Defaults.model)
     @Local var apiKey = ""
     @Local var editing = false
+    @Local var agentKeySaved = false
     @AppStorage("model") var chatModel = Defaults.model
+    private let grants: [(String, String)] = [
+        ("files-read", "Read files"), ("files-write", "Write files"), ("shell", "Run commands"),
+        ("apps", "Open apps"), ("input", "Keyboard and mouse"), ("screen", "Read screen"),
+        ("browser", "Browser"), ("clipboard", "Clipboard"), ("plugins", "Skills and plugins")
+    ]
 
     var body: some View {
         HSplitView {
