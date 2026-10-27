@@ -122,13 +122,14 @@ func workerReportLocked(a *bgAgent, status, result string, now time.Time) {
     if status=="done" {
         a.Status="idle"
         a.LastError=""
-        agAppend(a,agentTurn{"user","[Cloud PC worker task] "+a.Goal,now.Unix(),true},
+        agAppend(a,agentTurn{"user","[Cloud PC worker background task]",now.Unix(),true},
             agentTurn{"assistant",result,now.Unix(),true})
         a.Unread++
         if strings.TrimSpace(result)=="DONE" {a.On=false;a.Status="done"}
     } else {
         a.LastError="Cloud PC worker "+status+": "+result
         a.Status="error"
+        a.On=false // Avoid automatically repeating partially completed side effects.
     }
     workerNotification(a.KeyID,"agent","Cloud PC worker "+status+": "+a.Name,result,a.ID)
     agSaveLocked()
