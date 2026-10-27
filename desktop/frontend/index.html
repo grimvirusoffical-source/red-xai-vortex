@@ -142,10 +142,17 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
     <div class="sidehead project-heading">Projects <button id="wsNewProject" title="Create a project" aria-label="Create a project">+</button></div>
     <div id="wsSidebarProjects"></div>
     <div id="partyPick" class="card" style="display:none;font-size:13px">
-      <b>Party chat</b><div class="muted">Pick agents and models to work together.</div>
-      <div id="partyOpts" style="max-height:220px;overflow:auto;margin:6px 0"></div>
-      <input id="partyTitle" placeholder="Title (optional)" style="width:100%"/>
-      <div class="row" style="margin-top:6px"><button class="primary" id="partyGo">Start</button><button id="partyCancel">Cancel</button></div>
+      <b>Team workspace</b><div class="muted">Pick at least two agents/models, then name one leader. The leader delegates tasks and verifies team results.</div>
+      <div id="partyOpts" style="max-height:180px;overflow:auto;margin:6px 0"></div>
+      <label for="partyLeader">Designated leader</label>
+      <select id="partyLeader" aria-label="Team leader"></select>
+      <label for="partyTitle">Conversation title</label>
+      <input id="partyTitle" placeholder="Team chat title" style="width:100%"/>
+      <label for="partyWorkspaceName">New isolated project workspace (optional)</label>
+      <input id="partyWorkspaceName" placeholder="e.g. Website redesign team" maxlength="100"/>
+      <label for="partyInstructions">Leader and team instructions (optional)</label>
+      <textarea id="partyInstructions" rows="3" placeholder="Shared project goals, coding conventions, review requirements"></textarea>
+      <div class="row" style="margin-top:6px"><button class="primary" id="partyGo">Create team</button><button id="partyCancel">Cancel</button></div>
       <div id="partyMsg" class="bad"></div>
     </div>
     <div class="sidehead">Chats</div><div id="chatlist"></div>
