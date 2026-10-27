@@ -50,15 +50,19 @@ func (s *Server) syncCloudAgent(a store.Agent) error {
     if a.Provider!="vortex" {
         return fmt.Errorf("Cloud PC task worker currently supports Vortex gateway models only")
     }
-    if a.ModelMode=="mix" {
-        return fmt.Errorf("multi-model planning currently runs in the desktop agent; use Single/Auto for Cloud PC workers")
+    model,planner:=a.Model,""
+    if a.ModelMode=="auto" || a.ModelMode=="mix" {
+        if allowed,ok:=s.listModels();ok {
+            model,planner=availableAgentModels(a,a.Goal,allowed)
+        }else{
+            model,planner="vortex",""
+        }
     }
-    model:=a.Model
-    if a.ModelMode=="auto" || model=="" {model="vortex"}
+    if model=="" {model="vortex"}
     seconds:=a.ScheduleS
     if a.Nonstop || seconds<30 {seconds=30}
     result:=s.gw("POST","/agents",map[string]any{
-        "id":a.ID,"name":a.Name,"model":model,
+        "id":a.ID,"name":a.Name,"model":model,"planner":planner,
         "system":a.SystemPrompt,"goal":a.Goal,"interval_s":seconds,
         "run_on":"cloudpc","on":a.Running,
         "permissions":a.Permissions,"allow_actions":a.AlwaysAllow,
