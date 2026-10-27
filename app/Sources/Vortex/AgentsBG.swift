@@ -8,6 +8,7 @@ struct BGAgent: Codable, Identifiable, Equatable {
     var id: String
     var name: String = ""
     var model: String = "vortex-mini"
+    var planner: String? = nil
     var system: String = ""
     var goal: String = ""
     var interval_s: Int = 300
@@ -89,7 +90,7 @@ struct BGAgent: Codable, Identifiable, Equatable {
     }
     func save(_ a: BGAgent) async {
         do {
-            _ = try await req("/agents", "POST", ["id": a.id, "name": a.name, "model": a.model, "system": a.system, "goal": a.goal,
+            _ = try await req("/agents", "POST", ["id": a.id, "name": a.name, "model": a.model, "planner": a.planner ?? "", "system": a.system, "goal": a.goal,
                                                   "interval_s": a.interval_s, "run_on": a.run_on, "on": a.on,
                                                   "permissions": a.permissions ?? [], "allow_actions": a.allow_actions ?? false])
             msg = "Saved \(a.name)."; await refresh()
