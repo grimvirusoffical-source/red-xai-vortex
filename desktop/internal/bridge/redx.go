@@ -75,17 +75,21 @@ func (s *Server) redx(m string, in map[string]any) map[string]any {
 		// A Vortex-scoped browser grant is a COMPLETE, alternative sign-in.
 		// Never require legacy password/MFA or a slow owner-admin check afterward.
 		if linked, email, message := s.quickSignedIn(); linked {
+			_ = s.setAccountSwitchRequired(false)
 			res["signedIn"] = true
 			res["username"] = email
 			return res
 		} else if message != "" {
 			res["message"] = message
 		}
-		res["owner"] = s.isOwner()
+		ownerAvailable := s.isOwner()
+		res["owner"] = ownerAvailable && !s.accountSwitchRequired()
+		res["ownerAvailable"] = ownerAvailable
 		if tok := keyring.Get("redx-session"); tok != "" {
 			st, me := redxDo("GET", "me", map[string]string{"X-RedX-Session": tok}, nil)
 			switch {
 			case st == 200:
+				_ = s.setAccountSwitchRequired(false)
 				res["signedIn"] = true
 				if a, ok := me["account"].(map[string]any); ok {
 					res["username"] = a["username"]
@@ -120,11 +124,25 @@ func (s *Server) redx(m string, in map[string]any) map[string]any {
 		r["ok"] = st == 200
 		return r
 	case "redx.logout":
-		s.quickLogout()
-		if tok := keyring.Get("redx-session"); tok != "" {
-			redxDo("POST", "logout", map[string]string{"X-RedX-Session": tok}, map[string]any{})
+		// Persist the account-switch choice BEFORE revoking credentials. A
+		// saved owner/admin key must not silently re-open the workspace.
+		if err := s.setAccountSwitchRequired(true); err != nil {
+			return map[string]any{"ok": false, "error": "Could not save sign-out state: " + err.Error()}
 		}
-		keyring.Set("redx-session", "")
+		legacy := keyring.Get("redx-session")
+		_ = keyring.Set("redx-session", "")
+		s.quickLogout()
+		if legacy != "" {
+			// Remote revocation is best effort; cleared local credentials already
+			// prevent the old account from reopening the desktop.
+			go redxDo("POST", "logout", map[string]string{"X-RedX-Session": legacy}, map[string]any{})
+		}
+		return map[string]any{"ok": true}
+	case "redx.owner.continue":
+		if !s.isOwner() { return map[string]any{"ok": false, "error": "Owner mode is not available"} }
+		if err := s.setAccountSwitchRequired(false); err != nil {
+			return map[string]any{"ok": false, "error": "Could not restore owner mode"}
+		}
 		return map[string]any{"ok": true}
 	}
 	return map[string]any{"ok": false, "error": "unknown method " + m}
@@ -138,6 +156,7 @@ func (s *Server) redxFinish(st int, r map[string]any) map[string]any {
 		if tok, _ := r["token"].(string); tok != "" {
 			s.quickLogout()
 			keyring.Set("redx-session", tok)
+			_ = s.setAccountSwitchRequired(false)
 			return map[string]any{"ok": true, "signedIn": true}
 		}
 	}
