@@ -22,7 +22,7 @@ type Agent struct {
 	Goal         string    `json:"goal,omitempty"`
 	ModelMode    string    `json:"modelMode,omitempty"` // single | auto | mix
 	ModelPool    []string  `json:"modelPool,omitempty"`
-	Permissions  []string  `json:"permissions,omitempty"` // web, files-read, files-write, shell
+	Permissions  []string  `json:"permissions"` // web, files-read, files-write, shell
 	ScheduleS    int       `json:"scheduleSeconds,omitempty"` // 0 manual, 15 nonstop, >=30 periodic
 	Nonstop      bool      `json:"nonstop,omitempty"`
 	Running      bool      `json:"running,omitempty"`
@@ -139,6 +139,20 @@ func (s *Store) SaveAgent(a Agent) {
 	}
 	s.mu.Unlock()
 	s.save()
+}
+
+func (s *Store) DeleteAgent(id string) bool {
+	s.mu.Lock()
+	out := make([]Agent, 0, len(s.Agents))
+	found := false
+	for _, a := range s.Agents {
+		if a.ID == id { found = true; continue }
+		out = append(out, a)
+	}
+	if found { s.Agents = out }
+	s.mu.Unlock()
+	if found { s.save() }
+	return found
 }
 
 func (s *Store) SaveChat(c Chat) {
