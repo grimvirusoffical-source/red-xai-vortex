@@ -136,6 +136,9 @@ jobs:
       - name: Go regression tests
         working-directory: desktop
         run: go test ./... -count=1 -timeout=8m
+      - name: Gateway model permissions and tier regression tests
+        working-directory: gateway
+        run: go test ./... -count=1 -timeout=8m
       - name: Frontend tests
         run: node --test desktop/frontend/*.test.cjs
       - name: Build Linux package executables
