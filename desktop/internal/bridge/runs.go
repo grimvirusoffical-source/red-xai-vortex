@@ -50,6 +50,7 @@ type Run struct {
 	localOperator bool
 	agentAutoAllow bool
 	agentPolicySet bool
+	scheduled      bool
 	plannerModel  string
 	cancel        context.CancelFunc
 }
@@ -248,7 +249,8 @@ func (s *Server) startRun(agentID, task, chatID string) map[string]any {
 	return s.startRunFrom(agentID, task, chatID, false)
 }
 
-func (s *Server) startRunFrom(agentID, task, chatID string, local bool) map[string]any {
+func (s *Server) startRunFrom(agentID, task, chatID string, local bool, scheduled ...bool) map[string]any {
+	isScheduled := len(scheduled) > 0 && scheduled[0]
 	epoch := s.pcCurrentEpoch()
 	task = strings.TrimSpace(task)
 	if task == "" {
@@ -256,8 +258,9 @@ func (s *Server) startRunFrom(agentID, task, chatID string, local bool) map[stri
 	}
 	me := s.memberFor(agentID)
 	var agent store.Agent
-	for _, a := range s.St.Agents { if a.ID==agentID { agent=a; break } }
+	for _, a := range s.St.AgentsSnapshot() { if a.ID==agentID { agent=a; break } }
 	if agent.ID=="" {return map[string]any{"ok":false,"message":"Choose a saved agent before running tasks."}}
+	if isScheduled && !s.St.AgentIsRunning(agentID) {return map[string]any{"ok":false,"message":"Scheduled agent was paused before the task began."}}
     if agentRemoteMode(agent)!="local" {
         return map[string]any{"ok":false,"message":"This agent is configured for remote work. Start its server schedule or connect a Cloud PC worker; it cannot silently run on your local machine."}
     }
@@ -272,7 +275,7 @@ func (s *Server) startRunFrom(agentID, task, chatID string, local bool) map[stri
 	model,planner:=availableAgentModels(agent,task,available)
 	if model!="" {me.Model=model}
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &Run{ID: fmt.Sprintf("r-%d", time.Now().UnixNano()), AgentID: agentID, Agent: me.Name, Task: task, Status: "running", Started: time.Now(), ChatID: chatID, cancel: cancel, agentAutoAllow:agent.AlwaysAllow, agentPolicySet:true, plannerModel:planner}
+	r := &Run{ID: fmt.Sprintf("r-%d", time.Now().UnixNano()), AgentID: agentID, Agent: me.Name, Task: task, Status: "running", Started: time.Now(), ChatID: chatID, cancel: cancel, agentAutoAllow:agent.AlwaysAllow, agentPolicySet:true, scheduled:isScheduled, plannerModel:planner}
 	r.localOperator = local
 	if !s.registerPCRunAt(r, epoch) {
 		cancel()
@@ -334,6 +337,10 @@ func (s *Server) loop(ctx context.Context, r *Run, me member, ts []tool) {
 		}
 	}
 	for step := 0; step < maxRunSteps; step++ {
+		if r.scheduled && !s.St.AgentIsRunning(r.AgentID) {
+			finish("stopped", "Scheduled agent was paused.")
+			return
+		}
 		if ctx.Err() != nil {
 			finish("stopped", "Stopped by you.")
 			return
@@ -405,6 +412,10 @@ func (s *Server) loop(ctx context.Context, r *Run, me member, ts []tool) {
 			return
 		}
 		toolCtx := context.WithValue(ctx, pcExecutionKey{}, pcExecution{server: s, run: r, auto: autoAllowed})
+		if r.scheduled && !s.St.AgentIsRunning(r.AgentID) {
+			finish("stopped", "Scheduled agent was paused before a tool action.")
+			return
+		}
 		res, err := t.run(toolCtx, args)
 		if err != nil {
 			res = "error: " + err.Error()
