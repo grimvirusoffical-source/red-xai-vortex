@@ -3,7 +3,7 @@ name: Vortex desktop regression
 on:
   pull_request:
   push:
-    branches: ['codex/vortex-2-11-3-*']
+    branches: ['codex/vortex-*']
   workflow_dispatch:
 
 permissions:
@@ -36,7 +36,7 @@ jobs:
       - name: Complete native Windows build
         shell: bash
         run: |
-          VORTEX_VERSION=2.11.3 bash scripts/build-desktop-with-helper.sh windows amd64 "$PWD/dist/windows"
+          VORTEX_VERSION=2.11.4 bash scripts/build-desktop-with-helper.sh windows amd64 "$PWD/dist/windows"
           cp -R desktop/frontend dist/windows/frontend
           test -s dist/windows/vortex.exe
           test -s dist/windows/vortex-base.exe
@@ -144,7 +144,7 @@ jobs:
       - name: Frontend tests
         run: node --test desktop/frontend/*.test.cjs
       - name: Build Linux package executables
-        run: VORTEX_VERSION=2.11.3 bash scripts/build-desktop-with-helper.sh linux amd64 "$PWD/dist/linux"
+        run: VORTEX_VERSION=2.11.4 bash scripts/build-desktop-with-helper.sh linux amd64 "$PWD/dist/linux"
 
   published-windows-real-browser:
     name: Published Windows 2.11.3 browser + login (${{ matrix.os }})
