@@ -117,6 +117,19 @@ func agAppend(a *bgAgent, t ...agentTurn) {
 	}
 }
 
+// Long-lived background jobs must still honor the key's current chat and
+// model grants after that key is revoked, disabled, or expires.
+func agAuthorized(a *bgAgent) bool {
+    mu.Lock()
+    defer mu.Unlock()
+    for _, k := range keys {
+        if k.ID != a.KeyID { continue }
+        if k.Revoked != 0 || k.Disabled || (k.Expires > 0 && time.Now().Unix() > k.Expires) { return false }
+        return hasScope(k, "chat") && modelOK(k, a.Model)
+    }
+    return false
+}
+
 func agStep(id string) {
 	agMu.Lock()
 	a := agents[id]
@@ -124,6 +137,22 @@ func agStep(id string) {
 		agMu.Unlock()
 		return
 	}
+    if !agAuthorized(a) {
+        a.On = false
+        a.Status = "blocked"
+        a.LastError = "Agent stopped: its API key no longer allows this model or chat scope."
+        agSaveLocked()
+        agMu.Unlock()
+        return
+    }
+    // A Cloud PC job needs an actual task worker. The gateway is a model
+    // server, not a substitute for the computer in that remote desktop.
+    if a.RunOn == "cloudpc" {
+        a.Status = "waiting_worker"
+        agSaveLocked()
+        agMu.Unlock()
+        return
+    }
 	agBusy[id] = true
 	a.Status = "running"
 	model := a.Model
