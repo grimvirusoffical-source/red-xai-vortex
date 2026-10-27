@@ -54,6 +54,11 @@ struct ToolSpec {
 
 
 /// Recognises plain computer-action requests ("open safari", "type hello", "what's on my screen").
+/// Scope a single agent's unattended permission independently of global PC consent.
+enum AgentPermissionScope {
+    @TaskLocal static var alwaysAllow: Bool? = nil
+}
+
 enum Intent {
     static let actionRe = #"\b(open|launch|start|run|execute|shell|terminal|command|quit|close|kill|list|show|read|create|make|new|write|save|delete|trash|remove|move|rename|copy|paste|type|write|click|press|screenshot|screen|clipboard|tab|browser|safari|chrome|folder|directory|desktop|downloads|documents|file|app|search|google|look ?up|find|pc|computer|mac)\b"#
     static func isAction(_ text: String) -> Bool {
@@ -165,14 +170,19 @@ enum Agent {
 
     /// Runs the loop; returns final text plus a short step log. `onStep` reports progress.
     static func run(_ p: ChatParams, history: [Message], tools: [ToolSpec],
+                    agentAlwaysAllow: Bool? = nil,
                     onText: @escaping @Sendable (String) -> Void = { _ in },
                     onStep: @escaping @Sendable (String) -> Void) async throws -> (String, [String]) {
         guard tools.contains(where: { $0.source.hasPrefix("pc:") }) else {
-            return try await runLoop(p, history: history, tools: tools, onText: onText, onStep: onStep)
+            return try await AgentPermissionScope.$alwaysAllow.withValue(agentAlwaysAllow) {
+                try await runLoop(p, history: history, tools: tools, onText: onText, onStep: onStep)
+            }
         }
         let token = try PCExecutionState.shared.issue()
-        let work = Task { try await PCExecutionContext.$token.withValue(token) {
-            try await runLoop(p, history: history, tools: tools, onText: onText, onStep: onStep)
+        let work = Task { try await AgentPermissionScope.$alwaysAllow.withValue(agentAlwaysAllow) {
+            try await PCExecutionContext.$token.withValue(token) {
+                try await runLoop(p, history: history, tools: tools, onText: onText, onStep: onStep)
+            }
         } }
         let id: UUID
         do { id = try PCExecutionState.shared.register(token) { work.cancel() } }
