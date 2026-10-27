@@ -1,6 +1,7 @@
 import SwiftUI
 import Foundation
 import CoreImage
+import CryptoKit
 import AppKit
 
 /// RedX Link: the default way to reach the RedX servers. No SSH needed — just a server address and an API key.
@@ -19,6 +20,7 @@ final class RedXLink: ObservableObject {
     @Published var status = ""
     @Published var lastServers: [String] = []
     private var proc: Process?
+    private var connectionFingerprint = ""
 
     /// "link" (default) or "ssh" (owner-only tunnel).
     static var mode: String {
@@ -93,7 +95,13 @@ final class RedXLink: ObservableObject {
         guard Self.enabled, let bin = Self.binary else { status = Self.binary == nil ? "redx-link helper missing from app bundle" : ""; return }
         let list = serverList()
         guard !list.isEmpty else { status = "no server address configured"; return }
-        if !force, proc?.isRunning == true, list == lastServers { return }
+        // The helper authenticates through its environment. Keychain changes
+        // must force a restart even if server order is unchanged.
+        let key = Keychain.get() ?? ""
+        let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        let fingerprint = list.joined(separator: ",") + "|" + digest + "|" + String(Self.secure)
+        if !force, proc?.isRunning == true, fingerprint == connectionFingerprint { return }
+        connectionFingerprint = fingerprint
         PhoneHost.sync()
         let old = proc; proc = nil; lastServers = list; running = false
         let log = ChatStore.dir.appendingPathComponent("redx-link.log")
@@ -107,6 +115,9 @@ final class RedXLink: ObservableObject {
             var args = ["proxy", "-listen", "127.0.0.1:\(Self.port)", "-servers", list.joined(separator: ",")]
             if Self.secure { args.append("-barcode") }
             p.arguments = args
+            var environment = ProcessInfo.processInfo.environment
+            environment["REDX_LINK_KEY"] = key
+            p.environment = environment
             p.standardOutput = FileHandle.nullDevice
             FileManager.default.createFile(atPath: log.path, contents: nil)
             p.standardError = try? FileHandle(forWritingTo: log)
@@ -193,7 +204,12 @@ struct LinkSettingsBox: View {
                     }
                     HStack {
                         SecureField("Your API key (redx_ai_… or redx_xai_…)", text: $keyText)
-                        Button("Save key") { Keychain.set(keyText.trimmingCharacters(in: .whitespacesAndNewlines)); keyText = ""; Task { await ChatStoreRef.refresh() } }
+                        Button("Save key") {
+                            Keychain.set(keyText.trimmingCharacters(in: .whitespacesAndNewlines))
+                            keyText = ""
+                            link.start(force: true)
+                            Task { await ChatStoreRef.refresh() }
+                        }
                             .disabled(!(keyText.hasPrefix("redx_ai_") || keyText.hasPrefix("redx_xai_")))
                     }
                     Toggle("Secure chat (Red-SecretsXAI)", isOn: $secure)
