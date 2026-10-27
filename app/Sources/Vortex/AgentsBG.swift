@@ -13,6 +13,8 @@ struct BGAgent: Codable, Identifiable, Equatable {
     var interval_s: Int = 300
     var on: Bool = false
     var run_on: String = "server"
+    var permissions: [String]? = nil
+    var allow_actions: Bool? = nil
     var status: String = ""
     var last_run: Int = 0
     var runs: Int = 0
@@ -48,6 +50,12 @@ struct BGAgent: Codable, Identifiable, Equatable {
         }
         return d
     }
+    func cloudWorkerOnline() async -> Bool {
+        guard let data = try? await req("/agents/worker/online") else { return false }
+        let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        return payload?["online"] as? Bool == true
+    }
+
     func refresh(notify: Bool = false) async {
         struct L: Codable { var data: [BGAgent] }
         guard let d = try? await req("/agents"), let l = try? JSONDecoder().decode(L.self, from: d) else { return }
@@ -82,7 +90,8 @@ struct BGAgent: Codable, Identifiable, Equatable {
     func save(_ a: BGAgent) async {
         do {
             _ = try await req("/agents", "POST", ["id": a.id, "name": a.name, "model": a.model, "system": a.system, "goal": a.goal,
-                                                  "interval_s": a.interval_s, "run_on": a.run_on, "on": a.on])
+                                                  "interval_s": a.interval_s, "run_on": a.run_on, "on": a.on,
+                                                  "permissions": a.permissions ?? [], "allow_actions": a.allow_actions ?? false])
             msg = "Saved \(a.name)."; await refresh()
         } catch { msg = error.localizedDescription }
     }
