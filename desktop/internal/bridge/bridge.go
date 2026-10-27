@@ -388,7 +388,7 @@ func (s *Server) chatSend(in map[string]any) map[string]any {
 		return map[string]any{"reply": note, "replies": []map[string]string{{"name": s.memberFor(c.AgentID).Name, "content": note}}, "run": r["run"]}
 	}
 	if c.Kind == "agent" || c.Kind == "party" {
-		return s.groupSend(c, comp)
+		return s.groupSend(c, comp, in["__localOperator"] == true)
 	}
 	if strings.HasPrefix(model, "vortex") && in["modelExplicit"] != true {
 		model = comp.Tier
