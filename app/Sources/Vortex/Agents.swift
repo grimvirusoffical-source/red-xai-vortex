@@ -287,6 +287,20 @@ struct AgentsView: View {
             store.message = "Saved \(a.name). Set a Base URL before chatting."
         }
     }
+    func saveRemoteAgent(_ a: AgentProfile) async {
+        guard a.provider == "vortex" else {
+            store.message = "Server tasks require a Vortex model; external providers remain local."
+            return
+        }
+        let b = BGAgent(id: a.id, name: a.name, model: a.model,
+                        system: a.systemPrompt, goal: a.goal ?? "",
+                        interval_s: a.nonstop == true ? 30 : max(30, a.scheduleSeconds ?? 300),
+                        on: a.running ?? false, run_on: "server")
+        await BGAgentStore.shared.save(b)
+        if !BGAgentStore.shared.msg.hasPrefix("Saved") {
+            store.message = "Local agent saved, but server background sync failed: " + BGAgentStore.shared.msg
+        }
+    }
     func testVortex() async {
         let a = store.agents.first { $0.provider == "vortex" } ?? store.agents.first
         guard let a else { store.message = "No agent."; return }
