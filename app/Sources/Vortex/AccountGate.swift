@@ -126,6 +126,14 @@ struct GateView<Content: View>: View {
             Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 72, height: 72)
             Text("Sign in to Red-XAI Vortex").font(.title2.bold())
             Text("Use your red-xai.com account.").foregroundStyle(.secondary)
+            Picker("Open approval in", selection: $quick.browserChoice) {
+                Text("Default browser").tag("default")
+                Text("Microsoft Edge").tag("edge")
+                Text("Google Chrome").tag("chrome")
+                Text("Firefox").tag("firefox")
+                Text("Safari").tag("safari")
+                Text("Brave").tag("brave")
+            }.pickerStyle(.menu).frame(width: 300)
             Button(quick.busy ? "Waiting for Red-XAI approval…" : "Quick sign in with Red-XAI") { quick.begin() }
                 .buttonStyle(.borderedProminent).disabled(quick.busy || busy)
             if !quick.code.isEmpty {

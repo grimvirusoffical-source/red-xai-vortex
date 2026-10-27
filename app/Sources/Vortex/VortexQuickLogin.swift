@@ -17,6 +17,7 @@ private struct VortexApprovedSession {
     let sub: String
     let email: String
     let expires: Date
+    let remember: Bool
 }
 
 @MainActor final class VortexQuickLogin: ObservableObject {
@@ -24,6 +25,10 @@ private struct VortexApprovedSession {
     @Published private(set) var code = ""
     @Published private(set) var message = ""
     @Published private(set) var busy = false
+    @Published var browserChoice = UserDefaults.standard.string(forKey: "vortexLoginBrowser") ?? "default" {
+        didSet { UserDefaults.standard.set(browserChoice, forKey: "vortexLoginBrowser") }
+    }
+    private var openedBrowserIdentifier: String?
     private let issuer = "https://red-xai.com"
     private let clientID = "vortex"
     private let scope = "vortex.app"
@@ -94,9 +99,17 @@ private struct VortexApprovedSession {
         }
         return VortexApprovedSession(access: access, refresh: refresh, sub: sub,
                                      email: user["email"] as? String ?? "Red-XAI account",
-                                     expires: Date().addingTimeInterval(expiry.doubleValue))
+                                     expires: Date().addingTimeInterval(expiry.doubleValue),
+                                     remember: json["remember_device"] as? Bool ?? true)
     }
     private func save(_ approved: VortexApprovedSession) throws {
+        if !approved.remember {
+            // "No, don't trust": memory only; never persist a refresh grant in Keychain.
+            Keychain.set("", account: subKey)
+            Keychain.set("", account: refreshKey)
+            linked = approved
+            return
+        }
         Keychain.set(approved.sub, account: subKey)
         Keychain.set(approved.refresh, account: refreshKey)
         guard Keychain.get(account: subKey) == approved.sub,
@@ -128,6 +141,13 @@ private struct VortexApprovedSession {
         }
     }
 
+    private func isSafeApprovalFragment(_ fragment: String?) -> Bool {
+        guard let fragment else { return true }
+        guard fragment.hasPrefix("request=") else { return false }
+        return Self.valid(String(fragment.dropFirst("request=".count)), length: 43,
+                          alphabet: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"))
+    }
+
     func begin() {
         guard !busy else { return }
         generation += 1
@@ -149,7 +169,8 @@ private struct VortexApprovedSession {
                 guard let device = start["device_code"] as? String, Self.valid(device, length: 43, alphabet: alphabet),
                       let userCode = start["user_code"] as? String, Self.valid(userCode, length: 8, alphabet: digits),
                       let link = start["verification_uri"] as? String, let url = URL(string: link),
-                      url.scheme == "https", url.host == "red-xai.com", url.user == nil, url.fragment == nil,
+                      url.scheme == "https", url.host == "red-xai.com", url.user == nil,
+                      isSafeApprovalFragment(url.fragment),
                       ["/redxai-connect", "/redxai-connect/", "/redxai-connectx"].contains(url.path),
                       let expires = start["expires_in"] as? NSNumber, expires.doubleValue > 0, expires.doubleValue <= 300,
                       let interval = start["interval"] as? NSNumber, interval.doubleValue >= 2, interval.doubleValue <= 10 else {
@@ -158,7 +179,7 @@ private struct VortexApprovedSession {
                 guard current == generation else { return }
                 code = userCode
                 message = "Approve Vortex in your browser using code " + userCode
-                NSWorkspace.shared.open(url)
+                openBrowser(url)
                 let deadline = Date().addingTimeInterval(expires.doubleValue)
                 var delay = interval.doubleValue
                 while Date() < deadline && !Task.isCancelled && current == generation {
@@ -180,6 +201,7 @@ private struct VortexApprovedSession {
                     AccountGate.shared.signedIn = true
                     UserDefaults.standard.set(approved.email, forKey: "redxUser")
                     PhoneHost.sync()
+                    focusVortexAndHideAuthBrowser()
                     return
                 }
                 if !Task.isCancelled { throw Failure("Approval timed out. Try quick login again.") }
@@ -189,6 +211,44 @@ private struct VortexApprovedSession {
         }
     }
 
+    private func openBrowser(_ url: URL) {
+        let selected: [String: String] = [
+            "edge": "com.microsoft.edgemac", "chrome": "com.google.Chrome",
+            "firefox": "org.mozilla.firefox", "safari": "com.apple.Safari",
+            "brave": "com.brave.Browser"
+        ]
+        if browserChoice != "default" {
+            guard let identifier = selected[browserChoice],
+                  let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier) else {
+                message = "That browser is not installed. Opening your default browser."
+                openedBrowserIdentifier = NSWorkspace.shared.urlForApplication(toOpen: url)
+                    .flatMap { Bundle(url: $0)?.bundleIdentifier }
+                _ = NSWorkspace.shared.open(url)
+                return
+            }
+            openedBrowserIdentifier = identifier
+            NSWorkspace.shared.open([url], withApplicationAt: appURL,
+                                    configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+        } else {
+            openedBrowserIdentifier = NSWorkspace.shared.urlForApplication(toOpen: url)
+                .flatMap { Bundle(url: $0)?.bundleIdentifier }
+            _ = NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func focusVortexAndHideAuthBrowser() {
+        // Closing arbitrary browser tabs is prohibited by browsers. The approval
+        // page calls window.close() only if the tab was script-opened.
+        // The native app can hide the browser it opened when approval completes.
+        if let expected = openedBrowserIdentifier,
+           let front = NSWorkspace.shared.frontmostApplication,
+           front.bundleIdentifier == expected {
+            _ = front.hide()
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        openedBrowserIdentifier = nil
+    }
+
     func cancel() {
         generation += 1
         connectTask?.cancel(); connectTask = nil
@@ -196,7 +256,7 @@ private struct VortexApprovedSession {
     }
     func logout() async {
         cancel()
-        let refresh = Keychain.get(account: refreshKey)
+        let refresh = linked?.refresh ?? Keychain.get(account: refreshKey)
         Keychain.set("", account: refreshKey)
         Keychain.set("", account: subKey)
         linked = nil
