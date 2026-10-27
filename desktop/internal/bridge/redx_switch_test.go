@@ -6,20 +6,14 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/keyring"
 )
 
-func TestDesktopLogoutPersistsAccountSwitchAndKeepsOptionalOwnerMode(t *testing.T) {
+func TestDesktopAccountSwitchPersistsAcrossRestartsAndKeepsOptionalOwnerMode(t *testing.T) {
 	s := workspaceServer(t)
-	oldAdmin := keyring.Get("admin-primary")
-	oldLegacy := keyring.Get("redx-session")
-	t.Cleanup(func() {
-		_ = keyring.Set("admin-primary", oldAdmin)
-		_ = keyring.Set("redx-session", oldLegacy)
-	})
-	_ = keyring.Set("admin-primary", "test-only-owner-credential")
-	_ = keyring.Set("redx-session", "")
+	s.baseCredential = func(account string) string {
+		if account == "admin-primary" { return "test-only-owner-credential" }
+		return ""
+	}
 	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/admin/system" || r.Header.Get("Authorization") != "Bearer test-only-owner-credential" {
 			http.Error(w, "invalid test credential", http.StatusUnauthorized)
@@ -29,16 +23,16 @@ func TestDesktopLogoutPersistsAccountSwitchAndKeepsOptionalOwnerMode(t *testing.
 	}))
 	defer admin.Close()
 	t.Setenv("VORTEX_ADMIN_BASE", admin.URL)
-	before := s.redx("gate.status", nil)
-	if before["owner"] != true { t.Fatalf("owner fallback should work before logout: %v", before) }
-	out := s.redx("redx.logout", nil)
-	if out["ok"] != true || !s.accountSwitchRequired() {
-		t.Fatalf("logout did not persist account switch: %v", out)
+	if before := s.redx("gate.status", nil); before["owner"] != true {
+		t.Fatalf("owner mode must work before a manual account switch: %v", before)
 	}
-	restarted := &Server{St: s.St}
+	// Exercise the durable local gate without mutating a developer's real
+	// keychain or revoking a real device's authentication credentials.
+	if err := s.setAccountSwitchRequired(true); err != nil { t.Fatal(err) }
+	restarted := &Server{St: s.St, baseCredential: s.baseCredential}
 	g := restarted.redx("gate.status", nil)
 	if g["owner"] != false || g["ownerAvailable"] != true || g["signedIn"] == true {
-		t.Fatalf("owner mode silently bypassed explicit logout: %v", g)
+		t.Fatalf("owner silently bypassed explicit sign-out: %v", g)
 	}
 	mode := restarted.redx("redx.owner.continue", nil)
 	if mode["ok"] != true || restarted.accountSwitchRequired() {
