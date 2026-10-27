@@ -86,10 +86,12 @@ func TestCloudAgentOfflineCannotBeMarkedRunningLocally(t *testing.T){
 }
 func TestRemoteTaskPauseAndKillRevokeWorkerThroughGateway(t *testing.T) {
     toggles:=[]bool{}
+    stopAllCalled:=false
     gw:=cloudAgentMockGateway(t,func(path string,payload map[string]any)(int,map[string]any){
         if strings.HasSuffix(path,"/toggle"){
             toggles=append(toggles,payload["on"]==true)
         }
+        if path=="/v1/agents/stop-all" {stopAllCalled=true}
         return 200,map[string]any{"on":payload["on"]}
     })
     defer gw.Close()
@@ -108,8 +110,8 @@ func TestRemoteTaskPauseAndKillRevokeWorkerThroughGateway(t *testing.T) {
     s.St.SaveAgent(a)
     result:=s.agentKillAll(nil)
     if result["ok"]!=true {t.Fatalf("Emergency stop failed: %v",result)}
-    if len(toggles)!=2 || toggles[0] || toggles[1] {
-        t.Fatalf("Remote lease/schedule was not revoked on Pause and Stop: %v",toggles)
+    if len(toggles)!=1 || toggles[0] || !stopAllCalled {
+        t.Fatalf("Pause and atomic gateway stop were not both issued: toggles=%v stopAll=%v",toggles,stopAllCalled)
     }
     for _,current:=range s.St.Agents {
         if current.ID==a.ID && current.Running {t.Fatal("Remote agent remained locally active after emergency stop")}
