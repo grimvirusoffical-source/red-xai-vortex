@@ -28,3 +28,19 @@ test('Default browser uses script-opened approval tab for safe close-and-return 
  assert.match(js,/opt\.value==='safari'&&!quickIsMac/);
  assert.match(html,/same identity across Red-XAI apps/);
 });
+
+test('Quick Login and password are two independent user-selectable methods',()=>{
+ for(const id of ['gChooseQuick','gChoosePassword','gQuickSection','gPasswordSection']){
+  assert.equal([...html.matchAll(new RegExp('id="'+id+'"','g'))].length,1,id);
+ }
+ assert.match(html,/<section id="gPasswordSection"[^>]*hidden>/);
+ assert.match(html,/Quick Login is not required/);
+ assert.match(js,/let gFlow=.*authMethod='quick'/);
+ assert.match(js,/function chooseSignInMethod\(method\)/);
+ assert.match(js,/if\(authMethod!=='quick'\)return/);
+ assert.match(js,/if\(authMethod!=='password'\)return/);
+ assert.match(js,/gFlow='';gMethod='totp'/);
+ assert.match(js,/gFlow='';quickStopUI\(\)/);
+ assert.match(js,/if\(v\.signedIn\)[\s\S]{0,600}await gate\(\)/);
+ assert.match(js,/attempt!==quickAttempt/);
+});

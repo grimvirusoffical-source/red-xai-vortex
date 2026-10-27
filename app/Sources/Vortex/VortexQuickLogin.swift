@@ -123,8 +123,10 @@ private struct VortexApprovedSession {
 
     func restore() async -> String? {
         if let linked, linked.expires > Date().addingTimeInterval(60) { return linked.email }
-        guard let refresh = Keychain.get(account: refreshKey), !refresh.isEmpty,
-              let savedSub = Keychain.get(account: subKey), !savedSub.isEmpty else { return nil }
+        // No device trust is memory-only, not an extra password challenge.
+        let refresh = (linked?.remember == false) ? linked?.refresh : Keychain.get(account: refreshKey)
+        let savedSub = (linked?.remember == false) ? linked?.sub : Keychain.get(account: subKey)
+        guard let refresh, !refresh.isEmpty, let savedSub, !savedSub.isEmpty else { return nil }
         do {
             let (status, json) = try await call("refresh", body: ["client_id": clientID, "refresh_token": refresh])
             if status == 401 {
@@ -192,7 +194,7 @@ private struct VortexApprovedSession {
                     if codeStatus == 429 { delay = min(10, delay + 1); continue }
                     guard codeStatus == 200 else { throw Failure("Red-XAI approval was rejected or expired.") }
                     let approved = try readSession(result)
-                    await AccountGate.shared.clearLegacyForQuick()
+                    AccountGate.shared.clearLegacyForQuick()
                     guard current == generation else { return }
                     try save(approved)
                     self.code = ""

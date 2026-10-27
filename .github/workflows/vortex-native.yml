@@ -96,6 +96,8 @@ jobs:
             if ($warnings -match 'could not open its default browser') { throw 'ShellExecuteW failed to open Windows default browser' }
             node scripts/windows-browser-e2e.cjs $localURL
             if ($LASTEXITCODE -ne 0) { throw 'Built Windows app could not complete real Edge Quick Login startup' }
+            node scripts/windows-auth-choice-e2e.cjs $localURL
+            if ($LASTEXITCODE -ne 0) { throw 'Quick and password login are not independent, user was required to authenticate twice' }
           } finally {
             if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
           }

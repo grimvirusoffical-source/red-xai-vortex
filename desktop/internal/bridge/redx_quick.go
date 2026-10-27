@@ -260,14 +260,22 @@ func (s *Server) quickPoll() map[string]any {
 		_, _, _ = quickRequest("revoke", map[string]any{"token": acct.refresh})
 		return map[string]any{"ok": false, "error": "Could not securely save Red-XAI approval"}
 	}
-	if old := keyring.Get("redx-session"); old != "" {
-		_, _ = redxDo("POST", "logout", map[string]string{"X-RedX-Session": old}, map[string]any{})
+	// Never block a successful, scoped browser grant on a second login or
+	// slow legacy password-session logout request. Clear the local credential
+	// first, then revoke the previous password session asynchronously.
+	oldLegacy := keyring.Get("redx-session")
+	if oldLegacy != "" {
 		_ = keyring.Set("redx-session", "")
 	}
 	q.account = acct
 	q.approval = quickApproval{}
 	q.epoch++
 	q.mu.Unlock()
+	if oldLegacy != "" {
+		go func() {
+			_, _ = redxDo("POST", "logout", map[string]string{"X-RedX-Session": oldLegacy}, map[string]any{})
+		}()
+	}
 	return map[string]any{"ok": true, "signedIn": true}
 }
 
@@ -377,7 +385,14 @@ func (s *Server) quickSignedIn() (bool, string, string) {
 	if q.account.access != "" && time.Until(q.account.expires) > 60*time.Second {
 		return true, q.account.email, ""
 	}
-	saved, sub := keyring.Get(quickRefreshKey), keyring.Get(quickSubjectKey)
+	// A user who chose "No — this session only" must be able to renew in
+	// memory without persisting a refresh token or restarting sign-in.
+	saved, sub := "", ""
+	if q.account.access != "" && !q.account.remember {
+		saved, sub = q.account.refresh, q.account.sub
+	} else {
+		saved, sub = keyring.Get(quickRefreshKey), keyring.Get(quickSubjectKey)
+	}
 	if saved == "" || sub == "" {
 		return false, "", ""
 	}
@@ -398,8 +413,10 @@ func (s *Server) quickSignedIn() (bool, string, string) {
 	if err != nil {
 		return false, "", "Red-XAI returned an invalid renewed session"
 	}
-	if keyring.Set(quickRefreshKey, acct.refresh) != nil {
-		return false, "", "Failed to store renewed Red-XAI credentials"
+	if acct.remember {
+		if keyring.Set(quickRefreshKey, acct.refresh) != nil {
+			return false, "", "Failed to store renewed Red-XAI credentials"
+		}
 	}
 	q.account = acct
 	return true, acct.email, ""

@@ -71,7 +71,9 @@ func (s *Server) redx(m string, in map[string]any) map[string]any {
 	switch m {
 	case "gate.status":
 		b, _ := os.ReadFile(s.termsFile())
-		res := map[string]any{"ok": true, "termsAccepted": strings.TrimSpace(string(b)), "owner": s.isOwner()}
+		res := map[string]any{"ok": true, "termsAccepted": strings.TrimSpace(string(b))}
+		// A Vortex-scoped browser grant is a COMPLETE, alternative sign-in.
+		// Never require legacy password/MFA or a slow owner-admin check afterward.
 		if linked, email, message := s.quickSignedIn(); linked {
 			res["signedIn"] = true
 			res["username"] = email
@@ -79,6 +81,7 @@ func (s *Server) redx(m string, in map[string]any) map[string]any {
 		} else if message != "" {
 			res["message"] = message
 		}
+		res["owner"] = s.isOwner()
 		if tok := keyring.Get("redx-session"); tok != "" {
 			st, me := redxDo("GET", "me", map[string]string{"X-RedX-Session": tok}, nil)
 			switch {
