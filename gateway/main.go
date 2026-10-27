@@ -629,6 +629,9 @@ func handleV1(w http.ResponseWriter, r *http.Request, k *Key) {
 		errJSON(w, 400, "invalid JSON")
 		return
 	}
+	// Internal tier routing is set only after authorization below; ignore
+	// any client-supplied value so it cannot override scoped model grants.
+	delete(body, "vortex_tier")
 	model, _ := body["model"].(string)
 	if model == "vortex" || strings.HasPrefix(model, "vortex-v") || strings.HasPrefix(model, "vortex:") {
 		model = rxModel + strings.TrimPrefix(strings.TrimSuffix(model, ":latest"), "vortex") // Vortex is the name of the Red-XAI model
