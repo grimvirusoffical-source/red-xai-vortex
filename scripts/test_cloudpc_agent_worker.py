@@ -61,6 +61,8 @@ class CloudPCWorkerTests(unittest.TestCase):
                 actions = worker.Actions(job,gateway,tmp,worker.Browser(tmp+"/browser",""))
                 self.assertIn("Wrote", actions.call("write_file", {"path":"test.txt","content":"data"}))
                 self.assertEqual(actions.call("read_file", {"path":"test.txt"}),"data")
+                with self.assertRaises(worker.WorkerError):
+                    actions.call("write_file", {"path":".","content":"must not escape"})
             self.assertEqual((Path(tmp)/"test.txt").read_text(),"data")
             with self.assertRaises(worker.WorkerError):
                 actions.call("run_command",{"command":"echo not-approved-by-host"})
