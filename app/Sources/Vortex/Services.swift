@@ -126,6 +126,25 @@ struct ChatParams {
 }
 
 enum API {
+    /// Both native Mac and Go desktop expose the actual gateway denial,
+    /// without retrying with a different identity or bypassing access rules.
+    static func gatewayError(_ code: Int, _ raw: Data) -> NSError {
+        let json = (try? JSONSerialization.jsonObject(with: raw)) as? [String: Any]
+        let reason = ((json?["error"] as? [String: Any])?["message"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let detail = reason.isEmpty ? "The gateway rejected the request." : String(reason.prefix(300))
+        let message: String
+        switch code {
+        case 401:
+            message = "Vortex authentication failed (HTTP 401): \(detail) Save a valid gateway API key under Settings → Connection."
+        case 403:
+            message = "Vortex chat was denied (HTTP 403): \(detail) Check model permissions, chat scope and IP/device access restrictions."
+        default:
+            message = "Vortex gateway returned HTTP \(code): \(detail)"
+        }
+        return NSError(domain: "Vortex", code: code, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
     static func url(_ base: String, _ path: String) -> URL? {
         URL(string: base.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")) + path)
     }
@@ -133,7 +152,7 @@ enum API {
         guard let u = url(base, "/models") else { throw URLError(.badURL) }
         var r = URLRequest(url: u); r.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         let (d, resp) = try await URLSession.shared.data(for: r)
-        if let h = resp as? HTTPURLResponse, h.statusCode != 200 { throw NSError(domain: "Vortex", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(h.statusCode)"]) }
+        if let h = resp as? HTTPURLResponse, h.statusCode != 200 { throw gatewayError(h.statusCode, d) }
         let j = try JSONSerialization.jsonObject(with: d) as? [String: Any]
         return (j?["data"] as? [[String: Any]])?.compactMap { $0["id"] as? String } ?? []
     }
@@ -159,16 +178,17 @@ enum API {
             if code == 200 { bytes = b; break }
             var raw = Data()
             for try await x in b { raw.append(x); if raw.count > 4096 { break } }
-            let m = ((try? JSONSerialization.jsonObject(with: raw) as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
             if code >= 500 && attempt < 2 {
                 attempt += 1
                 try await Task.sleep(nanoseconds: UInt64(6 * attempt) * 1_000_000_000)
                 continue
             }
-            let friendly = code >= 500
-                ? "Vortex is loading this model on the server (it retried \(attempt + 1)×). Please send again in a few seconds."
-                : (m ?? "Server returned HTTP \(code)")
-            throw NSError(domain: "Vortex", code: code, userInfo: [NSLocalizedDescriptionKey: friendly])
+            if code >= 500 {
+                throw NSError(domain: "Vortex", code: code, userInfo: [
+                    NSLocalizedDescriptionKey: "Vortex is loading this model on the server (it retried \(attempt + 1)×). Please send again in a few seconds."
+                ])
+            }
+            throw gatewayError(code, raw)
         }
         var tps: Double?
         for try await line in bytes.lines {

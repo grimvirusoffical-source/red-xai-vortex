@@ -44,3 +44,16 @@ test('Quick Login and password are two independent user-selectable methods',()=>
  assert.match(js,/if\(v\.signedIn\)[\s\S]{0,600}await gate\(\)/);
  assert.match(js,/attempt!==quickAttempt/);
 });
+
+test('Windows and Linux expose persistent account switching without hiding the original footer logout',()=>{
+ for(const id of ['accountLogOut','fSignOut','gOwnerContinue']){
+  assert.equal([...html.matchAll(new RegExp('id="'+id+'"','g'))].length,1,id);
+ }
+ assert.match(html,/<button id="accountLogOut"[^>]+type="button"/);
+ assert.match(js,/\$\('#accountLogOut'\)\.onclick=signOutVortex/);
+ assert.match(js,/\$\('#fSignOut'\)\.onclick=signOutVortex/);
+ assert.match(js,/bridge\.call\('redx\.logout'/);
+ assert.match(js,/bridge\.call\('redx\.owner\.continue'/);
+ assert.match(js,/g\.ownerAvailable!==true/);
+ assert.match(js,/location\.reload\(\)/);
+});

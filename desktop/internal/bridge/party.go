@@ -66,7 +66,7 @@ func (s *Server) completeContext(ctx context.Context, agentID, model string, msg
 		b, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		r.Body.Close()
 		if r.StatusCode != http.StatusOK {
-			return "", fmt.Errorf("HTTP %d", r.StatusCode)
+			return "", fmt.Errorf("%s", chatGatewayError(r.StatusCode, b))
 		}
 		var p struct {
 			Choices []struct {

@@ -115,6 +115,9 @@ import Foundation
         signedIn = false; username = ""; msg = ""; flow = ""
         UserDefaults.standard.removeObject(forKey: "redxUser")
         await VortexQuickLogin.shared.logout()
+        // A running phone companion must not inherit the previous account's
+        // session from its original process environment.
+        PhoneHost.sync()
         if !legacy.isEmpty { _ = await call("logout", session: legacy, body: [:]) }
     }
 

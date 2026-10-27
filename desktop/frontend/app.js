@@ -465,7 +465,13 @@ async function gate(){
     $('#gTermsText').textContent=await fetch('terms.md').then(r=>r.text()).catch(()=>'Terms unavailable.');
     show('gTerms'); return;
   }
-  if(!(g.signedIn||g.owner)){ show('gLogin'); return; }
+  if(!(g.signedIn||g.owner)){
+    $('#fUser').textContent='';
+    $('#gOwnerContinue').hidden=g.ownerAvailable!==true;
+    $('#gate').style.display='flex';
+    show('gLogin');
+    return;
+  }
   $('#fUser').textContent=g.username?('· '+g.username):(g.owner?'· owner mode':'');
   $('#gate').style.display='none';
 }
@@ -484,7 +490,32 @@ $('#gGo').onclick=async()=>{
   gFlow=''; gate();
 };
 $('#gCallMe').onclick=async()=>{const r=await bridge.call('redx.call',{flow:gFlow});if(r.ok)gMethod='call';$('#gMsg').textContent=r.ok?'Calling you now — enter the code you hear.':(r.message||'Call failed.');};
-$('#fSignOut').onclick=async e=>{e.preventDefault();await bridge.call('redx.logout');location.reload();};
+// Windows and Linux share this full account switch; keep the legacy footer
+// entry working and provide an obvious button in the always-visible toolbar.
+let accountSignOutBusy=false;
+async function signOutVortex(e){
+  e?.preventDefault();
+  if(accountSignOutBusy)return;
+  accountSignOutBusy=true;
+  $('#accountLogOut').disabled=true;
+  try{
+    const r=await bridge.call('redx.logout',{});
+    if(r?.ok!==true)throw Error(r?.error||'Could not sign out safely.');
+    location.reload(); // Clears transient UI/account state, not saved chats.
+  }catch(error){
+    accountSignOutBusy=false;
+    $('#accountLogOut').disabled=false;
+    $('#status').textContent='Sign out failed';
+    $('#status').title=String(error?.message||error).slice(0,180);
+  }
+}
+$('#accountLogOut').onclick=signOutVortex;
+$('#fSignOut').onclick=signOutVortex;
+$('#gOwnerContinue').onclick=async()=>{
+  const r=await bridge.call('redx.owner.continue',{}).catch(()=>({ok:false}));
+  if(r.ok) await gate();
+  else $('#gMsg').textContent=r.error||'Owner mode could not be opened.';
+};
 $('#fTerms').onclick=async e=>{e.preventDefault();const t=await fetch('terms.md').then(r=>r.text());const w=window.open('','_blank');if(w){w.document.body.innerHTML='<pre style="white-space:pre-wrap"></pre>';w.document.querySelector('pre').textContent=t;}else alert(t);};
 gate();
 
