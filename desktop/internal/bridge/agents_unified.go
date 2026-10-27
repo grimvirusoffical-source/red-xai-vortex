@@ -7,6 +7,7 @@ import (
     "strings"
     "time"
 
+    "github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/activity"
     "github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/keyring"
     "github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/store"
 )
