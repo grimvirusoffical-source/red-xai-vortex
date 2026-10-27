@@ -9,8 +9,10 @@ package main
 // The worker must also independently enforce its own OS permissions.
 
 import (
+    "crypto/rand"
     "crypto/sha256"
     "crypto/subtle"
+    "encoding/base64"
     "encoding/hex"
     "encoding/json"
     "fmt"
@@ -36,6 +38,13 @@ type agentWorkerPresence struct {
     LastSeen int64 `json:"last_seen"`
 }
 var workerPresence = map[string]agentWorkerPresence{} // API Key ID -> last heartbeat (memory only)
+var workerNotification = notify
+
+func newWorkerSecret() (string, error) {
+    var key [32]byte
+    if _, err := rand.Read(key[:]); err != nil {return "",err}
+    return base64.RawURLEncoding.EncodeToString(key[:]),nil
+}
 
 func workerOnline(keyID string, now time.Time) bool {
     p, found := workerPresence[keyID]
@@ -84,8 +93,11 @@ func workerClaimLocked(k *Key, name string, now time.Time) map[string]any {
             agBusy[id]=false
         }
         if agBusy[id] || !agAuthorized(a) {continue}
-        token:=randB62(43)
-        jobID:="aj_"+randB62(18)
+        token,err:=newWorkerSecret()
+        if err!=nil {return map[string]any{"ok":false,"error":"Could not generate secure worker lease"}}
+        randomID,err:=newWorkerSecret()
+        if err!=nil {return map[string]any{"ok":false,"error":"Could not generate secure job identifier"}}
+        jobID:="aj_"+randomID[:18]
         a.Pending=&agentWorkerJob{ID:jobID,WorkerID:name,LeaseHash:workerTokenHash(token),
             LeasedUntil:now.Add(workerLeaseTTL).Unix(),Started:now.Unix()}
         agBusy[id]=true
@@ -118,7 +130,7 @@ func workerReportLocked(a *bgAgent, status, result string, now time.Time) {
         a.LastError="Cloud PC worker "+status+": "+result
         a.Status="error"
     }
-    notify(a.KeyID,"agent","Cloud PC worker "+status+": "+a.Name,result,a.ID)
+    workerNotification(a.KeyID,"agent","Cloud PC worker "+status+": "+a.Name,result,a.ID)
     agSaveLocked()
 }
 func handleAgentWorker(w http.ResponseWriter, r *http.Request, k *Key, action string) {
