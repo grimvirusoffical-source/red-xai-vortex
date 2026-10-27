@@ -136,9 +136,11 @@ jobs:
       - name: Go regression tests
         working-directory: desktop
         run: go test ./... -count=1 -timeout=8m
-      - name: Gateway model permissions and tier regression tests
+      - name: Gateway tier authorization regression tests (public crypto-independent subset)
         working-directory: gateway
-        run: go test ./... -count=1 -timeout=8m
+        # The full gateway suite depends on the separately shipped, private
+        # Red-SecretsXAI crypto backend. Never disable crypto to run it in CI.
+        run: go test ./... -run '^TestVortexTier' -count=1 -timeout=8m
       - name: Frontend tests
         run: node --test desktop/frontend/*.test.cjs
       - name: Build Linux package executables
