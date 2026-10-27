@@ -3,6 +3,11 @@ import Foundation
 /// Native Mac agent model selection: use the user's authenticated model
 /// listing only, never substitute a model they cannot access.
 enum AgentModelRouter {
+    static func needsBrowserAutomation(_ task: String) -> Bool {
+        let text = task.lowercased()
+        return ["discord", "chrome tab", "browser tab", "send a message", "dm a friend", "click the submit", "post to a chat"].contains(where: text.contains)
+    }
+
     static func genre(_ task: String) -> String {
         let t = task.lowercased()
         if ["code", "python", "typescript", "javascript", "repository", "github", "debug", "compile", "programming", "test suite"].contains(where: t.contains) { return "code" }
