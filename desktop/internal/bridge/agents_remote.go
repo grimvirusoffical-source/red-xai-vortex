@@ -44,6 +44,34 @@ func (s *Server) deleteServerAgent(id string) error {
     if result["ok"]!=true{return fmt.Errorf("%v",result["message"])}
     return nil
 }
+// Cloud PC agents do not execute on the local desktop. An online worker
+// claims gateway-issued leases and reports tool results back to the owner.
+func (s *Server) syncCloudAgent(a store.Agent) error {
+    if a.Provider!="vortex" {
+        return fmt.Errorf("Cloud PC task worker currently supports Vortex gateway models only")
+    }
+    if a.ModelMode=="mix" {
+        return fmt.Errorf("multi-model planning currently runs in the desktop agent; use Single/Auto for Cloud PC workers")
+    }
+    model:=a.Model
+    if a.ModelMode=="auto" || model=="" {model="vortex"}
+    seconds:=a.ScheduleS
+    if a.Nonstop || seconds<30 {seconds=30}
+    result:=s.gw("POST","/agents",map[string]any{
+        "id":a.ID,"name":a.Name,"model":model,
+        "system":a.SystemPrompt,"goal":a.Goal,"interval_s":seconds,
+        "run_on":"cloudpc","on":a.Running,
+        "permissions":a.Permissions,"allow_actions":a.AlwaysAllow,
+    })
+    if result["ok"]!=true {
+        return fmt.Errorf("Cloud PC worker schedule was not accepted: %v",result["message"])
+    }
+    return nil
+}
+func (s *Server) cloudWorkerStatus() map[string]any {
+    return s.gw("GET","/agents/worker/online",nil)
+}
+
 func agentRemoteMode(a store.Agent) string {
     mode:=strings.TrimSpace(a.RunOn)
     if mode=="" {return "local"}
