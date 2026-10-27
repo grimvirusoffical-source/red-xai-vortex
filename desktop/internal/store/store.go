@@ -19,6 +19,15 @@ type Agent struct {
 	SystemPrompt string    `json:"systemPrompt"`
 	ToolsOn      bool      `json:"toolsOn"`
 	PCControlOn  bool      `json:"pcControlOn"`
+	Goal         string    `json:"goal,omitempty"`
+	ModelMode    string    `json:"modelMode,omitempty"` // single | auto | mix
+	ModelPool    []string  `json:"modelPool,omitempty"`
+	Permissions  []string  `json:"permissions,omitempty"` // web, files-read, files-write, shell
+	ScheduleS    int       `json:"scheduleSeconds,omitempty"` // 0 manual, 15 nonstop, >=30 periodic
+	Nonstop      bool      `json:"nonstop,omitempty"`
+	Running      bool      `json:"running,omitempty"`
+	AlwaysAllow  bool      `json:"alwaysAllow,omitempty"` // additional agent opt-in; machine policy still required
+	LastRun      time.Time `json:"lastRun,omitempty"`
 	Created      time.Time `json:"created"`
 	Updated      time.Time `json:"updated"`
 }
