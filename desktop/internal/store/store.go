@@ -25,6 +25,7 @@ type Agent struct {
 	Permissions  []string  `json:"permissions"` // web, files-read, files-write, shell
 	ScheduleS    int       `json:"scheduleSeconds,omitempty"` // 0 manual, 15 nonstop, >=30 periodic
 	Nonstop      bool      `json:"nonstop,omitempty"`
+	RunOn        string    `json:"runOn,omitempty"` // local or server; cloudpc requires worker
 	Running      bool      `json:"running,omitempty"`
 	AlwaysAllow  bool      `json:"alwaysAllow,omitempty"` // additional agent opt-in; machine policy still required
 	LastRun      time.Time `json:"lastRun,omitempty"`
