@@ -156,6 +156,7 @@ struct AgentsView: View {
                         Spacer()
                         Button("Use") { store.setActive(a.id); if a.provider == "vortex" { chatModel = a.model }; store.message = "Using \(a.name)." }
                         Button("Edit") { draft = a; apiKey = ""; editing = true }
+                        Button("Run") { LocalAgentScheduler.shared.launch(a) }.disabled(a.runOn == "server" || a.runOn == "cloudpc")
                         if a.id != "vortex-default" {
                             Button(role: .destructive) { store.delete(a.id) } label: { Image(systemName: "trash") }
                         }
@@ -174,7 +175,7 @@ struct AgentsView: View {
                 }.padding().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
-        .onAppear { store.load() }
+        .onAppear { store.load(); _ = LocalAgentScheduler.shared; Task { await BGAgentStore.shared.refresh() } }
     }
 
     var editor: some View {
