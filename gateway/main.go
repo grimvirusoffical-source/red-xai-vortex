@@ -220,7 +220,8 @@ func modelOK(k *Key, m string) bool {
 		return true
 	}
 	for _, x := range k.Models {
-		if x == m || x == "*" || (strings.HasPrefix(m, rxModel) && x == "vortex"+strings.TrimPrefix(m, rxModel)) {
+		if x == m || x == "*" || (strings.HasPrefix(m, rxModel) && x == "vortex"+strings.TrimPrefix(m, rxModel)) ||
+			(vortexTierTarget(m) != "" && x == "vortex") {
 			return true
 		}
 	}
@@ -552,6 +553,14 @@ func handleModels(w http.ResponseWriter, k *Key) {
 			data = append(data, map[string]any{"id": id, "object": "model", "owned_by": "red-xai", "created": 0})
 		}
 	}
+	// Expose the strength presets only where their backing models are installed
+	// and the caller's Vortex model permission allows the requested tier.
+	installed := installedIDs()
+	for _, id := range []string{"vortex-mini", "vortex-std", "vortex-pro"} {
+		if modelOK(k, id) && installed[vortexTierTarget(id)] {
+			data = append(data, map[string]any{"id": id, "object": "model", "owned_by": "red-xai", "created": 0})
+		}
+	}
 	for _, e := range extModelsList() {
 		if modelOK(k, e["id"].(string)) {
 			data = append(data, e)
@@ -662,6 +671,15 @@ func handleV1(w http.ResponseWriter, r *http.Request, k *Key) {
 		return
 	}
 	var rxMeta map[string]any
+	if target := vortexTierTarget(model); target != "" {
+		if !installedIDs()[target] {
+			errJSON(w, 503, "the "+model+" backing model is not installed: "+target)
+			return
+		}
+		body["vortex_tier"] = model
+		body["model"] = rxModel
+		model = rxModel
+	}
 	if isRedXAI(model) {
 		if path != "/v1/chat/completions" {
 			errJSON(w, 400, "red-xai supports chat completions")
