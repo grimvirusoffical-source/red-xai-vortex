@@ -23,7 +23,7 @@ func testCloudWorkerSetup(t *testing.T) (*Key,*bgAgent) {
     agMu.Unlock()
     mu.Lock()
     oldKeys:=keys
-    k:=&Key{ID:"test-cloud-key",Scopes:[]string{"chat","cloudpc"},Models:[]string{"vortex"}}
+    k:=&Key{ID:"test-cloud-key",Prefix:"redx_xai_test",Scopes:[]string{"chat","cloudpc"},Models:[]string{"vortex"}}
     keys=[]*Key{k}
     mu.Unlock()
     t.Cleanup(func(){
