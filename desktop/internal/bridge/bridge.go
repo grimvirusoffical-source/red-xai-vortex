@@ -312,7 +312,7 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 func chatSummaries(cs []store.Chat) []map[string]any {
 	out := make([]map[string]any, 0, len(cs))
 	for _, c := range cs {
-		out = append(out, map[string]any{"id": c.ID, "title": c.Title, "kind": c.Kind, "agentID": c.AgentID, "members": c.Members})
+		out = append(out, map[string]any{"id": c.ID, "title": c.Title, "kind": c.Kind, "agentID": c.AgentID, "members": c.Members, "leaderID": c.LeaderID, "groupWorkspaceID": c.WorkspaceID})
 	}
 	return out
 }
