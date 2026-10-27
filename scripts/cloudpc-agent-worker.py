@@ -109,7 +109,7 @@ def parse_tool_call(answer):
     if not isinstance(obj, dict) or not isinstance(obj.get("arguments"), dict):
         return None
     name = obj.get("name")
-    if not isinstance(name, str) or not re.fullmatch(r"[a-z_]{3,40}", name):
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z_]{2,39}", name):
         return None
     return name, obj["arguments"]
 
