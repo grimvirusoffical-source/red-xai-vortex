@@ -72,6 +72,13 @@ func (s *Server) redx(m string, in map[string]any) map[string]any {
 	case "gate.status":
 		b, _ := os.ReadFile(s.termsFile())
 		res := map[string]any{"ok": true, "termsAccepted": strings.TrimSpace(string(b))}
+		// Fail closed during an intentional account switch. In particular, do
+		// not restore stale credentials inherited from a launcher environment.
+		if s.accountSwitchRequired() {
+			res["owner"] = false
+			res["ownerAvailable"] = s.isOwner()
+			return res
+		}
 		// A Vortex-scoped browser grant is a COMPLETE, alternative sign-in.
 		// Never require legacy password/MFA or a slow owner-admin check afterward.
 		if linked, email, message := s.quickSignedIn(); linked {
@@ -107,7 +114,9 @@ func (s *Server) redx(m string, in map[string]any) map[string]any {
 	case "redx.quick.open":
 		return s.quickOpen(str("browser"))
 	case "redx.quick.poll":
-		return s.quickPoll()
+		out := s.quickPoll()
+		if out["signedIn"] == true { _ = s.setAccountSwitchRequired(false) }
+		return out
 	case "redx.quick.cancel":
 		return s.quickCancel()
 	case "gate.accept":
