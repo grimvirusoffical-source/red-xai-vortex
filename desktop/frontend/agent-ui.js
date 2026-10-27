@@ -4,6 +4,33 @@
 (() => {
   let editing = '';
   let agents = [];
+  let remote = new Map();
+  let statusFetchedAt = 0;
+  async function refreshWorkerStatus() {
+    const status = el('aWorkerStatus');
+    if (el('aRunOn').value !== 'cloudpc') {
+      status.textContent = 'Cloud PC worker is only needed for remote computer actions.';
+      return;
+    }
+    try {
+      const result = await bridge.call('agent.worker.status',{});
+      status.textContent = result.ok && result.online ? 'Cloud PC worker authenticated and online.' :
+        'Cloud PC worker offline or unauthorized. Launch your worker and grant this key chat + cloudpc permissions before activating jobs.';
+    } catch (error) { status.textContent = 'Could not check Cloud PC worker: ' + String(error.message || error).slice(0,120); }
+  }
+  async function refreshRemoteStatuses() {
+    if (Date.now() - statusFetchedAt < 30000 || !agents.some(a => ['server','cloudpc'].includes(a.runOn))) return;
+    statusFetchedAt = Date.now();
+    try {
+      const response = await bridge.call('agent.remote.list',{});
+      if (!response.ok) return;
+      remote = new Map((response.data || []).map(a => [a.id,a]));
+      for (const elmt of document.querySelectorAll('[data-remote-agent]')) {
+        const item = remote.get(elmt.dataset.remoteAgent);
+        elmt.textContent = item ? ' · ' + (item.status || 'idle') + ' · ' + Number(item.runs || 0) + ' runs' : ' · Remote status unavailable';
+      }
+    } catch { /* Keep existing status until the next refresh. */ }
+  }
   const el = id => document.getElementById(id);
   const checked = () => [...document.querySelectorAll('#agentPermissions input:checked')].map(e => e.value);
   const show = (message, ok) => {
@@ -19,6 +46,7 @@
     for (const id of ['aName','aInstructions','aGoal','aBase','aKey']) el(id).value = '';
     el('aProv').value = 'vortex'; el('aModel').value = 'vortex'; el('aMode').value = 'auto';
     el('aEvery').value = '0'; el('aRunOn').value = 'local';
+    void refreshWorkerStatus();
     for (const id of ['aPC','aAlways','aNonstop','aRunning']) el(id).checked = false;
     choosePermissions(['web','files-read']);
   }
@@ -32,6 +60,7 @@
     el('aBase').value = a.baseURL || ''; el('aKey').value = '';
     el('aEvery').value = String(a.nonstop ? 0 : (a.scheduleSeconds || 0));
     el('aRunOn').value = a.runOn || 'local';
+    void refreshWorkerStatus();
     el('aPC').checked = a.pcControlOn === true; el('aAlways').checked = a.alwaysAllow === true;
     el('aNonstop').checked = a.nonstop === true; el('aRunning').checked = a.running === true;
     const previous = ['web','files-read','files-write',...(a.pcControlOn ? ['shell'] : [])];
@@ -56,8 +85,15 @@
   }
   async function run(a) {
     if (!a) return show('Save the agent before running it.', false);
+    if (a.runOn === 'server' || a.runOn === 'cloudpc') {
+      if (a.running) return show('Remote schedule is already enabled. See the status beside this agent.', true);
+      const started = await bridge.call('agent.toggle',{id:a.id,running:true});
+      show(started.message || started.error || (started.ok ? 'Remote agent enabled; it will claim a job when due.' : 'Could not enable remote agent.'),started.ok);
+      await refresh();
+      return;
+    }
     const response = await bridge.call('run.start', {agentID: a.id, task: a.goal || a.systemPrompt});
-    show(response.message || response.error || (response.ok ? 'Task started. Track real tool results in Activity.' : 'Unable to start task.'), response.ok);
+    show(response.message || response.error || (response.ok ? 'Task started. Track actual tool results in Activity.' : 'Unable to start task.'), response.ok);
     if (response.ok) actPoll();
   }
   async function dispatch(a, action) {
@@ -85,6 +121,14 @@
       detail.textContent = (a.modelMode === 'mix' ? 'Multi-model' : a.modelMode === 'auto' ? 'Smart routing' : a.model) +
         (a.running ? ' · Scheduled' : ' · Manual') + ' · ' + (a.runOn || 'local');
       item.append(name,detail);
+      if (a.runOn === 'server' || a.runOn === 'cloudpc') {
+        const remoteState = document.createElement('small');
+        remoteState.className = 'muted';
+        remoteState.dataset.remoteAgent = a.id;
+        const actual = remote.get(a.id);
+        remoteState.textContent = actual ? ' · ' + (actual.status || 'idle') + ' · ' + (actual.runs || 0) + ' runs' : ' · Checking remote status';
+        item.append(remoteState);
+      }
       for (const [action,label] of [['edit','Edit'],['toggle',a.running?'Pause':'Start'],['run','Run'],['delete','Delete']]) {
         if (action === 'delete' && a.id === 'vortex-default') continue;
         const button = document.createElement('button');
@@ -95,6 +139,7 @@
       list.append(item);
     }
     if (!agents.length) list.textContent = 'No agents yet.';
+    void refreshRemoteStatuses();
   }
   el('aNew').addEventListener('click', fresh);
   el('aSave').addEventListener('click', save);
@@ -102,6 +147,7 @@
     if (!editing) { const r = await save(); if (!r.ok) return; }
     await run(agents.find(a => a.id === editing));
   });
+  el('aRunOn').addEventListener('change', refreshWorkerStatus);
   el('aProv').addEventListener('change', () => { if (el('aProv').value !== 'vortex') el('aMode').value = 'single'; });
   el('aNonstop').addEventListener('change', () => { if (el('aNonstop').checked) el('aEvery').value = '0'; });
   el('aKill').addEventListener('click', async () => {
