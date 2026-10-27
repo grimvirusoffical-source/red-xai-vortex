@@ -197,12 +197,21 @@ func (s *Server) cancelAgentRuns(agentID string) {
 
 func (s *Server) agentKillAll(in map[string]any) map[string]any {
     if err:=s.markAgentsStopped(true);err!=nil {return map[string]any{"ok":false,"message":"Failed to persist emergency stop."}}
+    remoteFailures:=[]string{}
     for _,a:=range s.St.Agents {
         if a.Running || a.AlwaysAllow {
+            if a.Running && agentRemoteMode(a)=="server" {
+                if err:=s.toggleServerAgent(a.ID,false);err!=nil {
+                    remoteFailures=append(remoteFailures,a.Name+": "+err.Error())
+                }
+            }
             a.Running=false;a.AlwaysAllow=false;s.St.SaveAgent(a)
         }
     }
     count,err:=s.stopPCControl()
+    if len(remoteFailures)>0 {
+        return map[string]any{"ok":false,"stopped":count,"message":"Local agents stopped. Confirm the following remote agents stopped before considering them safe: "+strings.Join(remoteFailures,"; ")}
+    }
     if err!=nil {return map[string]any{"ok":true,"stopped":count,"warning":err.Error()}}
     return map[string]any{"ok":true,"stopped":count}
 }
