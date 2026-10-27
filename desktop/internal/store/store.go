@@ -41,6 +41,9 @@ type Chat struct {
 	Kind     string    `json:"kind,omitempty"`     // "" (model chat) | "agent" | "party"
 	AgentID  string    `json:"agentID,omitempty"`  // agent chats: the agent
 	Members  []string  `json:"members,omitempty"`  // party chats: agent IDs (or "model:<id>") that reply in turn
+	LeaderID string   `json:"leaderID,omitempty"` // one leader chooses assignments and consolidates results
+	WorkspaceID string `json:"groupWorkspaceID,omitempty"` // project-scoped group conversations
+	GroupInstructions string `json:"groupInstructions,omitempty"`
 }
 
 // Composer holds the chat composer controls: strength tier, reply length and Quick replies.
