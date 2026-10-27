@@ -258,6 +258,9 @@ func (s *Server) startRunFrom(agentID, task, chatID string, local bool) map[stri
 	var agent store.Agent
 	for _, a := range s.St.Agents { if a.ID==agentID { agent=a; break } }
 	if agent.ID=="" {return map[string]any{"ok":false,"message":"Choose a saved agent before running tasks."}}
+    if agentRemoteMode(agent)!="local" {
+        return map[string]any{"ok":false,"message":"This agent is configured for remote work. Start its server schedule or connect a Cloud PC worker; it cannot silently run on your local machine."}
+    }
 	if s.agentsStopped() {return map[string]any{"ok":false,"message":"Agent emergency stop is active."}}
 	if requiresDesktopBrowser(task) {
 		return map[string]any{"ok":false,"message":"This desktop has no verified Chrome/Discord browser-action adapter. The agent will not type a message into the wrong app or claim it was sent. Configure a browser integration before running this task."}
