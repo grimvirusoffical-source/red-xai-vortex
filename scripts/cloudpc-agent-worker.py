@@ -460,6 +460,14 @@ def execute_job(job, gateway, actions):
         "After TOOL_RESULT, inspect outcomes and continue. Available tools:\n" +
         "\n".join("- "+k+": "+TOOL_DESCRIPTIONS[k] for k in enabled)
     )
+    planner = str(job.get("planner") or "")
+    if planner and planner != str(job.get("model")):
+        gateway.check(job)
+        planning = gateway.model(planner, [
+            {"role":"system","content":"You are the planning specialist. Suggest a bounded plan with concrete verification. Do not call tools or claim anything was executed."},
+            {"role":"user","content":clipped(job.get("goal"),6500)},
+        ])
+        instructions += "\n\nSECOND-MODEL PLAN (suggestions only; tools must verify reality):\n" + clipped(planning,2200)
     messages = [{"role":"system","content":instructions}]
     for prior in job.get("history",[])[-10:]:
         if prior.get("role") in ("assistant","user"):
