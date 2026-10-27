@@ -21,12 +21,12 @@ struct ToolSpec {
     static func tools(for model: String, agent explicit: AgentProfile? = nil) -> [ToolSpec] {
         let profile = explicit ?? AgentStore.shared.active
         var t: [ToolSpec] = []
-        if chatToolsOn { t += PluginStore.shared.enabledTools(); t += MCPStore.shared.enabledTools() }
-        t += PCControl.shared.tools(for: model)   // PC tools follow the PC Control master switch, not 🔧
-        if chatToolsOn { t += SkillStore.shared.activeExtraTools(all: t) }
+        if chatToolsOn && (profile?.toolsOn ?? true) { t += PluginStore.shared.enabledTools(); t += MCPStore.shared.enabledTools() }
+        if profile?.pcControlOn ?? true { t += PCControl.shared.tools(for: PCControl.eligible(model) ? model : "vortex") }
+        if chatToolsOn && (profile?.toolsOn ?? true) { t += SkillStore.shared.activeExtraTools(all: t) }
         // unique names (first wins)
         var seen = Set<String>()
-        return t.filter { seen.insert($0.name).inserted }
+        return t.filter { seen.insert($0.name).inserted && AgentToolGrants.permits($0, profile) }
     }
 }
 
