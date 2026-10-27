@@ -245,6 +245,23 @@ func handleAgents(w http.ResponseWriter, r *http.Request, k *Key) {
     if id=="worker" { handleAgentWorker(w,r,k,act);return }
 	agMu.Lock()
 	defer agMu.Unlock()
+    // Atomic emergency stop across every server/Cloud PC agent owned by this
+    // key. This is faster and more reliable than one request per agent.
+    if id=="stop-all" {
+        if r.Method!=http.MethodPost {fail(405,"POST required");return}
+        stopped:=0
+        for agentID,a:=range agents {
+            if a.KeyID!=k.ID {continue}
+            if a.On || a.Pending!=nil {
+                stopped++
+                a.On=false;a.Status="off";a.Pending=nil
+                agBusy[agentID]=false
+            }
+        }
+        agSaveLocked()
+        enc.Encode(map[string]any{"ok":true,"stopped":stopped})
+        return
+    }
 	if id == "" && r.Method == "GET" {
 		l := []bgAgent{}
 		for _, a := range agents {
