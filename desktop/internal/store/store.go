@@ -143,6 +143,15 @@ func (s *Store) AgentsSnapshot() []Agent {
 // ClaimAgentDue atomically records a run's next scheduling timestamp only
 // while the currently saved version is still due. This prevents a racing
 // edit/Stop from scheduling an outdated goal or resetting its permissions.
+func (s *Store) AgentIsRunning(id string) bool {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    for _,a:=range s.Agents {
+        if a.ID==id {return a.Running}
+    }
+    return false
+}
+
 func (s *Store) ClaimAgentDue(id string,now time.Time,due func(Agent) bool)(Agent,bool){
     s.mu.Lock()
     defer s.mu.Unlock()
