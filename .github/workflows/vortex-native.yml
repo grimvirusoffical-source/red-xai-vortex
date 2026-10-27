@@ -3,7 +3,7 @@ name: Vortex desktop regression
 on:
   pull_request:
   push:
-    branches: ['codex/vortex-*']
+    branches: ['main', 'codex/vortex-*']
   workflow_dispatch:
 
 permissions:
