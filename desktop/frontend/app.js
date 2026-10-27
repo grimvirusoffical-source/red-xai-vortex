@@ -36,7 +36,7 @@ function renderAgents(){
   const sel=$('#agentPick'); const cur=sel.value;
   sel.innerHTML = state.agents.map(a=>`<option value="${esc(a.id)}">${esc(a.name)} · ${esc(a.model)}</option>`).join('') || '<option value="vortex-default">Vortex</option>';
   if(cur) sel.value=cur;
-  $('#agentList').innerHTML = state.agents.map(a=>`<div class="row" style="margin:6px 0"><strong>${esc(a.name)}</strong> <span class="pill">${esc(a.provider)}</span> <span class="pill">${esc(a.model)}</span></div>`).join('') || '<em style="color:var(--muted)">No agents yet</em>';
+  window.AgentUI?.render(state.agents);
 }
 function renderModels(){
   const sel=$('#modelPick'); const cur=sel.value;
@@ -127,10 +127,7 @@ $('#send').onclick=async()=>{
   }catch(e){addMsg('assistant','The message could not be completed: '+e.message);}
   finally{$('#send').disabled=false;$('#send').textContent='Send ↗';window.VortexWorkspace?.sync();}
 };
-$('#aSave').onclick=async()=>{
-  const r=await bridge.call('agent.save',{name:$('#aName').value, provider:$('#aProv').value, model:$('#aModel').value, baseURL:$('#aBase').value, apiKey:$('#aKey').value});
-  $('#aKey').value=''; $('#aMsg').textContent=r.message||'Saved'; $('#aMsg').className=r.ok?'ok':'bad'; refresh();
-};
+// Unified agent editor is managed by agent-ui.js; other chat controls remain unchanged.
 $('#aTest').onclick=async()=>{
   const r=await bridge.call('agent.testVortex',{});
   $('#aMsg').textContent=r.message||''; $('#aMsg').className=r.ok?'ok':'bad';
