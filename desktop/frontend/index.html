@@ -278,6 +278,13 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
           <label><input id="aAlways" type="checkbox"/> Allow writes without per-action prompts — requires this computer's separate Always allow permission, and Stop can revoke it immediately</label>
         </fieldset>
         <div class="row">
+          <label style="flex:1;min-width:220px">Where to run
+            <select id="aRunOn">
+              <option value="local">Background on this computer (while Vortex runs)</option>
+              <option value="server">Vortex server (24/7 model-only)</option>
+              <option value="cloudpc">Cloud PC (requires installed task worker)</option>
+            </select>
+          </label>
           <label style="flex:1;min-width:220px">How often to run
             <select id="aEvery">
               <option value="0">Manual only</option><option value="30">Every 30 seconds</option>
