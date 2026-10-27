@@ -96,7 +96,7 @@ struct BGAgent: Codable, Identifiable, Equatable {
             msg = "Saved \(a.name)."; await refresh()
         } catch { msg = error.localizedDescription }
     }
-    func toggle(_ a: BGAgent, _ on: Bool) async {
+    @discardableResult func toggle(_ a: BGAgent, _ on: Bool) async -> Bool {
         do {
             _ = try await req("/agents/\(a.id)/toggle", "POST", ["on": on])
             if let i = AgentStore.shared.agents.firstIndex(where: { $0.id == a.id }) {
@@ -105,7 +105,11 @@ struct BGAgent: Codable, Identifiable, Equatable {
             }
             msg = on ? "\(a.name) is running in the background." : "\(a.name) turned off."
             await refresh()
-        } catch { msg = error.localizedDescription }
+            return true
+        } catch {
+            msg = error.localizedDescription
+            return false
+        }
     }
     func delete(_ a: BGAgent) async {
         do {
