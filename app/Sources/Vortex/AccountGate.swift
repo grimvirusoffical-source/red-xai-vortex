@@ -10,6 +10,8 @@ import Foundation
     @Published var termsOK = UserDefaults.standard.string(forKey: "termsAccepted") == Terms.version
     @Published var signedIn = false
     @Published var owner = false
+    // An explicit sign-out must show account login even if owner mode is enabled.
+    @Published var requireAccountSignIn = UserDefaults.standard.bool(forKey: "vortexRequireAccountSignIn")
     @Published var checking = true
     @Published var username = UserDefaults.standard.string(forKey: "redxUser") ?? ""
     @Published var msg = ""
@@ -18,7 +20,18 @@ import Foundation
     @Published var call = false
     @Published var selectedMethod = "totp"
 
-    var ready: Bool { termsOK && (signedIn || owner) }
+    var ready: Bool { termsOK && (signedIn || (owner && !requireAccountSignIn)) }
+
+    func accountSignInSucceeded() {
+        requireAccountSignIn = false
+        UserDefaults.standard.removeObject(forKey: "vortexRequireAccountSignIn")
+    }
+
+    func continueAsOwner() {
+        // Keep the original owner override available on user request.
+        requireAccountSignIn = false
+        UserDefaults.standard.removeObject(forKey: "vortexRequireAccountSignIn")
+    }
 
     func acceptTerms() { UserDefaults.standard.set(Terms.version, forKey: "termsAccepted"); termsOK = true }
 
@@ -27,6 +40,7 @@ import Foundation
         owner = await isOwner()
         if let approvedEmail = await VortexQuickLogin.shared.restore() {
             username = approvedEmail; signedIn = true
+            accountSignInSucceeded()
             UserDefaults.standard.set(username, forKey: "redxUser")
             return
         }
@@ -34,6 +48,7 @@ import Foundation
         let (st, m) = await call("me", session: tok)
         if st == 200, let a = m["account"] as? [String: Any] {
             username = (a["username"] as? String) ?? username; signedIn = true
+            accountSignInSucceeded()
             UserDefaults.standard.set(username, forKey: "redxUser")
         } else if st == 503 && !username.isEmpty {
             signedIn = true; msg = "RedX accounts unreachable; using your saved sign-in."   // offline grace
@@ -91,9 +106,16 @@ import Foundation
         }
     }
     func signOut() async {
+        // Switch accounts locally before any network token-revocation request.
+        // Do not delete the owner's admin key, chats, or settings.
+        let legacy = Keychain.get(account: "redx-session") ?? ""
+        Keychain.set("", account: "redx-session")
+        requireAccountSignIn = true
+        UserDefaults.standard.set(true, forKey: "vortexRequireAccountSignIn")
+        signedIn = false; username = ""; msg = ""; flow = ""
+        UserDefaults.standard.removeObject(forKey: "redxUser")
         await VortexQuickLogin.shared.logout()
-        if let t = Keychain.get(account: "redx-session"), !t.isEmpty { _ = await call("logout", session: t, body: [:]) }
-        Keychain.set("", account: "redx-session"); signedIn = false; username = ""; UserDefaults.standard.removeObject(forKey: "redxUser")
+        if !legacy.isEmpty { _ = await call("logout", session: legacy, body: [:]) }
     }
 
     private func call(_ route: String, flow: String = "", session: String = "", body: [String: Any]? = nil) async -> (Int, [String: Any]) {
@@ -185,6 +207,10 @@ struct GateView<Content: View>: View {
                 }
             }
             if !g.msg.isEmpty { Text(g.msg).font(.callout).foregroundStyle(.orange).frame(width: 340) }
+            if g.owner && g.requireAccountSignIn {
+                Button("Continue in owner mode instead") { g.continueAsOwner() }
+                    .buttonStyle(.bordered)
+            }
             HStack(spacing: 16) {
                 Link("Create an account", destination: URL(string: "https://red-xai.com/")!)
                 Link("Terms", destination: URL(string: "https://red-xai.com/vortex/terms")!)

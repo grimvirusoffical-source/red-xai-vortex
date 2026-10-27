@@ -5,6 +5,7 @@ struct ContentView: View {
     @Environment(\.royalPalette) private var palette
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var tunnel: TunnelManager
+    @ObservedObject private var account = AccountGate.shared
     @AppStorage("accent") var accent = "red"
     @AppStorage("useTunnel") var useTunnel = true
     @AppStorage("sshHost") var sshHost = Defaults.sshHost
@@ -104,6 +105,19 @@ struct ContentView: View {
                 }.listStyle(.sidebar).scrollContentBackground(.hidden).background(RoyalTheme.sidebar)
                 VStack(spacing: 0) {
                     Rectangle().fill(RoyalTheme.line).frame(height: 1)
+                    HStack(spacing: 8) {
+                        Image(systemName: "person.crop.circle").foregroundStyle(RoyalTheme.secondary)
+                        Text(account.signedIn ? "Signed in: \(account.username)" : "Owner mode")
+                            .font(.system(size: 11)).foregroundStyle(RoyalTheme.secondary).lineLimit(1)
+                        Spacer(minLength: 2)
+                        Button {
+                            Task { await account.signOut() }
+                        } label: {
+                            Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
+                        }
+                        .buttonStyle(RoyalButtonStyle(compact: true))
+                        .accessibilityIdentifier("vortex-sign-out")
+                    }.padding(.horizontal, 15).padding(.vertical, 12)
                     HStack(spacing: 8) {
                         Circle().fill(tunnel.running ? .green : (useTunnel ? .orange : RoyalTheme.secondary)).frame(width: 6, height: 6)
                         Text(useTunnel ? (tunnel.running ? (tunnel.external ? "Tunnel up (shared)" : "Tunnel up") : "Tunnel down") : "Direct connection").font(.system(size: 11)).foregroundStyle(RoyalTheme.secondary)

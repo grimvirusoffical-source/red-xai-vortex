@@ -424,6 +424,12 @@ func (s *Server) chatSend(in map[string]any) map[string]any {
 	}
 	defer res.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if res.StatusCode != http.StatusOK {
+		// Preserve the user's draft without inventing an assistant reply.
+		// A real 403 may mean a restricted model, scope or IP: never bypass it.
+		s.St.SaveChat(*c)
+		return map[string]any{"error": chatGatewayError(res.StatusCode, b)}
+	}
 	var parsed map[string]any
 	json.Unmarshal(b, &parsed)
 	reply := ""

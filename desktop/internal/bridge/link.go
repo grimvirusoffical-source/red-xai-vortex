@@ -1,7 +1,9 @@
 package bridge
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"net"
 	"os"
 	"os/exec"
@@ -54,6 +56,14 @@ func helperPath() string {
 
 func fileExists(p string) bool { st, err := os.Stat(p); return err == nil && !st.IsDir() }
 
+// Include the key identity in the helper restart decision. Never retain or log
+// the plaintext API key here: only the child process receives it via its env.
+// Without this, replacing a key leaves RedX Link authenticating with the old key.
+func linkSignature(args []string, key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return strings.Join(args, " ") + " key-sha256=" + hex.EncodeToString(sum[:])
+}
+
 // applyLink starts, restarts or stops the helper to match the settings.
 func (s *Server) applyLink() {
 	st := s.St.Settings
@@ -66,7 +76,7 @@ func (s *Server) applyLink() {
 	}
 	args := []string{"proxy", "-listen", linkListen, "-servers", srv, "-barcode"}
 	key := keyring.Get("vortex-api-key")
-	sig := strings.Join(args, " ")
+	sig := linkSignature(args, key)
 	if !want {
 		sig = ""
 	}
