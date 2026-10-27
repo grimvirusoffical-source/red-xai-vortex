@@ -120,7 +120,7 @@ func (s *Server) groupSend(c *store.Chat, comp store.Composer, local bool) map[s
 	if c.Kind == "agent" {
 		ids = []string{c.AgentID}
 	} else if c.Kind == "party" && c.LeaderID != "" {
-        return s.groupSendLed(c,comp,false)
+        return s.groupSendLed(c,comp,local)
     }
 	ms := make([]member, 0, len(ids))
 	for _, id := range ids {
