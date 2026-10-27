@@ -242,7 +242,7 @@ enum PCTools {
                     }
                     try await verifyBrowserTarget(app: app, expectedURL: expected)
                 }
-                try focusedInputIsNotSearchField()
+                try focusedInputIsNotSearchField(expectedPID: target)
                 let units = Array(t.utf16); var offset = 0
                 while offset < units.count {
                     try PCExecutionContext.check()
@@ -368,7 +368,7 @@ enum PCTools {
         }
     }
 
-    static func focusedInputIsNotSearchField() throws {
+    static func focusedInputIsNotSearchField(expectedPID: pid_t?) throws {
         let system = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
@@ -376,6 +376,12 @@ enum PCTools {
             throw PCError.msg("Could not verify the focused input. Nothing was typed.")
         }
         let ui = unsafeBitCast(element, to: AXUIElement.self)
+        var focusedPID: pid_t = 0
+        guard let expectedPID, expectedPID != getpid(),
+              AXUIElementGetPid(ui, &focusedPID) == .success,
+              focusedPID == expectedPID else {
+            throw PCError.msg("The focused input belongs to a different application. Nothing was typed.")
+        }
         var role: CFTypeRef?, title: CFTypeRef?, placeholder: CFTypeRef?
         _ = AXUIElementCopyAttributeValue(ui, kAXRoleAttribute as CFString, &role)
         _ = AXUIElementCopyAttributeValue(ui, kAXTitleAttribute as CFString, &title)
