@@ -11,6 +11,9 @@ import (
 
 func testCloudWorkerSetup(t *testing.T) (*Key,*bgAgent) {
     t.Helper()
+    previousNotification:=workerNotification
+    workerNotification=func(to,kind,title,body,link string){}
+    t.Cleanup(func(){workerNotification=previousNotification})
     agMu.Lock()
     oldAgents,oldBusy,oldFile,oldPresence:=agents,agBusy,agFile,workerPresence
     agents=map[string]*bgAgent{}
@@ -92,7 +95,13 @@ func TestCloudAgentWorkerLeaseAndStop(t *testing.T) {
     req:=httptest.NewRequest(http.MethodPost,"/v1/agents/"+a.ID+"/toggle",strings.NewReader(`{"on":false}`))
     handleAgents(stop,req,k)
     if stop.Code!=200 {t.Fatal("agent could not stop",stop.Code,stop.Body.String())}
-    if w=makeRequest("status","",claim.Job.Lease);w.Code!=409 {t.Fatal("stopped worker was not revoked",w.Code)}
+    cancelled,_:=json.Marshal(map[string]any{
+        "worker_id":"cloudpc-demo-123","agent_id":a.ID,
+        "job_id":second.Job.ID,"lease":second.Job.Lease,
+    })
+    if w=testCloudWorkerRequest(k,"status",string(cancelled));w.Code!=409 {
+        t.Fatal("stopped remote worker was not revoked",w.Code)
+    }
 }
 func TestCloudAgentWorkerRespectsRevokedScopeAndOnlineTTL(t *testing.T) {
     k,a:=testCloudWorkerSetup(t)
