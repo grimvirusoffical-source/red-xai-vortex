@@ -185,7 +185,12 @@ struct AgentsView: View {
             Picker("Provider", selection: $draft.provider) {
                 ForEach(AgentProfile.providers, id: \.0) { Text($0.1).tag($0.0) }
             }
-            TextField("Model id", text: $draft.model)
+            Picker("Model intelligence", selection: Binding(get: { draft.modelMode ?? "single" }, set: { draft.modelMode = $0 })) {
+                Text("Smart specialist selection").tag("auto")
+                Text("Multiple models: planner + executor").tag("mix")
+                Text("One model").tag("single")
+            }.disabled(draft.provider != "vortex")
+            TextField("Model id (single or external provider)", text: $draft.model)
             if draft.provider == "openai_compat" || draft.provider == "ollama" || draft.provider == "anthropic" || draft.provider == "google" {
                 TextField("Base URL", text: $draft.baseURL)
                     .help(draft.provider == "openai_compat" ? "Any OpenAI-compatible /v1 base URL" : "Override default endpoint")
