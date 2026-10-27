@@ -1,0 +1,125 @@
+name: Downloadable Windows Quick Login OR Password test bundle
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/windows-auth-test-package.yml'
+      - 'desktop/**'
+      - 'bases/**'
+      - 'scripts/windows-auth-choice-e2e.cjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Fetch and verify existing official runtime files
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force dist/original | Out-Null
+          gh release download v2.11.3 -R grimvirusoffical-source/red-xai-vortex -D dist/original -p 'Red-XAI-Vortex-windows-amd64.zip' -p release-manifest.json -p release-manifest.sig
+          if ($LASTEXITCODE -ne 0) { throw 'Could not get official runtime' }
+          $d = (Resolve-Path dist/original).Path
+          Push-Location desktop
+          try {
+            go run ./cmd/redx-verify (Join-Path $d 'release-manifest.json') (Join-Path $d 'release-manifest.sig') (Join-Path $d 'Red-XAI-Vortex-windows-amd64.zip')
+            if ($LASTEXITCODE -ne 0) { throw 'Official Windows runtime did not pass signed release verification' }
+          } finally { Pop-Location }
+          Expand-Archive -Path (Join-Path $d 'Red-XAI-Vortex-windows-amd64.zip') -DestinationPath dist/test-root
+
+      - name: Build corrected executable and replace owned code
+        shell: bash
+        run: |
+          VORTEX_VERSION=2.11.4 bash scripts/build-desktop-with-helper.sh windows amd64 "$PWD/dist/new-binaries"
+          cp dist/new-binaries/vortex.exe dist/test-root/vortex.exe
+          cp dist/new-binaries/vortex-base.exe dist/test-root/vortex-base.exe
+          cp desktop/frontend/* dist/test-root/frontend/
+          test -s dist/test-root/redx-link.exe
+          test -s dist/test-root/vortex.exe
+          test -d dist/test-root/rsx-runtime
+
+      - name: Mark as unsigned, manual test-only preview
+        shell: pwsh
+        run: |
+          @'
+          Vortex 2.11.4 — WINDOWS QUICK/PASSWORD LOGIN TEST BUILD
+
+          THIS IS A TEST ZIP, NOT A STABLE SIGNED RELEASE.
+          This Vortex EXE is not Authenticode signed. Do not disable
+          Defender, SmartScreen or Smart App Control to install it.
+
+          Extract this entire ZIP to a normal folder, then run vortex.exe.
+          On the sign-in screen, choose EITHER:
+           - Quick Login: use your selected already-signed-in browser.
+             Approve Vortex once; no desktop password/extra MFA.
+           - Password: enter credentials and MFA only if required.
+             You do NOT need to click Quick Login.
+
+          To see errors, run in PowerShell from the extracted folder:
+             .\vortex.exe -no-update
+
+          Do not share actual approval URLs, passwords or account tokens.
+
+          Original runtime files were verified against Red-XAI's signed
+          stable release. The modified test ZIP as a whole has NOT been
+          signed by the official updater key.
+          '@ | Set-Content dist/test-root/README-WINDOWS-AUTH-TEST.txt
+
+      - name: Test both methods in real Windows Edge
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm install --no-save --ignore-scripts playwright-core@1.56.1
+          if ($LASTEXITCODE -ne 0) { throw 'Edge automation install failed' }
+          $dir = (Resolve-Path dist/test-root).Path
+          $out = Join-Path $dir 'startup-stdout.log'
+          $errlog = Join-Path $dir 'startup-stderr.log'
+          $proc = Start-Process -FilePath (Join-Path $dir 'vortex.exe') -ArgumentList @('-no-update') -WorkingDirectory $dir -PassThru -RedirectStandardOutput $out -RedirectStandardError $errlog
+          try {
+            $localURL = $null
+            for ($i=0; $i -lt 100; $i++) {
+              Start-Sleep -Milliseconds 350
+              if ($proc.HasExited) { throw 'Windows test binary exited before login' }
+              if (Test-Path $out) {
+                $log = Get-Content $out -Raw -ErrorAction SilentlyContinue
+                if ($log -match 'bridge on (http://127\.0\.0\.1:\d+)') { $localURL = $Matches[1]; break }
+              }
+            }
+            if (-not $localURL) { throw 'Windows native app did not start' }
+            node scripts/windows-auth-choice-e2e.cjs $localURL
+            if ($LASTEXITCODE -ne 0) { throw 'Two alternative sign-in flows failed' }
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          }
+
+      - name: Produce complete Windows test ZIP
+        shell: pwsh
+        run: |
+          Remove-Item -Force dist/test-root/startup-stdout.log,dist/test-root/startup-stderr.log -ErrorAction SilentlyContinue
+          Compress-Archive -Path dist/test-root/* -DestinationPath dist/Vortex-2.11.4-windows-Auth-OR-Quick-TEST-UNSIGNED.zip -CompressionLevel Optimal
+          if (-not (Test-Path dist/Vortex-2.11.4-windows-Auth-OR-Quick-TEST-UNSIGNED.zip)) { throw 'Package failed' }
+          Get-FileHash dist/Vortex-2.11.4-windows-Auth-OR-Quick-TEST-UNSIGNED.zip -Algorithm SHA256 | Format-List
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Vortex-Windows-Auth-OR-Quick-TEST-NOT-STABLE
+          path: dist/Vortex-2.11.4-windows-Auth-OR-Quick-TEST-UNSIGNED.zip
+          retention-days: 7
+          if-no-files-found: error
