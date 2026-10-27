@@ -111,12 +111,12 @@ extension ChatStore {
                     var p = params; p.model = m
                     if let ap = agentP { p = ap; p.maxTokens = params.maxTokens }
                     if m.hasPrefix("local:") { let id = String(m.dropFirst(6)); p.baseURL = try await LocalRuntime.shared.ensure(id); p.apiKey = ""; p.model = id }
-                    let solo = (snapshot.participants?.count ?? 0) == 1 && m.hasPrefix("agent:")
+                    let worker = m.hasPrefix("agent:") && (!coordinated || (n > 0 && n < who.count - 1))
                     let who = ActivityAgent(id: m.hasPrefix("agent:") ? String(m.dropFirst(6)) : m, name: GroupTurns.agentNames[m] ?? m)
-                    let tools = solo ? await MainActor.run { () -> [ToolSpec] in
+                    let tools = await MainActor.run { () -> [ToolSpec] in
                         let a = AgentStore.shared.agents.first { "agent:" + $0.id == m }
-                        return (a?.toolsOn ?? true) ? ToolRegistry.tools(for: p.model) : []
-                    } : []
+                        return worker ? ToolRegistry.tools(for: p.model, agent: a) : []
+                    }
                     if !tools.isEmpty {
                         // Agent chat: the agent can act (tools, PC control) step by step; every step is logged.
                         let (t, _) = try await ActivityLog.$agent.withValue(who) {
