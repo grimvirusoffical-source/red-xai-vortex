@@ -52,6 +52,7 @@ struct BGAgent: Codable, Identifiable, Equatable {
         struct L: Codable { var data: [BGAgent] }
         guard let d = try? await req("/agents"), let l = try? JSONDecoder().decode(L.self, from: d) else { return }
         agents = l.data
+        migrateLegacyAgents(l.data)
         for a in l.data {
             if notify, a.unread > (lastUnread[a.id] ?? 0) {
                 let c = UNMutableNotificationContent(); c.title = "\(a.name) has an update"; c.body = "Background run \(a.runs) finished. Open Agents to read it."
