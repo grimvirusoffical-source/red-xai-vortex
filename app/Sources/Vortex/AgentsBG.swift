@@ -62,6 +62,23 @@ struct BGAgent: Codable, Identifiable, Equatable {
             lastUnread[a.id] = a.unread
         }
     }
+    private func migrateLegacyAgents(_ records: [BGAgent]) {
+        let local = AgentStore.shared
+        for old in records {
+            if local.agents.contains(where: { $0.id == old.id }) { continue }
+            var profile = AgentProfile(id: old.id, name: old.name, model: old.model)
+            profile.systemPrompt = old.system
+            profile.goal = old.goal
+            profile.modelMode = "single"
+            profile.runOn = old.run_on
+            profile.running = old.on
+            profile.scheduleSeconds = old.interval_s
+            profile.toolsOn = false
+            profile.pcControlOn = false
+            profile.permissions = []
+            local.upsert(profile)
+        }
+    }
     func save(_ a: BGAgent) async {
         do {
             _ = try await req("/agents", "POST", ["id": a.id, "name": a.name, "model": a.model, "system": a.system, "goal": a.goal,
