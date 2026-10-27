@@ -28,6 +28,7 @@ type bgAgent struct {
 	KeyID     string      `json:"key_id"`
 	Name      string      `json:"name"`
 	Model     string      `json:"model"`
+    Planner string      `json:"planner,omitempty"`
 	System    string      `json:"system"`
 	Goal      string      `json:"goal"`
 	IntervalS int         `json:"interval_s"`
@@ -278,6 +279,7 @@ func handleAgents(w http.ResponseWriter, r *http.Request, k *Key) {
 		if v, ok := str("model"); ok && v != "" {
 			a.Model = v
 		}
+        if v, ok := str("planner"); ok {a.Planner=v}
 		if v, ok := str("system"); ok {
 			a.System = v
 		}
@@ -310,8 +312,9 @@ func handleAgents(w http.ResponseWriter, r *http.Request, k *Key) {
                 a.Permissions=append(a.Permissions,item)
             }
         }
-        if !hasScope(k,"chat") || !modelOK(k,a.Model) {
-            fail(403,"API key lacks chat scope or permission for this model");return
+        if !hasScope(k,"chat") || !modelOK(k,a.Model) ||
+            (a.Planner!="" && !modelOK(k,a.Planner)) {
+            fail(403,"API key lacks chat scope or permission for this model or planner");return
         }
         if a.IntervalS<30 || a.IntervalS>86400 {
             fail(400,"run interval must be between 30 seconds and 24 hours");return
