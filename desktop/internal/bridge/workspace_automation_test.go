@@ -140,7 +140,8 @@ func TestFailedModelResponseDoesNotTriggerAutomaticCapture(t *testing.T) {
 		w.ChatSettings = []store.ChatSettings{{ChatID: "chat", SharedMemory: true, MemoryCapture: "save"}}
 	})
 	result := s.chatSend(map[string]any{"id": "chat", "text": "Hello", "model": "vortex"})
-	if result["reply"] != "(HTTP 400)" || calls.Load() != 1 || len(s.St.WorkspaceSnapshot().Memory.Entries) != 0 {
-		t.Fatal("error placeholder was treated as a completed model turn")
+	if msg, _ := result["error"].(string); !strings.Contains(msg, "HTTP 400") ||
+		calls.Load() != 1 || len(s.St.WorkspaceSnapshot().Memory.Entries) != 0 {
+		t.Fatalf("failed response was hidden or treated as a completed turn: %v", result)
 	}
 }
