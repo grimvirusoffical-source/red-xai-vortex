@@ -492,7 +492,7 @@ def execute_job(job, gateway, actions):
                 raise Stopped("Worker lease was revoked during execution") from e
             result = "ERROR: "+str(e)
         messages.append({"role":"user","content":"TOOL_RESULT "+name+":\n"+clipped(result,5000)})
-    return "Reached the 24-step safety limit. Review real activity before another run."
+    raise WorkerError("Reached the 24-step safety limit; pause the job for review instead of repeating writes or sends.")
 
 
 def serve(base, key, worker_id, workspace, profile, domains, once=False):
