@@ -158,9 +158,22 @@ extension ChatStore {
         chats.append(c); selection = c.id; save()
     }
     func newParty() { var c = Chat(); c.title = "Party chat"; chats.append(c); selection = c.id; save() }
-    func setGroup(_ ps: [String], mode: String) {
+    func setGroup(_ ps: [String], mode: String, leader: String? = nil, workspaceName: String = "", instructions: String = "") {
         guard let i = idx(selection) else { return }
-        chats[i].participants = ps.isEmpty ? nil : ps; chats[i].turnMode = mode; chats[i].nextTurn = 0; save()
+        chats[i].participants = ps.isEmpty ? nil : ps
+        chats[i].turnMode = mode
+        chats[i].leaderParticipantID = ps.contains(leader ?? "") ? leader : nil
+        chats[i].groupInstructions = instructions
+        chats[i].nextTurn = 0
+        if !workspaceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let id = WorkspaceStore.shared.newProject(workspaceName)
+            chats[i].projectID = id
+            if let j = WorkspaceStore.shared.state.projects.firstIndex(where: { $0.id == id }) {
+                WorkspaceStore.shared.state.projects[j].instructions = instructions
+                WorkspaceStore.shared.save()
+            }
+        }
+        save()
     }
 }
 
