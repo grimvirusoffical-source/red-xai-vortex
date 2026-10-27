@@ -147,6 +147,35 @@ jobs:
         run: bash -n scripts/publish-vortex-release.sh
       - name: Build Linux package executables
         run: VORTEX_VERSION=2.11.4 bash scripts/build-desktop-with-helper.sh linux amd64 "$PWD/dist/linux"
+      - name: Stage complete Linux manual test archive from last verified runtime
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/original-linux dist/linux-test
+          gh release download v2.11.3 -R grimvirusoffical-source/red-xai-vortex -D dist/original-linux \
+            -p Red-XAI-Vortex-linux-amd64.tar.gz -p release-manifest.json -p release-manifest.sig
+          (cd desktop && go run ./cmd/redx-verify \
+            ../dist/original-linux/release-manifest.json ../dist/original-linux/release-manifest.sig \
+            ../dist/original-linux/Red-XAI-Vortex-linux-amd64.tar.gz)
+          tar -xzf dist/original-linux/Red-XAI-Vortex-linux-amd64.tar.gz -C dist/linux-test
+          cp dist/linux/vortex-linux-amd64 dist/linux-test/vortex
+          cp dist/linux/vortex-linux-amd64 dist/linux-test/vortex-linux-amd64
+          cp dist/linux/vortex-base dist/linux-test/vortex-base
+          cp -a desktop/frontend/. dist/linux-test/frontend/
+          test -s dist/linux-test/redx-link
+          test -d dist/linux-test/rsx-runtime
+          test -s dist/linux-test/vortex
+          echo 'Vortex 2.11.4 MANUAL TEST ONLY. This modified archive is not signed by the official updater key. Never disable OS security checks; it is not an automatic update.' > dist/linux-test/README-LINUX-TEST-UNSIGNED.txt
+          tar -czf dist/Vortex-2.11.4-linux-amd64-TEST-UNSIGNED.tar.gz -C dist/linux-test .
+          sha256sum dist/Vortex-2.11.4-linux-amd64-TEST-UNSIGNED.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          name: Vortex-Linux-2.11.4-MANUAL-TEST-NOT-STABLE
+          path: dist/Vortex-2.11.4-linux-amd64-TEST-UNSIGNED.tar.gz
+          retention-days: 7
+          if-no-files-found: error
 
   published-windows-real-browser:
     name: Published Windows 2.11.3 browser + login (${{ matrix.os }})
