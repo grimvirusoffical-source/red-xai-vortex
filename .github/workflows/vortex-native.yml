@@ -143,6 +143,8 @@ jobs:
         run: go test ./... -run '^TestVortexTier' -count=1 -timeout=8m
       - name: Frontend tests
         run: node --test desktop/frontend/*.test.cjs
+      - name: Validate official release publisher script
+        run: bash -n scripts/publish-vortex-release.sh
       - name: Build Linux package executables
         run: VORTEX_VERSION=2.11.4 bash scripts/build-desktop-with-helper.sh linux amd64 "$PWD/dist/linux"
 
