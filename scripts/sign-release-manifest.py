@@ -39,6 +39,8 @@ def main():
     parser.add_argument("--assets", type=Path, required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--commit", required=True)
+    parser.add_argument("--platforms", choices=("all", "windows-linux"), default="all",
+                        help="Sign only existing Windows and Linux packages when Mac notarization is pending")
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", args.version):
         parser.error("version must be a numeric dotted release")
@@ -57,8 +59,9 @@ def main():
     public = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw).hex()
     if public != EXPECTED_PUBLIC_KEY:
         parser.error("key does not match the public key pinned in this release")
-    names = ["Red-XAI-Vortex-linux-amd64.tar.gz", "Red-XAI-Vortex-windows-amd64.zip",
-             f"Vortex-{args.version}-mac.zip", f"Vortex-{args.version}-mac.dmg"]
+    names = ["Red-XAI-Vortex-linux-amd64.tar.gz", "Red-XAI-Vortex-windows-amd64.zip"]
+    if args.platforms == "all":
+        names.extend([f"Vortex-{args.version}-mac.zip", f"Vortex-{args.version}-mac.dmg"])
     hashes = {}
     for name in names:
         path = assets / name
