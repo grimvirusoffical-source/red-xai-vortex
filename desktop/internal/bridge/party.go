@@ -119,7 +119,9 @@ func (s *Server) groupSend(c *store.Chat, comp store.Composer) map[string]any {
 	ids := c.Members
 	if c.Kind == "agent" {
 		ids = []string{c.AgentID}
-	}
+	} else if c.Kind == "party" && c.LeaderID != "" {
+        return s.groupSendLed(c,comp,false)
+    }
 	ms := make([]member, 0, len(ids))
 	for _, id := range ids {
 		ms = append(ms, s.memberFor(id))
@@ -193,6 +195,9 @@ func (s *Server) agentChat(agentID string) map[string]any {
 
 // partyNew creates a party chat with agents and/or models ("model:<id>").
 func (s *Server) partyNew(title string, members []string) map[string]any {
+    return s.partyNewWithLeader(title,members,"","","")
+}
+func (s *Server) partyNewWithLeader(title string, members []string, leaderID, workspaceName, instructions string) map[string]any {
 	if len(members) < 2 {
 		return map[string]any{"ok": false, "message": "Pick at least two agents or models."}
 	}
@@ -203,7 +208,24 @@ func (s *Server) partyNew(title string, members []string) map[string]any {
 		}
 		title = "Party: " + strings.Join(names, ", ")
 	}
-	c := store.Chat{ID: fmt.Sprintf("p-%d", time.Now().UnixNano()), Title: title, Kind: "party", Members: members, Updated: time.Now()}
+    if len(members)>8 {return map[string]any{"ok":false,"message":"Use no more than eight members per group."}}
+    if len(instructions)>8000 || len(workspaceName)>100 {return map[string]any{"ok":false,"message":"Workspace title or instructions too long."}}
+    leaderID=normalizeGroupLeader(leaderID,members)
+    c:=store.Chat{ID:fmt.Sprintf("p-%d",time.Now().UnixNano()),Title:title,Kind:"party",Members:members,
+        LeaderID:leaderID,GroupInstructions:instructions,Updated:time.Now()}
+    if strings.TrimSpace(workspaceName)!="" {
+        projectID:=workspaceID("team-project")
+        err:=s.St.UpdateWorkspace(func(w *store.Workspace) error {
+            w.Projects=append(w.Projects,store.Project{
+                ID:projectID,Name:strings.TrimSpace(workspaceName),Instructions:instructions,
+                ChatIDs:[]string{c.ID},MemoryEnabled:false,UpdatedAt:time.Now().UTC(),
+            })
+            w.ChatSettings=append(w.ChatSettings,store.ChatSettings{ChatID:c.ID,ProjectID:projectID})
+            return nil
+        })
+        if err!=nil {return map[string]any{"ok":false,"message":"Could not create a separate team workspace: "+err.Error()}}
+        c.WorkspaceID=projectID
+    }
 	s.St.SaveChat(c)
-	return map[string]any{"ok": true, "id": c.ID}
+	return map[string]any{"ok": true, "id": c.ID,"leaderID":leaderID,"workspaceID":c.WorkspaceID}
 }
