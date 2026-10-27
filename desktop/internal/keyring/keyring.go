@@ -33,7 +33,9 @@ func Set(account, value string) error {
 	mu.Lock()
 	defer mu.Unlock()
 	if value == "" {
-		delete(mem, account)
+		// An explicit logout must shadow an inherited environment credential
+		// for the rest of the process, including phone helpers on macOS.
+		mem[account] = ""
 		_ = os.Remove(filepath.Join(dir, sanitize(account)))
 		return nil
 	}
@@ -42,16 +44,17 @@ func Set(account, value string) error {
 }
 
 func Get(account string) string {
-	// The macOS host app keeps secrets in the Keychain and hands them to its bundled helpers via env.
-	if e := map[string]string{"vortex-api-key": "VORTEX_API_KEY", "redx-session": "VORTEX_REDX_SESSION"}[account]; e != "" {
-		if v := os.Getenv(e); v != "" {
-			return v
-		}
-	}
 	mu.Lock()
 	defer mu.Unlock()
 	if v, ok := mem[account]; ok {
 		return v
+	}
+	// Use an inherited Mac phone-helper credential only until an explicit
+	// local Set/Logout. A signed-out session must never be resurrected by env.
+	if e := map[string]string{"vortex-api-key": "VORTEX_API_KEY", "redx-session": "VORTEX_REDX_SESSION"}[account]; e != "" {
+		if v := os.Getenv(e); v != "" {
+			return v
+		}
 	}
 	b, err := os.ReadFile(filepath.Join(dir, sanitize(account)))
 	if err != nil {
