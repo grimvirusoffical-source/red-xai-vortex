@@ -103,7 +103,7 @@ func (s *Server) saveUnifiedAgent(in map[string]any) map[string]any {
     switch agentRemoteMode(a) {
     case "local", "server":
     case "cloudpc":
-        if a.Running { return map[string]any{"ok":false,"message":"Cloud PC computer-action worker is not connected; no remote actions have been scheduled."} }
+        if a.Provider!="vortex" {return map[string]any{"ok":false,"message":"Cloud PC worker currently uses Vortex gateway models; external API providers run locally."}}
     default:
         return map[string]any{"ok":false,"message":"Run on must be Local, Server, or a connected Cloud PC worker."}
     }
@@ -136,6 +136,10 @@ func (s *Server) saveUnifiedAgent(in map[string]any) map[string]any {
         if err:=s.syncServerAgent(a);err!=nil {
             return map[string]any{"ok":false,"message":err.Error()}
         }
+    } else if agentRemoteMode(a)=="cloudpc" {
+        if err:=s.syncCloudAgent(a);err!=nil {
+            return map[string]any{"ok":false,"message":err.Error()}
+        }
     }
     a.Updated=time.Now()
     s.St.SaveAgent(a)
@@ -151,12 +155,9 @@ func (s *Server) agentToggle(in map[string]any) map[string]any {
         if enabled && (s.agentsStopped() || a.ScheduleS<=0 || a.Goal=="") {
             return map[string]any{"ok":false,"message":"Clear Emergency Stop and set a schedule and goal before starting."}
         }
-        if agentRemoteMode(a)=="cloudpc" && enabled {
-            return map[string]any{"ok":false,"message":"Cloud PC worker has not connected yet."}
-        }
-        if agentRemoteMode(a)=="server" {
+        if agentRemoteMode(a)=="server" || agentRemoteMode(a)=="cloudpc" {
             if err:=s.toggleServerAgent(a.ID,enabled);err!=nil {
-                return map[string]any{"ok":false,"message":"Server background agent could not change state: "+err.Error()}
+                return map[string]any{"ok":false,"message":"Remote agent could not change state: "+err.Error()}
             }
         }
         a.Running=enabled
@@ -173,7 +174,7 @@ func (s *Server) agentDelete(in map[string]any) map[string]any {
     id:=str(in,"id")
     if id=="vortex-default" || id=="" { return map[string]any{"ok":false,"message":"The default Vortex agent cannot be removed."} }
     for _,a:=range s.St.Agents {
-        if a.ID==id && agentRemoteMode(a)=="server" {
+        if a.ID==id && (agentRemoteMode(a)=="server" || agentRemoteMode(a)=="cloudpc") {
             if err:=s.deleteServerAgent(id);err!=nil {
                 return map[string]any{"ok":false,"message":"Remote agent was not deleted: "+err.Error()}
             }
@@ -200,7 +201,7 @@ func (s *Server) agentKillAll(in map[string]any) map[string]any {
     remoteFailures:=[]string{}
     for _,a:=range s.St.Agents {
         if a.Running || a.AlwaysAllow {
-            if a.Running && agentRemoteMode(a)=="server" {
+            if a.Running && (agentRemoteMode(a)=="server" || agentRemoteMode(a)=="cloudpc") {
                 if err:=s.toggleServerAgent(a.ID,false);err!=nil {
                     remoteFailures=append(remoteFailures,a.Name+": "+err.Error())
                 }
