@@ -119,4 +119,26 @@ func TestCloudAgentWorkerRespectsRevokedScopeAndOnlineTTL(t *testing.T) {
     workerPresence[k.ID]=agentWorkerPresence{Name:"test",LastSeen:now.Add(-2*time.Minute).Unix()}
     if workerOnline(k.ID,now){t.Fatal("expired heartbeat counted as online")}
 }
+func TestCloudAgentWorkerStopAllRevokesLeasesWithoutStoppingOtherKeys(t *testing.T) {
+    key,primary:=testCloudWorkerSetup(t)
+    other:=&bgAgent{ID:"another-account",KeyID:"separate-key",
+        Name:"Other account",Model:"vortex",RunOn:"cloudpc",On:true,Goal:"Read"}
+    agMu.Lock();agents[other.ID]=other;agMu.Unlock()
+    w:=testCloudWorkerRequest(key,"heartbeat",`{"worker_id":"cloudpc-demo-123"}`)
+    if w.Code!=200 {t.Fatal(w.Code)}
+    w=testCloudWorkerRequest(key,"claim",`{"worker_id":"cloudpc-demo-123"}`)
+    var claim struct{Job struct{ID string `json:"id"`;Lease string `json:"lease"`}}
+    if err:=json.Unmarshal(w.Body.Bytes(),&claim);err!=nil||claim.Job.ID=="" {t.Fatal("worker claim failed",err)}
+    req:=httptest.NewRequest(http.MethodPost,"/v1/agents/stop-all",strings.NewReader("{}"))
+    stop:=httptest.NewRecorder()
+    handleAgents(stop,req,key)
+    if stop.Code!=200 || primary.On || primary.Pending!=nil || !other.On {
+        t.Fatalf("stop-all crossed ownership or left a lease: code=%d own=%#v other=%#v",stop.Code,primary,other)
+    }
+    payload,_:=json.Marshal(map[string]any{"worker_id":"cloudpc-demo-123",
+        "agent_id":primary.ID,"job_id":claim.Job.ID,"lease":claim.Job.Lease})
+    if w=testCloudWorkerRequest(key,"status",string(payload));w.Code!=409 {
+        t.Fatal("prior lease survived emergency stop",w.Code)
+    }
+}
 func mustJSON(a any) []byte {b,_:=json.Marshal(a);return b}
