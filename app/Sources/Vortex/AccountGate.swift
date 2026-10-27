@@ -81,10 +81,13 @@ import Foundation
         Keychain.set(tok, account: "redx-session"); await check()
         if !signedIn { msg = "Sign-in could not be verified." } else { await MainActor.run { PhoneHost.sync() } }
     }
-    func clearLegacyForQuick() async {
+    func clearLegacyForQuick() {
+        // The Vortex-scoped browser grant is sufficient. Clear any legacy
+        // password credential locally, without waiting for an unrelated
+        // network logout or a second MFA challenge.
         if let t = Keychain.get(account: "redx-session"), !t.isEmpty {
-            _ = await call("logout", session: t, body: [:])
             Keychain.set("", account: "redx-session")
+            Task { _ = await call("logout", session: t, body: [:]) }
         }
     }
     func signOut() async {
@@ -112,6 +115,7 @@ struct GateView<Content: View>: View {
     @Local var password = ""
     @Local var code = ""
     @Local var busy = false
+    @Local var signInMethod = "quick"
     var body: some View {
         Group {
             if g.ready { content() }
@@ -126,41 +130,65 @@ struct GateView<Content: View>: View {
             Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 72, height: 72)
             Text("Sign in to Red-XAI Vortex").font(.title2.bold())
             Text("Use your red-xai.com account.").foregroundStyle(.secondary)
-            Picker("Open approval in", selection: $quick.browserChoice) {
-                Text("Default browser").tag("default")
-                Text("Microsoft Edge").tag("edge")
-                Text("Google Chrome").tag("chrome")
-                Text("Firefox").tag("firefox")
-                Text("Safari").tag("safari")
-                Text("Brave").tag("brave")
-            }.pickerStyle(.menu).frame(width: 300)
-            Button(quick.busy ? "Waiting for Red-XAI approval…" : "Quick sign in with Red-XAI") { quick.begin() }
-                .buttonStyle(.borderedProminent).disabled(quick.busy || busy)
-            if !quick.code.isEmpty {
-                Text("Approval code: \(quick.code)").font(.headline.monospaced()).textSelection(.enabled)
-                Button("Cancel approval") { quick.cancel() }.buttonStyle(.bordered)
+            Picker("Sign-in method", selection: $signInMethod) {
+                Text("Quick Login").tag("quick")
+                Text("Password sign-in").tag("password")
             }
-            if !quick.message.isEmpty { Text(quick.message).font(.callout).foregroundStyle(.secondary).frame(width: 360) }
-            Text("Or use your password").font(.caption).foregroundStyle(.secondary)
-            if g.flow.isEmpty {
-                TextField("Username or email", text: $login).textFieldStyle(.roundedBorder).frame(width: 300)
-                SecureField("Password", text: $password).textFieldStyle(.roundedBorder).frame(width: 300).onSubmit { go() }
-                Button(busy ? "Signing in…" : "Sign in") { go() }.buttonStyle(.borderedProminent).disabled(busy || login.isEmpty || password.isEmpty)
+            .pickerStyle(.segmented).frame(width: 370)
+            .disabled(busy)
+            .onChange(of: signInMethod) { _, method in
+                if method == "password" {
+                    quick.cancel()
+                } else {
+                    // A pending legacy MFA challenge is not a prerequisite
+                    // for website-approved, Vortex-scoped Quick Login.
+                    g.flow = ""; g.msg = ""; code = ""; password = ""
+                }
+            }
+            if signInMethod == "quick" {
+                Text("Already signed in on red-xai.com in your selected browser? Approve Vortex there and enter directly — no second password or MFA step.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center).frame(width: 370)
+                Picker("Open approval in", selection: $quick.browserChoice) {
+                    Text("Default browser").tag("default")
+                    Text("Microsoft Edge").tag("edge")
+                    Text("Google Chrome").tag("chrome")
+                    Text("Firefox").tag("firefox")
+                    Text("Safari").tag("safari")
+                    Text("Brave").tag("brave")
+                }.pickerStyle(.menu).frame(width: 300)
+                Button(quick.busy ? "Waiting for Red-XAI approval…" : "Quick sign in with Red-XAI") { quick.begin() }
+                    .buttonStyle(.borderedProminent).disabled(quick.busy || busy)
+                if !quick.code.isEmpty {
+                    Text("Approval code: \(quick.code)").font(.headline.monospaced()).textSelection(.enabled)
+                    Button("Cancel approval") { quick.cancel() }.buttonStyle(.bordered)
+                }
+                if !quick.message.isEmpty {
+                    Text(quick.message).font(.callout).foregroundStyle(.secondary).frame(width: 360)
+                }
             } else {
-                if g.totp || g.call { TextField("6-digit code", text: $code).textFieldStyle(.roundedBorder).frame(width: 200) }
-                HStack {
-                    if g.call { Button("Call me") { Task { await g.callMe() } } }
-                    if g.totp && g.selectedMethod == "call" {
-                        Button("Use authenticator") { g.selectedMethod = "totp"; g.msg = "Enter the code from your authenticator app." }
+                Text("Sign in with your Red-XAI username and password. Quick Login is not required.")
+                    .font(.caption).foregroundStyle(.secondary).frame(width: 370)
+                if g.flow.isEmpty {
+                    TextField("Username or email", text: $login).textFieldStyle(.roundedBorder).frame(width: 300)
+                    SecureField("Password", text: $password).textFieldStyle(.roundedBorder).frame(width: 300).onSubmit { go() }
+                    Button(busy ? "Signing in…" : "Sign in") { go() }.buttonStyle(.borderedProminent).disabled(busy || login.isEmpty || password.isEmpty)
+                } else {
+                    if g.totp || g.call { TextField("6-digit code", text: $code).textFieldStyle(.roundedBorder).frame(width: 200) }
+                    HStack {
+                        if g.call { Button("Call me") { Task { await g.callMe() } } }
+                        if g.totp && g.selectedMethod == "call" {
+                            Button("Use authenticator") { g.selectedMethod = "totp"; g.msg = "Enter the code from your authenticator app." }
+                        }
+                        Button("Verify") { busy = true; Task { await g.twoFA(code); busy = false; code = "" } }.buttonStyle(.borderedProminent).disabled(code.isEmpty || busy)
                     }
-                    Button("Verify") { busy = true; Task { await g.twoFA(code); busy = false; code = "" } }.buttonStyle(.borderedProminent).disabled(code.isEmpty || busy)
                 }
             }
             if !g.msg.isEmpty { Text(g.msg).font(.callout).foregroundStyle(.orange).frame(width: 340) }
             HStack(spacing: 16) {
                 Link("Create an account", destination: URL(string: "https://red-xai.com/")!)
-                Link("Terms", destination: URL(string: "https://45.77.105.187/vortex/terms")!)
-                Link("Donate", destination: URL(string: "https://45.77.105.187/vortex/donate")!)
+                Link("Terms", destination: URL(string: "https://red-xai.com/vortex/terms")!)
+                Link("Donate", destination: URL(string: "https://red-xai.com/vortex/donate")!)
             }.font(.caption)
         }.padding(40).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -198,8 +226,8 @@ struct AboutVortexView: View {
                 .multilineTextAlignment(.center).frame(width: 360)
             if !AccountGate.shared.username.isEmpty { Text("Signed in as \(AccountGate.shared.username)").font(.caption) }
             HStack {
-                Link("Terms & Privacy", destination: URL(string: "https://45.77.105.187/vortex/terms")!)
-                Link("Donate", destination: URL(string: "https://45.77.105.187/vortex/donate")!)
+                Link("Terms & Privacy", destination: URL(string: "https://red-xai.com/vortex/terms")!)
+                Link("Donate", destination: URL(string: "https://red-xai.com/vortex/donate")!)
             }
         }.padding(30)
     }
