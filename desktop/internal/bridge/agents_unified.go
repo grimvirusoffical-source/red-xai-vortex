@@ -132,6 +132,11 @@ func (s *Server) saveUnifiedAgent(in map[string]any) map[string]any {
             if a.Provider!="ollama" {return map[string]any{"ok":false,"message":"Provide this external provider's API key; it is stored only locally."}}
         }
     }
+    if agentRemoteMode(a)=="server" {
+        if err:=s.syncServerAgent(a);err!=nil {
+            return map[string]any{"ok":false,"message":err.Error()}
+        }
+    }
     a.Updated=time.Now()
     s.St.SaveAgent(a)
     return map[string]any{"ok":true,"id":a.ID,"message":"Saved "+a.Name+". Changes apply to the next run."}
