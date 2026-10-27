@@ -125,7 +125,7 @@ struct BackgroundAgentsView: View {
             HStack {
                 Text("Background agents").font(.headline)
                 Spacer()
-                Button { edit = BGAgent(id: "", name: "New agent", model: "vortex-mini") } label: { Label("New", systemImage: "plus") }
+                Text("Create and edit agents above in the unified Agents editor.").font(.caption).foregroundStyle(.secondary)
                 Button { Task { await s.refresh() } } label: { Image(systemName: "arrow.clockwise") }
             }
             Text("These run on the Vortex server, or on your Cloud PC if you have approved access. They keep going after you close the app, until you switch them off. Click Chat to talk to an agent; it has its own history.")
@@ -142,7 +142,7 @@ struct BackgroundAgentsView: View {
                     Spacer()
                     Toggle("On", isOn: Binding(get: { a.on }, set: { v in Task { await s.toggle(a, v) } })).toggleStyle(.switch)
                     Button("Chat") { chatWith = a }
-                    Button("Edit") { edit = a }
+                    Button("Edit settings") { if let profile = AgentStore.shared.agents.first(where: { $0.id == a.id }) { AgentStore.shared.setActive(profile.id); AgentStore.shared.message = "Use the Edit button beside this agent in the unified list." } }
                     Button(role: .destructive) { Task { await s.delete(a) } } label: { Image(systemName: "trash") }
                 }.padding(6).background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.3)))
             }
