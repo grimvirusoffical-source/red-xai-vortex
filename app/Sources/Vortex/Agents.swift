@@ -18,6 +18,17 @@ struct AgentProfile: Codable, Identifiable, Equatable, Hashable {
     var pcControlOn: Bool = true
     var skillIDs: [String] = []
     var pluginIDs: [String] = []
+    // Optional for backward compatibility with every existing agents.json.
+    var goal: String? = nil
+    var modelMode: String? = nil       // single, auto, mix
+    var modelPool: [String]? = nil
+    var permissions: [String]? = nil  // nil = legacy defaults
+    var scheduleSeconds: Int? = nil   // 0 = manual, 15 = nonstop, otherwise interval
+    var nonstop: Bool? = nil
+    var running: Bool? = nil
+    var runOn: String? = nil          // local, server, cloudpc
+    var alwaysAllow: Bool? = nil
+    var lastRun: Date? = nil
     var created = Date()
     var updated = Date()
 
