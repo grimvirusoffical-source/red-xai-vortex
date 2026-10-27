@@ -51,6 +51,7 @@ func Start(st *store.Store) (*Server, error) {
 	s.applyLink()
 	s.applyPhone()
 	go s.restoreManagedHosts()
+	go s.agentScheduleLoop()
 	return s, nil
 }
 
@@ -242,6 +243,14 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		return map[string]any{"ok": true}
 	case "agent.save":
 		return s.agentSave(in)
+	case "agent.toggle":
+		return s.agentToggle(in)
+	case "agent.delete":
+		return s.agentDelete(in)
+	case "agent.kill":
+		return s.agentKillAll(in)
+	case "agent.resume":
+		return s.agentResume(in)
 	case "agent.testVortex":
 		return s.testVortex()
 	case "integration":
@@ -497,28 +506,7 @@ func (s *Server) resolveEndpoint(agentID string) (base, key string) {
 }
 
 func (s *Server) agentSave(in map[string]any) map[string]any {
-	name := str(in, "name")
-	if name == "" {
-		return map[string]any{"ok": false, "message": "Name required"}
-	}
-	id := fmt.Sprintf("agent-%d", time.Now().UnixNano()%1e12)
-	a := store.Agent{
-		ID: id, Name: name, Provider: str(in, "provider"), Model: str(in, "model"),
-		BaseURL: str(in, "baseURL"), ToolsOn: true, PCControlOn: true,
-		SystemPrompt: "You are a Vortex agent. Use tools carefully; ask Allow/Deny for risky PC actions.",
-		Created:      time.Now(), Updated: time.Now(),
-	}
-	if a.Provider == "" {
-		a.Provider = "vortex"
-	}
-	if a.Model == "" {
-		a.Model = "vortex-mini" // new agents default to the fast tier
-	}
-	if k := str(in, "apiKey"); k != "" && a.Provider != "vortex" {
-		_ = keyring.Set("agent-key-"+a.ID, k)
-	}
-	s.St.SaveAgent(a)
-	return map[string]any{"ok": true, "message": "Saved " + a.Name + ". Key in OS credential store (never printed)."}
+	return s.saveUnifiedAgent(in)
 }
 
 func (s *Server) testVortex() map[string]any {
