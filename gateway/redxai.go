@@ -412,6 +412,12 @@ func rxPrepare(body map[string]any) (string, map[string]any) {
 		nm = append(nm, m)
 	}
 	body["messages"] = nm
+	// Authorized desktop tier IDs retain the same persona and knowledge routing.
+	// Never pass the internal tier marker through to the model server.
+	if tier, _ := body["vortex_tier"].(string); vortexTierTarget(tier) != "" {
+		target = vortexTierTarget(tier)
+	}
+	delete(body, "vortex_tier")
 	body["model"] = target
 	return target, map[string]any{"capability": capab, "routed_to": target, "knowledge_used": used, "version": ver}
 }
