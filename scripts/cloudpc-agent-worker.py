@@ -376,6 +376,8 @@ class Actions:
         if name == "write_file":
             self.require("files-write",mutate=True)
             path = safe_workpath(self.root,args.get("path",""))
+            if path == self.root or path.name in ("", ".", ".."):
+                raise WorkerError("Choose a filename inside the Cloud PC workspace")
             value = args.get("content")
             if not isinstance(value,str) or len(value.encode()) > 64000:
                 raise WorkerError("File content is missing or too long")
