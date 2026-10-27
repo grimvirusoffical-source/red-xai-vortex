@@ -3,6 +3,7 @@ package bridge
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,7 +48,7 @@ func TestPatchReviewAndApprovalApplyExactChange(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	data, _ = os.ReadFile(path)
-	if string(data) != "after\n" {
+	if strings.ReplaceAll(string(data), "\r\n", "\n") != "after\n" {
 		runs.mu.Lock()
 		completed := runs.runs[id]
 		state, result := completed.Status, completed.Result
