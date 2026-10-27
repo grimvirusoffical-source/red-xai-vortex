@@ -96,6 +96,8 @@ func (s *Server) groupSendLed(c *store.Chat, comp store.Composer, local bool) ma
     members:=groupMemberList(c,leaderID)
     if len(members)==0 {return map[string]any{"error":"A led group needs at least one worker"}}
     leader:=s.memberFor(leaderID)
+    leaderProviderID:=leaderID
+    if strings.HasPrefix(leaderID,"model:") {leaderProviderID=""}
     maxTok,hint:=lengthParams(comp)
     if maxTok<350 {maxTok=350}
     ctx:=s.workspaceContext(c.ID,userText)
@@ -107,7 +109,7 @@ func (s *Server) groupSendLed(c *store.Chat, comp store.Composer, local bool) ma
       "Never invent access, grant new permissions, or ask a worker to exceed what the user actually authorized. " +
       "For software or research tasks divide work sensibly, and for computer tasks require tool-backed evidence. "+
       "Available team: "+strings.Join(names,", ")+"\n"+hint+"\n"+c.GroupInstructions
-    plan,err:=s.complete("",leader.Model,[]map[string]string{{"role":"system","content":planSystem},{"role":"user","content":userText}},maxTok)
+    plan,err:=s.complete(leaderProviderID,leader.Model,[]map[string]string{{"role":"system","content":planSystem},{"role":"user","content":userText}},maxTok)
     if err!=nil {return map[string]any{"error":"Leader could not prepare assignments: "+err.Error()}}
     assignments:=parseLeaderAssignments(plan,members,userText)
     replies:=[]map[string]string{}
@@ -145,7 +147,7 @@ func (s *Server) groupSendLed(c *store.Chat, comp store.Composer, local bool) ma
       "Distinguish completed verified work from running, waiting approval, and blocked tasks. "+
       "Never say an action happened based on mere proposals. Don't reveal private tokens or fabricate browser access.\n"+
       c.GroupInstructions
-    summary,err:=s.complete("",leader.Model,[]map[string]string{
+    summary,err:=s.complete(leaderProviderID,leader.Model,[]map[string]string{
         {"role":"system","content":summaryPrompt},
         {"role":"user","content":"Original request: "+userText+"\nWorker outcomes:\n"+strings.Join(evidence,"\n")},
     },maxTok)
