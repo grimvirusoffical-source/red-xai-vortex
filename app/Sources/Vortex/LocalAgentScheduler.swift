@@ -54,6 +54,12 @@ import SwiftUI
             AgentStore.shared.message = "Give the agent a concrete task before running it."
             return
         }
+        if AgentModelRouter.needsBrowserAutomation(goal) {
+            let reason = "This requires a browser automation worker with a verified app and focused element. Vortex will not type into a search field or claim the remote message was sent."
+            AgentStore.shared.message = a.name + ": " + reason
+            ActivityLog.add("agent.blocked", summary: reason, agent: ActivityAgent(id: a.id, name: a.name))
+            return
+        }
         let base = UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL
         let gatewayKey = Keychain.get() ?? ""
         let available = (try? await API.models(base: base, key: gatewayKey)) ?? []
@@ -64,7 +70,13 @@ import SwiftUI
         p = AgentStore.shared.chatParams(for: a.id, fallback: p)
         // The selected model must not be overwritten by an old "auto" profile.
         if a.provider == "vortex" { p.model = selected.executor }
-        let tools = ToolRegistry.tools(for: p.model, agent: a)
+        // Background tasks never take over the user's current desktop.
+        // Browser, app launch and keyboard/mouse operations need a dedicated
+        // verified, separately authorized worker rather than changing focus.
+        let tools = ToolRegistry.tools(for: p.model, agent: a).filter { tool in
+            guard let kind = PCKind(source: tool.source) else { return true }
+            return kind != .input && kind != .apps && kind != .browser
+        }
         var instructions = a.systemPrompt
         if let planner = selected.planner, a.provider == "vortex" {
             var pp = p
