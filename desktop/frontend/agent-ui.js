@@ -18,7 +18,7 @@
     el('aEditorTitle').textContent = 'Create an agent';
     for (const id of ['aName','aInstructions','aGoal','aBase','aKey']) el(id).value = '';
     el('aProv').value = 'vortex'; el('aModel').value = 'vortex'; el('aMode').value = 'auto';
-    el('aEvery').value = '0';
+    el('aEvery').value = '0'; el('aRunOn').value = 'local';
     for (const id of ['aPC','aAlways','aNonstop','aRunning']) el(id).checked = false;
     choosePermissions(['web','files-read']);
   }
@@ -31,6 +31,7 @@
     el('aModel').value = a.model || 'vortex'; el('aMode').value = a.modelMode || 'single';
     el('aBase').value = a.baseURL || ''; el('aKey').value = '';
     el('aEvery').value = String(a.nonstop ? 0 : (a.scheduleSeconds || 0));
+    el('aRunOn').value = a.runOn || 'local';
     el('aPC').checked = a.pcControlOn === true; el('aAlways').checked = a.alwaysAllow === true;
     el('aNonstop').checked = a.nonstop === true; el('aRunning').checked = a.running === true;
     const previous = ['web','files-read','files-write',...(a.pcControlOn ? ['shell'] : [])];
@@ -44,7 +45,8 @@
       modelMode: el('aMode').value, baseURL: el('aBase').value, apiKey: el('aKey').value,
       toolsOn: true, permissions: checked(), pcControlOn: el('aPC').checked,
       alwaysAllow: el('aAlways').checked, nonstop: el('aNonstop').checked,
-      scheduleSeconds: Number(el('aEvery').value), running: el('aRunning').checked
+      scheduleSeconds: Number(el('aEvery').value), running: el('aRunning').checked,
+      runOn: el('aRunOn').value
     };
     const response = await bridge.call('agent.save', request);
     el('aKey').value = '';
@@ -81,7 +83,7 @@
       const detail = document.createElement('small');
       detail.className = 'muted';
       detail.textContent = (a.modelMode === 'mix' ? 'Multi-model' : a.modelMode === 'auto' ? 'Smart routing' : a.model) +
-        (a.running ? ' · Scheduled' : ' · Manual');
+        (a.running ? ' · Scheduled' : ' · Manual') + ' · ' + (a.runOn || 'local');
       item.append(name,detail);
       for (const [action,label] of [['edit','Edit'],['toggle',a.running?'Pause':'Start'],['run','Run'],['delete','Delete']]) {
         if (action === 'delete' && a.id === 'vortex-default') continue;
