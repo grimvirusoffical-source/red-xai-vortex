@@ -206,7 +206,8 @@ struct AgentsView: View {
             Toggle("PC control (requires this Mac's approval)", isOn: $draft.pcControlOn)
             VStack(alignment: .leading, spacing: 7) {
                 Text("Allowed actions (an agent cannot grant itself more)").font(.caption.bold())
-                ForEach(grants, id: \.0) { item in
+                ForEach(grants.indices, id: \.self) { index in
+                    let item = grants[index]
                     Toggle(item.1, isOn: Binding(
                         get: { (draft.permissions ?? []).contains(item.0) },
                         set: { enabled in
