@@ -115,7 +115,7 @@ func transcriptFor(me member, others []string, c *store.Chat, hint string) []map
 }
 
 // groupSend handles agent chats (one member) and party chats (members reply in turn).
-func (s *Server) groupSend(c *store.Chat, comp store.Composer) map[string]any {
+func (s *Server) groupSend(c *store.Chat, comp store.Composer, local bool) map[string]any {
 	ids := c.Members
 	if c.Kind == "agent" {
 		ids = []string{c.AgentID}
