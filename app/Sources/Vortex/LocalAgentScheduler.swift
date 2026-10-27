@@ -64,27 +64,7 @@ import SwiftUI
         p = AgentStore.shared.chatParams(for: a.id, fallback: p)
         // The selected model must not be overwritten by an old "auto" profile.
         if a.provider == "vortex" { p.model = selected.executor }
-        let availableTools = ToolRegistry.tools(for: a.pcControlOn ? "vortex" : p.model)
-        let permitted = a.permissions
-        let tools = availableTools.filter { tool in
-            if let kind = PCKind(source: tool.source) {
-                guard a.pcControlOn else { return false }
-                if permitted == nil { return true } // migration of old profiles
-                let name: String
-                switch kind {
-                case .filesRead: name = "files-read"
-                case .filesWrite: name = "files-write"
-                case .shell: name = "shell"
-                case .apps: name = "apps"
-                case .input: name = "input"
-                case .screenshot: name = "screen"
-                case .browser: name = "browser"
-                case .clipboard: name = "clipboard"
-                }
-                return permitted?.contains(name) == true
-            }
-            return a.toolsOn && (permitted == nil || permitted?.contains("plugins") == true)
-        }
+        let tools = ToolRegistry.tools(for: p.model, agent: a)
         var instructions = a.systemPrompt
         if let planner = selected.planner, a.provider == "vortex" {
             var pp = p
