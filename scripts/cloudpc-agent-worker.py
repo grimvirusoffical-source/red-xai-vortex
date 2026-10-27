@@ -62,6 +62,11 @@ def public_https(value):
         raise WorkerError("Browser and web tools require HTTPS URLs without embedded credentials")
     host = parsed.hostname
     try:
+        if not ipaddress.ip_address(host).is_global:
+            raise WorkerError("Private, loopback and metadata addresses are blocked")
+    except ValueError:
+        pass  # Hostname, not an IP literal.
+    try:
         addresses = socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)
         for info in addresses:
             if not ipaddress.ip_address(info[4][0]).is_global:
