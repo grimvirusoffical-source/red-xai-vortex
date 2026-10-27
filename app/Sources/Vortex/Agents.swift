@@ -199,9 +199,26 @@ struct AgentsView: View {
                 SecureField(store.keyPresent(for: draft) ? "API key (leave blank to keep saved)" : "API key", text: $apiKey)
                 Text("Stored in the OS keychain. Never shown again.").font(.caption2).foregroundStyle(.secondary)
             }
+            Text("Instructions and tools").font(.headline)
             TextEditor(text: $draft.systemPrompt).frame(minHeight: 80)
-            Toggle("Chat tools (web, files, skills, plugins)", isOn: $draft.toolsOn)
-            Toggle("PC control (Allow/Deny prompts)", isOn: $draft.pcControlOn)
+            TextField("Standing task or goal", text: Binding(get: { draft.goal ?? "" }, set: { draft.goal = $0 }), axis: .vertical).lineLimit(2...5)
+            Toggle("Skills, MCP and plugins", isOn: $draft.toolsOn)
+            Toggle("PC control (requires this Mac's approval)", isOn: $draft.pcControlOn)
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Allowed actions (an agent cannot grant itself more)").font(.caption.bold())
+                ForEach(grants, id: \.0) { item in
+                    Toggle(item.1, isOn: Binding(
+                        get: { (draft.permissions ?? []).contains(item.0) },
+                        set: { enabled in
+                            var set = Set(draft.permissions ?? [])
+                            if enabled { set.insert(item.0) } else { set.remove(item.0) }
+                            draft.permissions = set.sorted()
+                        }))
+                }
+            }
+            Toggle("Allow this agent to skip individual PC approvals (only when machine Always allow is also enabled)", isOn:
+                Binding(get: { draft.alwaysAllow ?? false }, set: { draft.alwaysAllow = $0 }))
+            Text("Stop control can immediately cancel active PC actions and revoke unattended permission.").font(.caption).foregroundStyle(.secondary)
             HStack {
                 Button("Cancel") { editing = false; apiKey = "" }
                 Spacer()
