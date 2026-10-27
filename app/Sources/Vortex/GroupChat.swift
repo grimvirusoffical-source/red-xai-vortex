@@ -120,7 +120,8 @@ extension ChatStore {
                     if !tools.isEmpty {
                         // Agent chat: the agent can act (tools, PC control) step by step; every step is logged.
                         let (t, _) = try await ActivityLog.$agent.withValue(who) {
-                            try await Agent.run(p, history: hist, tools: tools) { st in Task { @MainActor in self?.setStatus("\(who.name): \(st)", runID: runID) } }
+                            let always = await MainActor.run { AgentStore.shared.agents.first(where: { "agent:" + $0.id == m })?.alwaysAllow }
+                            return try await Agent.run(p, history: hist, tools: tools, agentAlwaysAllow: always) { st in Task { @MainActor in self?.setStatus("\(who.name): \(st)", runID: runID) } }
                         }
                         buf.append(t)
                     } else {
