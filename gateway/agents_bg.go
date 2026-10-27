@@ -129,7 +129,7 @@ func agAuthorized(a *bgAgent) bool {
     for _, k := range keys {
         if k.ID != a.KeyID { continue }
         if k.Revoked != 0 || k.Disabled || (k.Expires > 0 && time.Now().Unix() > k.Expires) { return false }
-        return hasScope(k, "chat") && modelOK(k, a.Model)
+        return hasScope(k, "chat") && modelOK(k, a.Model) && (a.Planner=="" || modelOK(k,a.Planner))
     }
     return false
 }
