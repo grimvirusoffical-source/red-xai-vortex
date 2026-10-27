@@ -182,12 +182,15 @@ struct GroupSetupView: View {
     @Environment(\.dismiss) var dismiss
     @Local var picked: [String] = []
     @Local var mode = "all"
+    @Local var leader = ""
+    @Local var teamWorkspace = ""
+    @Local var teamInstructions = ""
     @Local var loaded = false
     var all: [String] { AgentStore.shared.agents.map { "agent:" + $0.id } + Array(Set(store.availableModels + LocalRuntime.shared.models.map { "local:\($0)" })).sorted() }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Party chat").font(.title2.bold())
-            Text("Pick the agents (🤖) and models that take part in this chat. Each reply is labelled with its model. Type @name (any part of a model id) to ask only that model, or @all for everyone.")
+            Text("Choose agents/models and one leader. The leader assigns tasks, each worker reports real results, and the leader reviews the outcome. Optionally isolate the chat in its own project workspace.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Picker("Turn order", selection: $mode) {
                 Text("Everyone replies, in order").tag("all")
@@ -213,15 +216,29 @@ struct GroupSetupView: View {
                     }
                 }.frame(minWidth: 280)
             }.frame(height: 280)
+            Picker("Team leader", selection: $leader) {
+                Text("Choose leader").tag("")
+                ForEach(picked, id: \.self) { p in Text(GroupTurns.label(p)).tag(p) }
+            }
+            TextField("Dedicated workspace (optional)", text: $teamWorkspace)
+            TextField("Team instructions", text: $teamInstructions, axis: .vertical).lineLimit(2...4)
             HStack {
                 if store.current?.participants != nil { Button("Turn off party chat", role: .destructive) { store.setGroup([], mode: mode); dismiss() } }
                 Spacer()
                 Button("Cancel") { dismiss() }
-                Button("Save") { store.setGroup(picked, mode: mode); dismiss() }.keyboardShortcut(.defaultAction).disabled(picked.count == 1)
+                Button("Save") { store.setGroup(picked, mode: mode, leader: leader, workspaceName: teamWorkspace, instructions: teamInstructions); dismiss() }.keyboardShortcut(.defaultAction).disabled(picked.count < 2 || !picked.contains(leader))
             }
             if picked.count == 1 { Text("Pick at least two agents or models (or none to turn group chat off).").font(.caption).foregroundStyle(.orange) }
         }
         .padding(20).frame(width: 640)
-        .onAppear { if !loaded { picked = store.current?.participants ?? []; mode = store.current?.turnMode ?? "all"; loaded = true } }
+        .onAppear {
+            if !loaded {
+                picked = store.current?.participants ?? []
+                mode = store.current?.turnMode ?? "all"
+                leader = store.current?.leaderParticipantID ?? picked.first ?? ""
+                teamInstructions = store.current?.groupInstructions ?? ""
+                loaded = true
+            }
+        }
     }
 }
