@@ -343,7 +343,33 @@ setInterval(()=>{ if($('#tab-media').classList.contains('on')) mPoll(); }, 2000)
 
 // ---- ToS + RedX sign-in gate (required on every launch; re-prompts when terms change)
 const TERMS_VERSION='2026-10-25';
-let gFlow='',gMethod='totp',quickTimer=0,quickChecking=false;
+let gFlow='',gMethod='totp',quickTimer=0,quickChecking=false,authMethod='quick',quickAttempt=0;
+function chooseSignInMethod(method){
+  if(method!=='quick'&&method!=='password')return;
+  if(method==='password'){
+    // Cancel a pending browser grant; password login never depends on Quick Login.
+    quickAttempt++;
+    quickStopUI();
+    void bridge.call('redx.quick.cancel').catch(()=>{});
+  }
+  if(method==='quick'){
+    // No password or MFA challenge is required for a Vortex-scoped browser grant.
+    gFlow='';gMethod='totp';
+    $('#gPass').value='';$('#gOtp').value='';
+    $('#gCreds').style.display='';$('#gCode').style.display='none';$('#gGo').textContent='Sign in';
+  }
+  authMethod=method;
+  $('#gQuickSection').hidden=method!=='quick';
+  $('#gPasswordSection').hidden=method!=='password';
+  for(const [button,selected] of [['#gChooseQuick',method==='quick'],['#gChoosePassword',method==='password']]){
+    $(button).classList.toggle('active',selected);
+    $(button).setAttribute('aria-pressed',String(selected));
+  }
+  $('#gMsg').textContent='';
+}
+$('#gChooseQuick').onclick=()=>chooseSignInMethod('quick');
+$('#gChoosePassword').onclick=()=>chooseSignInMethod('password');
+chooseSignInMethod('quick');
 function quickStopUI(){
   if(quickTimer) clearInterval(quickTimer);
   quickTimer=0;quickChecking=false;
@@ -364,6 +390,8 @@ try{
 }catch{quickBrowserPicker.value='default';}
 $('#gBrowserChoice').addEventListener('change',()=>{try{localStorage.setItem('rxql.browserPreference',$('#gBrowserChoice').value);}catch{}});
 $('#gQuick').onclick=async()=>{
+  if(authMethod!=='quick')return;
+  const attempt=++quickAttempt;
   const selectedBrowser=quickBrowserPicker.value;
   // Open synchronously from the click before awaiting network I/O, so browser
   // popup blockers treat it as user initiated. A script-opened tab can call
@@ -377,6 +405,11 @@ $('#gQuick').onclick=async()=>{
   }
   $('#gQuick').disabled=true;$('#gMsg').textContent='Starting secure Red-XAI approval…';
   const r=await bridge.call('redx.quick.start').catch(()=>({ok:false,error:'Could not reach Red-XAI quick login.'}));
+  if(attempt!==quickAttempt||authMethod!=='quick'){
+    approvalTab?.close();
+    await bridge.call('redx.quick.cancel').catch(()=>{});
+    return;
+  }
   if(!r.ok){approvalTab?.close();quickStopUI();$('#gMsg').textContent=r.error||'Quick login unavailable.';return;}
   let url;
   try {
@@ -393,19 +426,32 @@ $('#gQuick').onclick=async()=>{
     try{approvalTab.location.replace(url.href);opened={ok:true};}catch{}
   }
   if(!opened.ok) opened=await bridge.call('redx.quick.open',{browser:selectedBrowser}).catch(()=>({ok:false,error:'Browser not available'}));
+  if(attempt!==quickAttempt||authMethod!=='quick'){
+    approvalTab?.close();
+    await bridge.call('redx.quick.cancel').catch(()=>{});
+    return;
+  }
   if(!opened.ok) $('#gMsg').textContent=(opened.error||'Could not open browser')+' — select the approval link instead.';
   quickTimer=setInterval(async()=>{
-    if(quickChecking)return;
+    if(quickChecking||attempt!==quickAttempt||authMethod!=='quick')return;
     quickChecking=true;
     try {
       const v=await bridge.call('redx.quick.poll');
-      if(v.signedIn){quickStopUI();$('#gMsg').textContent='';window.focus();await gate();}
+      if(attempt!==quickAttempt||authMethod!=='quick')return;
+      if(v.signedIn){
+        // A completed Vortex-scoped browser grant alone opens the workspace;
+        // never request the desktop password or MFA as a second step.
+        gFlow='';quickStopUI();$('#gMsg').textContent='';
+        window.focus();
+        await gate();
+      }
       else if(!v.ok){quickStopUI();$('#gMsg').textContent=v.error||'Approval ended. Try again.';}
     } catch(e){quickStopUI();$('#gMsg').textContent='Could not check approval. Try again.';}
     finally{quickChecking=false;}
   },Math.max(2000,Math.min(10000,(Number(r.interval)||3)*1000)));
 };
 $('#gApprovalCancel').onclick=async()=>{
+  quickAttempt++;
   quickStopUI();await bridge.call('redx.quick.cancel').catch(()=>{});
   $('#gMsg').textContent='Approval cancelled.';
 };
@@ -424,10 +470,12 @@ async function gate(){
 $('#gAccept').onclick=async()=>{await bridge.call('gate.accept',{version:TERMS_VERSION}); gate();};
 $('#gDecline').onclick=()=>{document.body.innerHTML='<p style="padding:40px">You must accept the Terms of Service to use Red-XAI Vortex. Close this window to quit.</p>';};
 $('#gGo').onclick=async()=>{
+  if(authMethod!=='password')return;
   $('#gMsg').textContent='';
   let r;
   if(!gFlow) r=await bridge.call('redx.login',{login:$('#gUser').value,password:$('#gPass').value});
   else r=await bridge.call('redx.2fa',{flow:gFlow,method:gMethod,code:$('#gOtp').value});
+  if(authMethod!=='password')return;
   if(!r.ok){$('#gMsg').textContent=r.error||'Sign-in failed.';return;}
   if(r.next==='2fa'){gFlow=r.flow;gMethod=r.methods?.totp?'totp':'call';$('#gCreds').style.display='none';$('#gCode').style.display='';$('#gCallMe').style.display=r.methods?.call?'':'none';$('#gGo').textContent='Verify';return;}
   if(r.next==='2fa_setup'){$('#gMsg').textContent='Finish two-factor setup at red-xai.com, then sign in again.';return;}
