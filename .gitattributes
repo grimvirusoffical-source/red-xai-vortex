@@ -1,0 +1,3 @@
+# Release-signature fixtures are exact byte sequences: never CRLF-normalize.
+desktop/internal/update/testdata/v2.8-manifest.json -text
+desktop/internal/update/testdata/v2.8-manifest.sig -text

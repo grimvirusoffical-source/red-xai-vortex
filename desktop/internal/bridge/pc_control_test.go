@@ -307,7 +307,11 @@ func TestPatchAlwaysAllowRequiresTrustedLocalOrigin(t *testing.T) {
 			}
 			data, _ := os.ReadFile(path)
 			if string(data) != "after\n" {
-				t.Fatal("local explicitly enabled patch was not applied")
+				runs.mu.Lock()
+				completed := runs.runs[id]
+				state, result := completed.Status, completed.Result
+				runs.mu.Unlock()
+				t.Fatalf("local patch was not applied: run=%s result=%s", state, result)
 			}
 		})
 	}
