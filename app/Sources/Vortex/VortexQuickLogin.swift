@@ -201,6 +201,7 @@ private struct VortexApprovedSession {
                     message = ""
                     AccountGate.shared.username = approved.email
                     AccountGate.shared.signedIn = true
+                    AccountGate.shared.accountSignInSucceeded()
                     UserDefaults.standard.set(approved.email, forKey: "redxUser")
                     PhoneHost.sync()
                     focusVortexAndHideAuthBrowser()
