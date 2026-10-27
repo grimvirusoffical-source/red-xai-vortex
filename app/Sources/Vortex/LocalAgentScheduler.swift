@@ -116,19 +116,25 @@ import SwiftUI
     }
 
     func stopAll() {
+        // Local Stop is immediate and persisted before any network request.
         UserDefaults.standard.set(true, forKey: "agents.emergencyStop")
         for task in tasks.values { task.cancel() }
         tasks.removeAll()
         activeIDs.removeAll()
         for i in AgentStore.shared.agents.indices {
-            AgentStore.shared.agents[i].running = false
+            if (AgentStore.shared.agents[i].runOn ?? "local") == "local" {
+                AgentStore.shared.agents[i].running = false
+            }
             AgentStore.shared.agents[i].alwaysAllow = false
         }
         AgentStore.shared.save()
-        PCControl.shared.kill() // interrupts PC actions and revokes unattended control
+        PCControl.shared.kill()
+        AgentStore.shared.message = "Local agents stopped. Requesting remote cancellations…"
         Task {
-            await BGAgentStore.shared.refresh()
-            for a in BGAgentStore.shared.agents where a.on { await BGAgentStore.shared.toggle(a, false) }
+            let success = await BGAgentStore.shared.stopAllRemote()
+            AgentStore.shared.message = success
+                ? "Emergency stop: local agents and connected remote schedules are off."
+                : "Local agents stopped; remote cancellation was not verified. Revoke the gateway key or check remote worker status. " + BGAgentStore.shared.msg
         }
     }
 
