@@ -70,6 +70,35 @@ jobs:
           } finally {
             if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
           }
+      - name: Verify fixed Windows default browser launcher (non-headless)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm install --no-save --ignore-scripts playwright-core@1.56.1
+          if ($LASTEXITCODE -ne 0) { throw 'Browser automation setup failed' }
+          $folder = (Resolve-Path dist/windows).Path
+          $out = Join-Path $folder 'real-launch-stdout.log'
+          $errlog = Join-Path $folder 'real-launch-stderr.log'
+          $p = Start-Process -FilePath (Join-Path $folder 'vortex.exe') -ArgumentList @('-no-update') -WorkingDirectory $folder -PassThru -RedirectStandardOutput $out -RedirectStandardError $errlog
+          try {
+            $localURL = $null
+            for ($i=0; $i -lt 100; $i++) {
+              Start-Sleep -Milliseconds 300
+              if ($p.HasExited) { throw "The new Windows binary exited early ($($p.ExitCode))" }
+              if (Test-Path $out) {
+                $log = Get-Content $out -Raw -ErrorAction SilentlyContinue
+                if ($log -match 'bridge on (http://127\.0\.0\.1:\d+)') { $localURL = $Matches[1]; break }
+              }
+            }
+            if (-not $localURL) { throw 'New Windows desktop did not report its local service' }
+            Start-Sleep -Seconds 1
+            $warnings = if (Test-Path $errlog) { Get-Content $errlog -Raw -ErrorAction SilentlyContinue } else { '' }
+            if ($warnings -match 'could not open its default browser') { throw 'ShellExecuteW failed to open Windows default browser' }
+            node scripts/windows-browser-e2e.cjs $localURL
+            if ($LASTEXITCODE -ne 0) { throw 'Built Windows app could not complete real Edge Quick Login startup' }
+          } finally {
+            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
