@@ -281,6 +281,7 @@ struct AgentsView: View {
             store.message = "Paste an API key for this provider."; return
         }
         store.upsert(a, apiKey: key)
+        if a.runOn == "server" { Task { await saveRemoteAgent(a) } }
         apiKey = ""; editing = false
         if a.provider == "openai_compat" && a.baseURL.isEmpty {
             store.message = "Saved \(a.name). Set a Base URL before chatting."
