@@ -251,6 +251,8 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		return s.agentKillAll(in)
 	case "agent.resume":
 		return s.agentResume(in)
+    case "agent.worker.status":
+        return s.cloudWorkerStatus()
 	case "agent.testVortex":
 		return s.testVortex()
 	case "integration":
