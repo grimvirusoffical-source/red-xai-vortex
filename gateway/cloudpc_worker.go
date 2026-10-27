@@ -106,7 +106,7 @@ func workerClaimLocked(k *Key, name string, now time.Time) map[string]any {
         h:=a.History
         if len(h)>12 {h=h[len(h)-12:]}
         return map[string]any{"ok":true,"job":map[string]any{
-            "id":jobID,"agent_id":id,"model":a.Model,"system":a.System,"goal":a.Goal,
+            "id":jobID,"agent_id":id,"model":a.Model,"planner":a.Planner,"system":a.System,"goal":a.Goal,
             "permissions":remoteWorkerPermissions(a),"allow_actions":a.AlwaysAllow,
             "history":h,"lease":token,"deadline":a.Pending.LeasedUntil,
         }}
