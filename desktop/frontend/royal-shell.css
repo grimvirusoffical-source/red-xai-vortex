@@ -119,6 +119,20 @@ input[type=checkbox], input[type=range] { accent-color: var(--royal-gold); }
 .royal-stop-control { display: inline-flex; align-items: center; gap: 6px; padding: 7px 9px; background: #2b2020; border: 1px solid #77504a; color: #ffc6bd; font-size: 10px; white-space: nowrap; }
 .royal-stop-control:hover { background: #492824; border-color: #b5786a; }
 .royal-stop-control > span { font-size: 8px; }
+.royal-account-logout {
+  flex: 0 0 auto;
+  padding: 8px 11px;
+  border: 1px solid #695338;
+  background: #2a251e;
+  color: #edce9a;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.royal-account-logout:hover { background: #42301e; border-color: #c49e66; }
+.royal-account-logout:disabled { opacity: .55; cursor: progress; }
+#gOwnerContinue[hidden] { display: none !important; }
 
 body > header.royal-navigation { min-height: 58px; padding: 9px 24px; gap: 20px; flex-wrap: nowrap; background: #141413; border-bottom: 1px solid #3a3326; }
 .royal-nav-caption { font-size: 8px; letter-spacing: .16em; font-weight: 600; color: #ac9e81; white-space: nowrap; }
@@ -291,6 +305,7 @@ body.royal-focus .royal-gem.ruby { border-color: #80504b; background: #382221; }
   .royal-policy-switch small { font-size: 6px; }
   #royalControlStatus { max-width: 91px; font-size: 8px; }
   .royal-stop-control { padding: 7px 8px; font-size: 9px; }
+  .royal-account-logout { padding: 7px 8px; font-size: 9px; }
   body > header.royal-navigation { min-height: 48px; padding: 5px 8px; }
   .royal-navigation .tabs { gap: 2px; }
   .royal-navigation .tabs button { min-height: 34px; padding: 7px 10px; font-size: 10px; }
