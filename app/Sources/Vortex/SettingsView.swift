@@ -44,8 +44,17 @@ struct ConnectionSettings: View {
                 TextField("Server URL (OpenAI-compatible, ends in /v1)", text: $serverURL)
                 HStack {
                     SecureField(keySaved ? "API key saved in Keychain (enter to replace)" : "API key", text: $key)
-                    Button("Save Key") { Keychain.set(key); key = ""; keySaved = Keychain.get() != nil }.disabled(key.isEmpty)
-                    Button("Remove") { Keychain.set(""); keySaved = false }.disabled(!keySaved)
+                    Button("Save Key") {
+                        Keychain.set(key)
+                        key = ""
+                        keySaved = Keychain.get() != nil
+                        if RedXLink.enabled { RedXLink.shared.start(force: true) }
+                    }.disabled(key.isEmpty)
+                    Button("Remove") {
+                        Keychain.set("")
+                        keySaved = false
+                        if RedXLink.enabled { RedXLink.shared.start(force: true) }
+                    }.disabled(!keySaved)
                 }
                 HStack {
                     Button("Test Connection") { Task { await runTest() } }
