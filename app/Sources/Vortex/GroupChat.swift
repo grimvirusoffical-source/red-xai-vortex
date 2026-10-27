@@ -109,7 +109,14 @@ extension ChatStore {
                 var reply: String
                 do {
                     var p = params; p.model = m
-                    if let ap = agentP { p = ap; p.maxTokens = params.maxTokens }
+                    if let ap = agentP {
+                        p = ap; p.maxTokens = params.maxTokens
+                        if let selection = await MainActor.run(body: { () -> String? in
+                            guard let a = AgentStore.shared.agents.first(where: { "agent:" + $0.id == m }),
+                                  a.provider == "vortex" else { return nil }
+                            return AgentModelRouter.select(task: text, profile: a, available: self?.availableModels ?? []).executor
+                        }) { p.model = selection }
+                    }
                     if m.hasPrefix("local:") { let id = String(m.dropFirst(6)); p.baseURL = try await LocalRuntime.shared.ensure(id); p.apiKey = ""; p.model = id }
                     let worker = m.hasPrefix("agent:") && (!coordinated || (n > 0 && n < who.count - 1))
                     let who = ActivityAgent(id: m.hasPrefix("agent:") ? String(m.dropFirst(6)) : m, name: GroupTurns.agentNames[m] ?? m)
