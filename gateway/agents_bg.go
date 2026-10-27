@@ -33,6 +33,9 @@ type bgAgent struct {
 	IntervalS int         `json:"interval_s"`
 	On        bool        `json:"on"`
 	RunOn     string      `json:"run_on"` // "server" | "cloudpc"
+    Permissions []string `json:"permissions,omitempty"`
+    AlwaysAllow bool `json:"allow_actions,omitempty"`
+    Pending *agentWorkerJob `json:"pending,omitempty"`
 	Status    string      `json:"status"`
 	LastRun   int64       `json:"last_run"`
 	Runs      int         `json:"runs"`
@@ -237,6 +240,8 @@ func handleAgents(w http.ResponseWriter, r *http.Request, k *Key) {
 		json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in)
 	}
 	str := func(f string) (string, bool) { v, ok := in[f].(string); return v, ok }
+    // Worker endpoints perform their own locking, key ownership and lease checks.
+    if id=="worker" { handleAgentWorker(w,r,k,act);return }
 	agMu.Lock()
 	defer agMu.Unlock()
 	if id == "" && r.Method == "GET" {
@@ -257,14 +262,16 @@ func handleAgents(w http.ResponseWriter, r *http.Request, k *Key) {
 		if nid == "" {
 			nid = "ag_" + randB62(10)
 		}
-		a := agents[nid]
-		if a != nil && a.KeyID != k.ID {
+		previous := agents[nid]
+		if previous != nil && previous.KeyID != k.ID {
 			fail(403, "not your agent")
 			return
 		}
-		if a == nil {
-			a = &bgAgent{ID: nid, KeyID: k.ID, Model: "vortex", IntervalS: 300, RunOn: "server", Status: "idle"}
-		}
+        // Work on a copy: an invalid update must never mutate the live agent.
+        var a *bgAgent
+        if previous==nil {
+            a=&bgAgent{ID:nid,KeyID:k.ID,Model:"vortex",IntervalS:300,RunOn:"server",Status:"idle"}
+        } else { cp:=*previous; a=&cp }
 		if v, ok := str("name"); ok {
 			a.Name = v
 		}
@@ -290,9 +297,40 @@ func handleAgents(w http.ResponseWriter, r *http.Request, k *Key) {
 		if v, ok := in["on"].(bool); ok {
 			a.On = v
 		}
-		if a.Name == "" {
-			a.Name = "Agent"
-		}
+        if v, ok := in["allow_actions"].(bool); ok { a.AlwaysAllow = v }
+        if list, supplied := in["permissions"]; supplied {
+            raw, ok := list.([]any)
+            if !ok || len(raw)>8 {fail(400,"invalid permission list");return}
+            a.Permissions=[]string{}
+            for _, v:=range raw {
+                item,ok:=v.(string)
+                if !ok || (item!="web" && item!="files-read" && item!="files-write" && item!="shell" && item!="browser"){
+                    fail(400,"unknown remote permission");return
+                }
+                a.Permissions=append(a.Permissions,item)
+            }
+        }
+        if !hasScope(k,"chat") || !modelOK(k,a.Model) {
+            fail(403,"API key lacks chat scope or permission for this model");return
+        }
+        if a.IntervalS<30 || a.IntervalS>86400 {
+            fail(400,"run interval must be between 30 seconds and 24 hours");return
+        }
+        if a.RunOn!="server" && a.RunOn!="cloudpc" {
+            fail(400,"run_on must be server or cloudpc");return
+        }
+        if a.RunOn=="cloudpc" {
+            if !canCloudPC(k) {fail(403,"Cloud PC permission is required");return}
+            if a.On && !workerOnline(k.ID,time.Now()) {
+                fail(409,"No authenticated Cloud PC worker is online for this key");return
+            }
+        } else if a.AlwaysAllow || len(a.Permissions)>0 {
+            fail(400,"server-only model agents cannot execute computer tools");return
+        }
+        if a.On && strings.TrimSpace(a.Goal)=="" {
+            fail(400,"a running agent needs a standing goal");return
+        }
+		if a.Name == "" {a.Name = "Agent"}
 		agents[nid] = a
 		agSaveLocked()
 		enc.Encode(a)
