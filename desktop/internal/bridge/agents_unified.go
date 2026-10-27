@@ -238,7 +238,7 @@ func (s *Server) agentScheduleLoop() {
 func (s *Server) agentScheduleStep(now time.Time) {
     if s.agentsStopped() {return}
     for _,a:=range s.St.Agents {
-        if !agentDue(a,now) {continue}
+        if agentRemoteMode(a)!="local" || !agentDue(a,now) {continue}
         if requiresDesktopBrowser(a.Goal) {
             // No browser DOM adapter is installed in the Go desktop. Do not
             // enter text into a random search box or simulate messages.
