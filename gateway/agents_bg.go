@@ -347,16 +347,26 @@ func handleAgents(w http.ResponseWriter, r *http.Request, k *Key) {
 		agSaveLocked()
 		enc.Encode(a)
 	case act == "" && r.Method == "DELETE":
+        delete(agBusy,id)
 		delete(agents, id)
 		agSaveLocked()
 		enc.Encode(map[string]any{"deleted": id})
 	case act == "toggle" && r.Method == "POST":
-		on, _ := in["on"].(bool)
+		on, ok := in["on"].(bool)
+        if !ok {fail(400,"on must be a boolean");return}
+        if on && (!hasScope(k,"chat") || !modelOK(k,a.Model)){
+            fail(403,"key no longer permits agent model or chat scope");return
+        }
+        if on && a.RunOn=="cloudpc" && !workerOnline(k.ID,time.Now()){
+            fail(409,"Cloud PC worker is offline");return
+        }
 		a.On = on
 		if on {
 			a.LastRun = 0
 			a.Status = "queued"
 		} else {
+            a.Pending=nil
+            agBusy[id]=false
 			a.Status = "off"
 		}
 		agSaveLocked()
