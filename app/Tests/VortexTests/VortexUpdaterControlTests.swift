@@ -8,6 +8,7 @@ final class VortexUpdaterControlTests: XCTestCase {
         XCTAssertFalse(Updater.shouldCheck(autoEnabled: false, manual: false))
     }
     func testVersionComparisonSupportsPatchReleases() {
+        XCTAssertTrue(Updater.newer("v2.11.3", "2.11.2"))
         XCTAssertTrue(Updater.newer("v2.11.2", "2.11.1"))
         XCTAssertTrue(Updater.newer("v2.11.1", "2.11"))
         XCTAssertFalse(Updater.newer("v2.11", "2.11.2"))

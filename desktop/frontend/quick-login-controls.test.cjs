@@ -19,3 +19,12 @@ test('Quick Login still preserves the original password and MFA fallback',()=>{
  assert.match(js,/bridge.call\('redx.login'/);
  assert.match(js,/bridge.call\('redx.2fa'/);
 });
+
+test('Default browser uses script-opened approval tab for safe close-and-return after login',()=>{
+ assert.match(js,/window\.open\('about:blank','_blank'\)/);
+ assert.match(js,/approvalTab\.location\.replace\(url\.href\)/);
+ assert.match(js,/approvalTab\?\.close\(\)/);
+ assert.match(js,/selectedBrowser==='default'/);
+ assert.match(js,/opt\.value==='safari'&&!quickIsMac/);
+ assert.match(html,/same identity across Red-XAI apps/);
+});

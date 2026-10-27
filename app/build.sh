@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
+# Keep the Swift app and its bundled Go phone bridge on the same release.
+export VORTEX_VERSION="${VORTEX_VERSION:-2.11.3}"
+export VORTEX_BUILD_NUMBER="${VORTEX_BUILD_NUMBER:-49}"
+[[ "$VORTEX_VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]] || { echo "Invalid VORTEX_VERSION" >&2; exit 2; }
+[[ "$VORTEX_BUILD_NUMBER" =~ ^[0-9]+$ ]] || { echo "Invalid VORTEX_BUILD_NUMBER" >&2; exit 2; }
 if [ -z "${SIGN_ID:-}" ]; then
   if [ -f .sign-id ]; then SIGN_ID="$(cat .sign-id)"; else SIGN_ID="-"; fi
 fi
@@ -99,8 +104,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleExecutable</key><string>Vortex</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>2.11.2</string>
-<key>CFBundleVersion</key><string>48</string>
+<key>CFBundleShortVersionString</key><string>${VORTEX_VERSION}</string>
+<key>CFBundleVersion</key><string>${VORTEX_BUILD_NUMBER}</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>

@@ -350,23 +350,49 @@ function quickStopUI(){
   $('#gQuick').disabled=false;
   $('#gApproval').style.display='none';
 }
-try{$('#gBrowserChoice').value=localStorage.getItem('rxql.browserPreference')||'default';}catch{}
+// The first-party website approval tab is script-opened from this user click
+// when using the default browser; it can therefore close itself and focus the
+// Vortex tab after consent. Explicit other browsers must use the OS launcher.
+const quickBrowserPicker=$('#gBrowserChoice');
+const quickIsMac=/Macintosh|MacIntel|MacPPC|Mac68K/i.test(navigator.userAgent||'');
+for(const opt of quickBrowserPicker.options){
+  if(opt.value==='safari'&&!quickIsMac){opt.disabled=true;opt.hidden=true;}
+}
+try{
+  const stored=localStorage.getItem('rxql.browserPreference')||'default';
+  quickBrowserPicker.value=[...quickBrowserPicker.options].some(x=>x.value===stored&&!x.disabled)?stored:'default';
+}catch{quickBrowserPicker.value='default';}
 $('#gBrowserChoice').addEventListener('change',()=>{try{localStorage.setItem('rxql.browserPreference',$('#gBrowserChoice').value);}catch{}});
 $('#gQuick').onclick=async()=>{
+  const selectedBrowser=quickBrowserPicker.value;
+  // Open synchronously from the click before awaiting network I/O, so browser
+  // popup blockers treat it as user initiated. A script-opened tab can call
+  // window.close() after approval and return focus to its Vortex opener.
+  const approvalTab=selectedBrowser==='default'?window.open('about:blank','_blank'):null;
+  if(approvalTab){
+    try{
+      approvalTab.document.title='Connecting to Red-XAI';
+      approvalTab.document.body.textContent='Opening secure Red-XAI authorization…';
+    }catch{}
+  }
   $('#gQuick').disabled=true;$('#gMsg').textContent='Starting secure Red-XAI approval…';
   const r=await bridge.call('redx.quick.start').catch(()=>({ok:false,error:'Could not reach Red-XAI quick login.'}));
-  if(!r.ok){quickStopUI();$('#gMsg').textContent=r.error||'Quick login unavailable.';return;}
+  if(!r.ok){approvalTab?.close();quickStopUI();$('#gMsg').textContent=r.error||'Quick login unavailable.';return;}
   let url;
   try {
     url=new URL(r.url);
     if(url.origin!=='https://red-xai.com'||!['/redxai-connect','/redxai-connect/','/redxai-connectx'].includes(url.pathname)
       || !(!url.hash||/^#request=[A-Za-z0-9_-]{43}$/.test(url.hash))) throw Error('Unsafe approval URL');
-  } catch(e) {quickStopUI();await bridge.call('redx.quick.cancel');$('#gMsg').textContent='Red-XAI returned an invalid approval link.';return;}
+  } catch(e) {approvalTab?.close();quickStopUI();await bridge.call('redx.quick.cancel');$('#gMsg').textContent='Red-XAI returned an invalid approval link.';return;}
   $('#gApprovalCode').textContent=r.code;
   $('#gApprovalLink').href=url.href;
   $('#gApproval').style.display='';
   $('#gMsg').textContent='Checking your existing Red-XAI website login in the selected browser…';
-  const opened=await bridge.call('redx.quick.open',{browser:$('#gBrowserChoice').value}).catch(()=>({ok:false,error:'Browser not available'}));
+  let opened={ok:false,error:'Browser did not accept the new tab'};
+  if(approvalTab&&!approvalTab.closed){
+    try{approvalTab.location.replace(url.href);opened={ok:true};}catch{}
+  }
+  if(!opened.ok) opened=await bridge.call('redx.quick.open',{browser:selectedBrowser}).catch(()=>({ok:false,error:'Browser not available'}));
   if(!opened.ok) $('#gMsg').textContent=(opened.error||'Could not open browser')+' — select the approval link instead.';
   quickTimer=setInterval(async()=>{
     if(quickChecking)return;
