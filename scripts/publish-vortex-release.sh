@@ -72,7 +72,7 @@ PY
 TEMP="$(mktemp -d)"
 trap 'rm -rf "$TEMP"' EXIT
 ditto -x -k "$MACZIP" "$TEMP"
-APP="$(find "$TEMP" -type d -name "*.app" -maxdepth 2 -print -quit)"
+APP="$(find "$TEMP" -type d -name "*.app" -print -quit)"
 [ -n "$APP" ] || { echo "No Mac app bundle in archive" >&2; exit 2; }
 codesign --verify --deep --strict "$APP"
 xcrun stapler validate "$APP"
