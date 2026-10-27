@@ -128,6 +128,35 @@ func (s *Store) save() {
 	writeJSON(s.path("settings.json"), s.Settings)
 }
 
+// AgentsSnapshot isolates background schedulers from concurrent UI changes.
+func (s *Store) AgentsSnapshot() []Agent {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    out:=append([]Agent(nil),s.Agents...)
+    for i:=range out {
+        out[i].Permissions=append([]string(nil),out[i].Permissions...)
+        out[i].ModelPool=append([]string(nil),out[i].ModelPool...)
+    }
+    return out
+}
+
+// ClaimAgentDue atomically records a run's next scheduling timestamp only
+// while the currently saved version is still due. This prevents a racing
+// edit/Stop from scheduling an outdated goal or resetting its permissions.
+func (s *Store) ClaimAgentDue(id string,now time.Time,due func(Agent) bool)(Agent,bool){
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    for i,a:=range s.Agents {
+        if a.ID==id && due(a) {
+            a.LastRun=now
+            s.Agents[i]=a
+            writeJSON(s.path("agents.json"),s.Agents)
+            return a,true
+        }
+    }
+    return Agent{},false
+}
+
 func (s *Store) SaveAgent(a Agent) {
 	s.mu.Lock()
 	found := false
