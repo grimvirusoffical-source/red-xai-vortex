@@ -296,7 +296,8 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
           <label><input id="aNonstop" type="checkbox"/> Nonstop — restart after each run (15-second minimum between starts)</label>
           <label><input id="aRunning" type="checkbox"/> Enable schedule</label>
         </div>
-        <p class="muted">Desktop scheduling runs only while Vortex is open. The runner uses available tools, not imagined browser control. External models are used only with the API key you configure. For encrypted secure chat, the gateway still enforces model and key permissions.</p>
+        <p class="muted">Local work runs while Vortex is open. Server-only agents continue after app close but run models, not computer tools. Cloud PC agents need an authenticated worker running in your authorized Linux Cloud PC, with its own filesystem, browser profile, and permissions.</p>
+        <p id="aWorkerStatus" role="status" class="muted">Cloud PC worker connection not checked.</p>
         <div class="row" style="margin-top:12px">
           <button class="primary" id="aSave">Save agent</button>
           <button class="ghost" id="aTest">Test Vortex API</button>
