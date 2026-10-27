@@ -49,7 +49,7 @@ func (s *Server) saveUnifiedAgent(in map[string]any) map[string]any {
     id:=str(in,"id")
     var a store.Agent
     found:=false
-    for _, item:=range s.St.Agents { if item.ID==id && id!="" { a=item; found=true; break } }
+    for _, item:=range s.St.AgentsSnapshot() { if item.ID==id && id!="" { a=item; found=true; break } }
     if id!="" && !found { return map[string]any{"ok":false,"message":"This agent does not exist. Refresh the list."} }
     if !found {
         id=fmt.Sprintf("agent-%d",time.Now().UnixNano())
@@ -267,7 +267,7 @@ func (s *Server) agentScheduleLoop() {
 }
 func (s *Server) agentScheduleStep(now time.Time) {
     if s.agentsStopped() {return}
-    for _,a:=range s.St.Agents {
+    for _,a:=range s.St.AgentsSnapshot() {
         if agentRemoteMode(a)!="local" || !agentDue(a,now) {continue}
         if requiresDesktopBrowser(a.Goal) {
             // No browser DOM adapter is installed in the Go desktop. Do not
@@ -283,8 +283,14 @@ func (s *Server) agentScheduleStep(now time.Time) {
         }
         runs.mu.Unlock()
         if active {continue}
-        a.LastRun=now
-        s.St.SaveAgent(a)
-        _=s.startRunFrom(a.ID,a.Goal,"",true)
+        current,claimed:=s.St.ClaimAgentDue(a.ID,now,func(saved store.Agent)bool{
+            return agentRemoteMode(saved)=="local" && agentDue(saved,now)
+        })
+        if !claimed {continue}
+        result:=s.startRunFrom(current.ID,current.Goal,"",true)
+        if result["ok"]!=true && s.Act!=nil {
+            s.Act.Append(activity.Event{AgentID:current.ID,Agent:current.Name,Kind:"agent.error",
+                Summary:"Scheduled task could not start",Detail:fmt.Sprint(result["message"])})
+        }
     }
 }
