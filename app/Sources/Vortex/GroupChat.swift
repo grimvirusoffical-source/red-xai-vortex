@@ -73,7 +73,11 @@ enum GroupTurns {
 extension ChatStore {
     func generateGroup(chatIndex i: Int, text: String, systemPrompt: String, contextTokens: Int, params: ChatParams) {
         let chatID = chats[i].id, runID = beginGeneration()
-        let (who, next) = GroupTurns.responders(text, chat: chats[i])
+        let (ordinary, next) = GroupTurns.responders(text, chat: chats[i])
+        let leader = chats[i].leaderParticipantID
+        let team = chats[i].participants ?? []
+        let coordinated = leader != nil && team.contains(leader!) && team.count >= 2
+        let who = coordinated ? [leader!] + team.filter { $0 != leader! } + [leader!] : ordinary
         chats[i].nextTurn = next
         chats[i].updated = Date(); streaming = true
         let budget = max(512, contextTokens - params.maxTokens) * 4 - systemPrompt.count - 400
