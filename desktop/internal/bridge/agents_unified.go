@@ -288,7 +288,7 @@ func (s *Server) agentScheduleStep(now time.Time) {
             return agentRemoteMode(saved)=="local" && agentDue(saved,now)
         })
         if !claimed {continue}
-        result:=s.startRunFrom(current.ID,current.Goal,"",true)
+        result:=s.startRunFrom(current.ID,current.Goal,"",true,true)
         if result["ok"]!=true && s.Act!=nil {
             s.Act.Append(activity.Event{AgentID:current.ID,Agent:current.Name,Kind:"agent.error",
                 Summary:"Scheduled task could not start",Detail:fmt.Sprint(result["message"])})
