@@ -111,6 +111,33 @@ struct BGAgent: Codable, Identifiable, Equatable {
             return false
         }
     }
+    @discardableResult func stopAllRemote() async -> Bool {
+        do {
+            _ = try await req("/agents/stop-all", "POST", [:])
+            for i in agents.indices { agents[i].on = false; agents[i].status = "off" }
+            for i in AgentStore.shared.agents.indices
+            where ["server", "cloudpc"].contains(AgentStore.shared.agents[i].runOn ?? "") {
+                AgentStore.shared.agents[i].running = false
+            }
+            AgentStore.shared.save()
+            msg = "All connected remote agents were paused by the gateway."
+            await refresh()
+            return true
+        } catch {
+            // Older gateways lack stop-all; preserve their existing
+            // individual toggle endpoint instead of silently skipping Stop.
+            var allStopped = true
+            for agent in agents where agent.on {
+                if !(await toggle(agent, false)) {allStopped = false}
+            }
+            if !allStopped || agents.isEmpty {
+                msg = "Local work stopped, but remote cancellation could not be verified: " + error.localizedDescription
+                return false
+            }
+            return true
+        }
+    }
+
     func delete(_ a: BGAgent) async {
         do {
             _ = try await req("/agents/\(a.id)", "DELETE")
