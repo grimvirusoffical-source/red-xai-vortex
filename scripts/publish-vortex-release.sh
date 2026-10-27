@@ -27,6 +27,14 @@ COMMIT="$(git rev-parse HEAD)"
 [ "$(git branch --show-current)" = "main" ] || { echo "Publish from main only" >&2; exit 2; }
 git fetch origin main --quiet
 [ "$COMMIT" = "$(git rev-parse origin/main)" ] || { echo "Checkout is not current main" >&2; exit 2; }
+# A signed release must be based on a source commit where the complete
+# Windows/Linux/Mac CI suite actually finished successfully.
+RUNS="$(gh run list --repo "$EXPECTED" --workflow vortex-native.yml --commit "$COMMIT" --json status,conclusion --limit 20)"
+python3 - "$RUNS" <<'PY'
+import json,sys
+runs=json.loads(sys.argv[1])
+assert any(x["status"]=="completed" and x["conclusion"]=="success" for x in runs), "Cross-platform CI has not passed for this source commit"
+PY
 if gh release view "v$VERSION" >/dev/null 2>&1; then
   echo "Release v$VERSION already exists; refusing overwrite" >&2
   exit 2
@@ -49,6 +57,11 @@ import json, pathlib, plistlib, sys, tarfile, zipfile
 win, linux, mac, version, manifest, commit = sys.argv[1:]
 m = json.loads(pathlib.Path(manifest).read_text())
 assert m.get("version") == version and m.get("sourceCommit") == commit, "Signed manifest doesn't match release source"
+for name in ("Red-XAI-Vortex-windows-amd64.zip", "Red-XAI-Vortex-linux-amd64.tar.gz", f"Vortex-{version}-mac.zip", f"Vortex-{version}-mac.dmg"):
+    assert name in m["assets"], "Signed manifest missing " + name
+checksums = pathlib.Path(manifest).with_name("SHA256SUMS").read_text().splitlines()
+expected_checksums = {f"{digest}  {name}" for name, digest in m["assets"].items()}
+assert set(checksums) == expected_checksums, "SHA256SUMS does not match the authenticated manifest"
 with zipfile.ZipFile(win) as z:
     names = set(z.namelist())
     for entry in ("vortex.exe", "vortex-base.exe", "redx-link.exe", "frontend/index.html", "frontend/app.js"):
