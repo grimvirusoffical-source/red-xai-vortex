@@ -220,6 +220,30 @@ struct AgentsView: View {
             Toggle("Allow this agent to skip individual PC approvals (only when machine Always allow is also enabled)", isOn:
                 Binding(get: { draft.alwaysAllow ?? false }, set: { draft.alwaysAllow = $0 }))
             Text("Stop control can immediately cancel active PC actions and revoke unattended permission.").font(.caption).foregroundStyle(.secondary)
+            Section("Background execution") {
+                Picker("Run on", selection: Binding(get: { draft.runOn ?? "local" }, set: { draft.runOn = $0 })) {
+                    Text("On this Mac, while Vortex is running").tag("local")
+                    Text("Vortex server — persistent model-only tasks").tag("server")
+                    Text("Cloud PC — worker connection required").tag("cloudpc")
+                }
+                Picker("Run every", selection: Binding(get: { draft.scheduleSeconds ?? 0 }, set: { draft.scheduleSeconds = $0 })) {
+                    Text("Manually").tag(0)
+                    Text("Every 30 seconds").tag(30)
+                    Text("Every minute").tag(60)
+                    Text("Every five minutes").tag(300)
+                    Text("Every fifteen minutes").tag(900)
+                    Text("Every hour").tag(3600)
+                    Text("Daily").tag(86400)
+                }
+                Toggle("Nonstop: restart after each run", isOn: Binding(get: { draft.nonstop ?? false }, set: { draft.nonstop = $0; if $0 { draft.scheduleSeconds = 15 } }))
+                Toggle("Enabled", isOn: Binding(get: { draft.running ?? false }, set: { draft.running = $0 }))
+                Text("Cloud PC tool execution requires a separately connected worker. Server runs only model reasoning; they cannot control your Mac or Cloud PC.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("STOP ALL AGENTS", role: .destructive) { LocalAgentScheduler.shared.stopAll() }
+                    Button("Reset stop") { LocalAgentScheduler.shared.resetStop() }
+                }
+            }
             HStack {
                 Button("Cancel") { editing = false; apiKey = "" }
                 Spacer()
