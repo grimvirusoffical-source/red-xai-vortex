@@ -10,7 +10,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +43,7 @@ var (
 type quickAccount struct {
 	access, refresh, sub, email string
 	expires                     time.Time
+	remember                    bool
 }
 type quickApproval struct {
 	code, device, verifier, link string
@@ -89,7 +94,10 @@ func quickRequest(path string, body map[string]any) (int, map[string]any, error)
 
 func checkQuickURL(raw string) bool {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Host != "red-xai.com" || u.User != nil || u.Fragment != "" || u.Opaque != "" {
+	if err != nil || u.Scheme != "https" || u.Host != "red-xai.com" || u.User != nil || u.Opaque != "" {
+		return false
+	}
+	if u.Fragment != "" && (!strings.HasPrefix(u.Fragment, "request=") || !quickSecret.MatchString(strings.TrimPrefix(u.Fragment, "request="))) {
 		return false
 	}
 	switch u.Path {
@@ -122,7 +130,11 @@ func parseQuickAccount(data map[string]any, expected string) (quickAccount, erro
 	if sub == "" || len(sub) > 256 || (expected != "" && sub != expected) {
 		return a, errors.New("The approved Red-XAI account changed")
 	}
-	return quickAccount{access: ac, refresh: rf, sub: sub, email: asString(user["email"]), expires: time.Now().Add(time.Duration(ttl) * time.Second)}, nil
+	remember := true
+	if flag, ok := data["remember_device"].(bool); ok {
+		remember = flag
+	}
+	return quickAccount{access: ac, refresh: rf, sub: sub, email: asString(user["email"]), expires: time.Now().Add(time.Duration(ttl) * time.Second), remember: remember}, nil
 }
 func asString(value any) string { v, _ := value.(string); return v }
 func randomVerifier() (string, error) {
@@ -233,8 +245,13 @@ func (s *Server) quickPoll() map[string]any {
 		q.mu.Unlock()
 		return map[string]any{"ok": false, "error": err.Error()}
 	}
-	if err = keyring.Set(quickSubjectKey, acct.sub); err == nil {
-		err = keyring.Set(quickRefreshKey, acct.refresh)
+	if acct.remember {
+		if err = keyring.Set(quickSubjectKey, acct.sub); err == nil {
+			err = keyring.Set(quickRefreshKey, acct.refresh)
+		}
+	} else {
+		_ = keyring.Set(quickSubjectKey, "")
+		_ = keyring.Set(quickRefreshKey, "")
 	}
 	if err != nil {
 		_ = keyring.Set(quickRefreshKey, "")
@@ -252,6 +269,93 @@ func (s *Server) quickPoll() map[string]any {
 	q.epoch++
 	q.mu.Unlock()
 	return map[string]any{"ok": true, "signedIn": true}
+}
+
+// openQuickBrowser launches only the exact pending Red-XAI approval URL, never
+// an arbitrary URL supplied by a web client. Explicit browser choices are a
+// closed allowlist. The OS default is used unless the user chooses otherwise.
+func (s *Server) quickOpen(browser string) map[string]any {
+	q := &s.quickAuth
+	q.mu.Lock()
+	a := q.approval
+	q.mu.Unlock()
+	if a.device == "" || time.Now().After(a.deadline) || !checkQuickURL(a.link) {
+		return map[string]any{"ok": false, "error": "Start quick login before opening the browser"}
+	}
+	command, err := quickBrowserCommand(browser, a.link)
+	if err != nil {
+		return map[string]any{"ok": false, "error": err.Error()}
+	}
+	if err := command.Start(); err != nil {
+		return map[string]any{"ok": false, "error": "Could not open that browser; use the approval link instead"}
+	}
+	go func() { _ = command.Wait() }()
+	return map[string]any{"ok": true}
+}
+func quickBrowserCommand(browser, link string) (*exec.Cmd, error) {
+	if !checkQuickURL(link) {
+		return nil, errors.New("unsafe approval link")
+	}
+	if browser == "" {
+		browser = "default"
+	}
+	binaries := map[string]string{
+		"edge": "msedge.exe", "chrome": "chrome.exe", "firefox": "firefox.exe",
+		"brave": "brave.exe",
+	}
+	switch runtime.GOOS {
+	case "windows":
+		if browser == "default" {
+			return exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", link), nil
+		}
+		name, ok := binaries[browser]
+		if !ok {
+			return nil, errors.New("browser not supported on Windows")
+		}
+		if bin, err := exec.LookPath(name); err == nil {
+			return exec.Command(bin, link), nil
+		}
+		suffix := map[string]string{
+			"edge":    filepath.Join("Microsoft", "Edge", "Application", "msedge.exe"),
+			"chrome":  filepath.Join("Google", "Chrome", "Application", "chrome.exe"),
+			"firefox": filepath.Join("Mozilla Firefox", "firefox.exe"),
+			"brave":   filepath.Join("BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+		}[browser]
+		for _, root := range []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramFiles(x86)"), os.Getenv("LOCALAPPDATA")} {
+			if root != "" {
+				p := filepath.Join(root, suffix)
+				if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() {
+					return exec.Command(p, link), nil
+				}
+			}
+		}
+		return nil, errors.New("Selected browser is not installed")
+	case "darwin":
+		if browser == "default" {
+			return exec.Command("/usr/bin/open", link), nil
+		}
+		names := map[string]string{
+			"edge": "Microsoft Edge", "chrome": "Google Chrome", "firefox": "Firefox",
+			"safari": "Safari", "brave": "Brave Browser",
+		}
+		if name, ok := names[browser]; ok {
+			return exec.Command("/usr/bin/open", "-a", name, link), nil
+		}
+	case "linux":
+		if browser == "default" {
+			return exec.Command("xdg-open", link), nil
+		}
+		names := map[string]string{"edge": "microsoft-edge", "chrome": "google-chrome",
+			"firefox": "firefox", "brave": "brave-browser"}
+		if name, ok := names[browser]; ok {
+			bin, err := exec.LookPath(name)
+			if err == nil {
+				return exec.Command(bin, link), nil
+			}
+			return nil, errors.New("Selected browser is not installed")
+		}
+	}
+	return nil, errors.New("Unsupported browser choice")
 }
 func minQuickDelay(v time.Duration) time.Duration {
 	if v > 10*time.Second {
@@ -305,7 +409,10 @@ func (s *Server) quickLogout() {
 	q.mu.Lock()
 	q.epoch++
 	q.approval = quickApproval{}
-	refresh := keyring.Get(quickRefreshKey)
+	refresh := q.account.refresh
+	if refresh == "" {
+		refresh = keyring.Get(quickRefreshKey)
+	}
 	_ = keyring.Set(quickRefreshKey, "")
 	_ = keyring.Set(quickSubjectKey, "")
 	q.account = quickAccount{}

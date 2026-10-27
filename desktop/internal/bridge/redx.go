@@ -97,6 +97,8 @@ func (s *Server) redx(m string, in map[string]any) map[string]any {
 		return res
 	case "redx.quick.start":
 		return s.quickStart()
+	case "redx.quick.open":
+		return s.quickOpen(str("browser"))
 	case "redx.quick.poll":
 		return s.quickPoll()
 	case "redx.quick.cancel":

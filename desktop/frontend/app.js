@@ -350,6 +350,8 @@ function quickStopUI(){
   $('#gQuick').disabled=false;
   $('#gApproval').style.display='none';
 }
+try{$('#gBrowserChoice').value=localStorage.getItem('rxql.browserPreference')||'default';}catch{}
+$('#gBrowserChoice').addEventListener('change',()=>{try{localStorage.setItem('rxql.browserPreference',$('#gBrowserChoice').value);}catch{}});
 $('#gQuick').onclick=async()=>{
   $('#gQuick').disabled=true;$('#gMsg').textContent='Starting secure Red-XAI approval…';
   const r=await bridge.call('redx.quick.start').catch(()=>({ok:false,error:'Could not reach Red-XAI quick login.'}));
@@ -357,18 +359,21 @@ $('#gQuick').onclick=async()=>{
   let url;
   try {
     url=new URL(r.url);
-    if(url.origin!=='https://red-xai.com'||!['/redxai-connect','/redxai-connect/','/redxai-connectx'].includes(url.pathname)) throw Error('Unsafe approval URL');
+    if(url.origin!=='https://red-xai.com'||!['/redxai-connect','/redxai-connect/','/redxai-connectx'].includes(url.pathname)
+      || !(!url.hash||/^#request=[A-Za-z0-9_-]{43}$/.test(url.hash))) throw Error('Unsafe approval URL');
   } catch(e) {quickStopUI();await bridge.call('redx.quick.cancel');$('#gMsg').textContent='Red-XAI returned an invalid approval link.';return;}
   $('#gApprovalCode').textContent=r.code;
   $('#gApprovalLink').href=url.href;
   $('#gApproval').style.display='';
-  $('#gMsg').textContent='Open the approval link and approve Vortex using the displayed code.';
+  $('#gMsg').textContent='Checking your existing Red-XAI website login in the selected browser…';
+  const opened=await bridge.call('redx.quick.open',{browser:$('#gBrowserChoice').value}).catch(()=>({ok:false,error:'Browser not available'}));
+  if(!opened.ok) $('#gMsg').textContent=(opened.error||'Could not open browser')+' — select the approval link instead.';
   quickTimer=setInterval(async()=>{
     if(quickChecking)return;
     quickChecking=true;
     try {
       const v=await bridge.call('redx.quick.poll');
-      if(v.signedIn){quickStopUI();$('#gMsg').textContent='';await gate();}
+      if(v.signedIn){quickStopUI();$('#gMsg').textContent='';window.focus();await gate();}
       else if(!v.ok){quickStopUI();$('#gMsg').textContent=v.error||'Approval ended. Try again.';}
     } catch(e){quickStopUI();$('#gMsg').textContent='Could not check approval. Try again.';}
     finally{quickChecking=false;}

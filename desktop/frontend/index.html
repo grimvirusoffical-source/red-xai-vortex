@@ -55,6 +55,24 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
     <div id="gLogin" style="display:none">
       <h2 style="margin-top:0">Sign in to Red-XAI Vortex</h2>
       <p style="color:var(--muted)">Use your red-xai.com account. No account? <a href="https://red-xai.com" target="_blank">Create one at red-xai.com</a>.</p>
+      <div class="row" style="margin:8px 0;align-items:center;gap:8px;flex-wrap:wrap">
+        <label for="gBrowserChoice">Open Red-XAI in:</label>
+        <select id="gBrowserChoice">
+          <option value="default">Default browser</option>
+          <option value="edge">Microsoft Edge</option>
+          <option value="chrome">Google Chrome</option>
+          <option value="firefox">Firefox</option>
+          <option value="brave">Brave</option>
+          <option value="safari">Safari (Mac)</option>
+        </select>
+      </div>
+      <button class="primary" id="gQuick" type="button">Quick sign in with Red-XAI</button>
+      <div id="gApproval" role="status" aria-live="polite" style="display:none">
+        <p>Approve the same Red-XAI website account you use in GenDragoon.</p>
+        <p>Verification code: <strong id="gApprovalCode"></strong></p>
+        <div class="row"><a id="gApprovalLink" href="https://red-xai.com/redxai-connect/" target="_blank" rel="noopener noreferrer">Open Red-XAI approval</a><button id="gApprovalCancel" class="ghost" type="button">Cancel</button></div>
+      </div>
+      <p style="color:var(--muted)">Or sign in with your password and two-factor code:</p>
       <div id="gCreds"><input id="gUser" placeholder="Username or email"/><input id="gPass" type="password" placeholder="Password" style="margin-top:8px"/></div>
       <div id="gCode" style="display:none"><input id="gOtp" placeholder="6-digit code"/><button class="ghost" id="gCallMe" style="margin-top:6px">Call me instead</button></div>
       <div class="row" style="margin-top:10px"><button class="primary" id="gGo">Sign in</button></div>

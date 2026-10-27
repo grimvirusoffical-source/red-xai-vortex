@@ -78,6 +78,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		s.handlePCControl(w, r, method)
 		return
 	}
+	if strings.HasPrefix(method, "redx.quick.") && !pcLocalOperator(r) {
+		http.Error(w, "quick login controls require local same-origin access", http.StatusForbidden)
+		return
+	}
 	if strings.HasPrefix(method, "update.") && !pcLocalOperator(r) {
 		http.Error(w, "manual updates require a local same-origin JSON POST", http.StatusForbidden)
 		return
