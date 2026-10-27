@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -14,7 +15,11 @@ import (
 )
 
 func TestManagedHostPublishesSyncsAndRevokes(t *testing.T) {
-	helper := filepath.Join(t.TempDir(), "vortex-base")
+	name := "vortex-base"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	helper := filepath.Join(t.TempDir(), name)
 	sourceDir, err := filepath.Abs("../../../bases")
 	if err != nil {
 		t.Fatal(err)

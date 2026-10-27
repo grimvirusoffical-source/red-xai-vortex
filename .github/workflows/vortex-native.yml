@@ -1,0 +1,111 @@
+name: Vortex desktop regression
+
+on:
+  pull_request:
+  push:
+    branches: ['codex/vortex-2-11-3-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Frontend tests
+        shell: pwsh
+        run: |
+          Get-ChildItem desktop/frontend -Filter '*.test.cjs' | ForEach-Object {
+            node --test $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Windows Go regression tests
+        shell: pwsh
+        working-directory: desktop
+        run: go test ./... -count=1 -timeout=8m
+      - name: Complete native Windows build
+        shell: bash
+        run: |
+          VORTEX_VERSION=2.11.3 bash scripts/build-desktop-with-helper.sh windows amd64 "$PWD/dist/windows"
+          cp -R desktop/frontend dist/windows/frontend
+          test -s dist/windows/vortex.exe
+          test -s dist/windows/vortex-base.exe
+      - name: Run Windows executable and verify login UI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = (Resolve-Path dist/windows).Path
+          $log = Join-Path $dir 'boot-stdout.log'
+          $errlog = Join-Path $dir 'boot-stderr.log'
+          $proc = Start-Process -FilePath (Join-Path $dir 'vortex.exe') -ArgumentList @('-headless','-no-update') -WorkingDirectory $dir -PassThru -RedirectStandardOutput $log -RedirectStandardError $errlog
+          try {
+            $address = $null
+            for ($i=0; $i -lt 70; $i++) {
+              Start-Sleep -Milliseconds 350
+              if ($proc.HasExited) { throw "Native Windows Vortex exited early: $($proc.ExitCode)" }
+              if (Test-Path $log) {
+                $output = Get-Content $log -Raw -ErrorAction SilentlyContinue
+                if ($output -match 'bridge on (http://127\.0\.0\.1:\d+)') {
+                  $address = $Matches[1]
+                  break
+                }
+              }
+            }
+            if (-not $address) { throw 'Native Vortex bridge did not start' }
+            $index = Invoke-WebRequest -Uri $address -TimeoutSec 10 -UseBasicParsing
+            $frontend = Invoke-WebRequest -Uri "$address/app.js" -TimeoutSec 10 -UseBasicParsing
+            if ($index.StatusCode -ne 200 -or $index.Content -notmatch 'gQuick') { throw 'Quick Login form missing on Windows' }
+            if ($frontend.StatusCode -ne 200 -or $frontend.Content -notmatch 'redx.quick.start') { throw 'Quick Login handlers missing on Windows' }
+            Write-Host 'NATIVE_WINDOWS_VORTEX_STARTUP_AND_AUTH_CONTROLS_OK'
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-quicklogin-smoke
+          path: |
+            dist/windows/vortex.exe
+            dist/windows/vortex-base.exe
+            dist/windows/boot-stdout.log
+            dist/windows/boot-stderr.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift native app tests
+        run: swift test --package-path app -j 2
+
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Go regression tests
+        working-directory: desktop
+        run: go test ./... -count=1 -timeout=8m
+      - name: Frontend tests
+        run: node --test desktop/frontend/*.test.cjs
+      - name: Build Linux package executables
+        run: VORTEX_VERSION=2.11.3 bash scripts/build-desktop-with-helper.sh linux amd64 "$PWD/dist/linux"

@@ -3,6 +3,7 @@ package update
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -20,8 +21,10 @@ func TestHelperUpdatesInstallHostingAndPreserveFailedTarget(t *testing.T) {
 		if string(data) != "new-"+name {
 			t.Fatalf("helper %s was omitted", name)
 		}
-		if info, _ := os.Stat(filepath.Join(installed, name)); info.Mode().Perm()&0100 == 0 {
-			t.Fatal("helper is not executable")
+		if info, _ := os.Stat(filepath.Join(installed, name)); info == nil || !info.Mode().IsRegular() {
+			t.Fatal("updated helper is not a regular file")
+		} else if runtime.GOOS != "windows" && info.Mode().Perm()&0100 == 0 {
+			t.Fatal("Unix updated helper is not executable")
 		}
 	}
 	_ = os.Mkdir(filepath.Join(stage, "vortex-base"), 0700)
