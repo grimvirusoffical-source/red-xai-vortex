@@ -256,13 +256,25 @@ struct AgentsView: View {
     func label(_ p: String) -> String { AgentProfile.providers.first { $0.0 == p }?.1 ?? p }
     func newDraft() {
         let id = "agent-" + String((0..<8).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
-        draft = AgentProfile(id: id, name: "New agent", provider: "vortex", model: "vortex-mini")
+        draft = AgentProfile(id: id, name: "New agent", provider: "vortex", model: "vortex", modelMode: "auto", permissions: ["files-read", "browser", "plugins"], runOn: "local")
         apiKey = ""; editing = true
     }
     func saveDraft() {
         var a = draft
         if a.id.isEmpty {
             a.id = "agent-" + String((0..<8).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
+        }
+        guard a.runOn != "cloudpc" || a.running != true else {
+            store.message = "Cloud PC task worker is not connected. No actions will run remotely until a verified worker is installed."
+            return
+        }
+        guard a.running != true || ((a.nonstop == true || (a.scheduleSeconds ?? 0) >= 15) && !(a.goal ?? "").trimmingCharacters(in: .whitespaces).isEmpty) else {
+            store.message = "A scheduled agent needs a task and frequency."
+            return
+        }
+        guard !(a.alwaysAllow == true && !a.pcControlOn) else {
+            store.message = "Enable PC control before selecting unattended permissions."
+            return
         }
         let key: String? = (a.provider != "vortex" && !apiKey.isEmpty) ? apiKey : nil
         if a.provider != "vortex", key == nil, !store.keyPresent(for: a), !store.agents.contains(where: { $0.id == a.id }) {
