@@ -49,6 +49,7 @@ type Run struct {
 	pcEpoch       uint64
 	localOperator bool
 	agentAutoAllow bool
+	agentPolicySet bool
 	plannerModel  string
 	cancel        context.CancelFunc
 }
@@ -268,7 +269,7 @@ func (s *Server) startRunFrom(agentID, task, chatID string, local bool) map[stri
 	model,planner:=availableAgentModels(agent,task,available)
 	if model!="" {me.Model=model}
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &Run{ID: fmt.Sprintf("r-%d", time.Now().UnixNano()), AgentID: agentID, Agent: me.Name, Task: task, Status: "running", Started: time.Now(), ChatID: chatID, cancel: cancel, agentAutoAllow:agent.AlwaysAllow, plannerModel:planner}
+	r := &Run{ID: fmt.Sprintf("r-%d", time.Now().UnixNano()), AgentID: agentID, Agent: me.Name, Task: task, Status: "running", Started: time.Now(), ChatID: chatID, cancel: cancel, agentAutoAllow:agent.AlwaysAllow, agentPolicySet:true, plannerModel:planner}
 	r.localOperator = local
 	if !s.registerPCRunAt(r, epoch) {
 		cancel()
