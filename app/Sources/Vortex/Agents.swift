@@ -265,10 +265,6 @@ struct AgentsView: View {
         if a.id.isEmpty {
             a.id = "agent-" + String((0..<8).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
         }
-        guard a.runOn != "cloudpc" || a.running != true else {
-            store.message = "Cloud PC task worker is not connected. No actions will run remotely until a verified worker is installed."
-            return
-        }
         guard a.running != true || ((a.nonstop == true || (a.scheduleSeconds ?? 0) >= 15) && !(a.goal ?? "").trimmingCharacters(in: .whitespaces).isEmpty) else {
             store.message = "A scheduled agent needs a task and frequency."
             return
@@ -282,7 +278,7 @@ struct AgentsView: View {
             store.message = "Paste an API key for this provider."; return
         }
         store.upsert(a, apiKey: key)
-        if a.runOn == "server" { Task { await saveRemoteAgent(a) } }
+        if a.runOn == "server" || a.runOn == "cloudpc" { Task { await saveRemoteAgent(a) } }
         apiKey = ""; editing = false
         if a.provider == "openai_compat" && a.baseURL.isEmpty {
             store.message = "Saved \(a.name). Set a Base URL before chatting."
@@ -290,17 +286,42 @@ struct AgentsView: View {
     }
     func saveRemoteAgent(_ a: AgentProfile) async {
         guard a.provider == "vortex" else {
-            store.message = "Server tasks require a Vortex model; external providers remain local."
+            store.message = "Remote agents currently use Vortex gateway models. External providers remain local."
             return
         }
-        let b = BGAgent(id: a.id, name: a.name, model: a.model,
+        let location = a.runOn ?? "server"
+        let running = a.running ?? false
+        if location == "cloudpc", running, !(await BGAgentStore.shared.cloudWorkerOnline()) {
+            remoteSyncFailed(a, detail: "No authenticated Cloud PC worker is online. Install and sign in to the worker before enabling its schedule.")
+            return
+        }
+        let base = UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL
+        let models = (try? await API.models(base: base, key: Keychain.get() ?? "")) ?? []
+        let chosen = AgentModelRouter.select(task: a.goal ?? "", profile: a, available: models)
+        let selectedModel = a.modelMode == "single" ? a.model : chosen.executor
+        var b = BGAgent(id: a.id, name: a.name,
+                        model: location == "server" && a.modelMode == "auto" ? "vortex" : selectedModel,
                         system: a.systemPrompt, goal: a.goal ?? "",
                         interval_s: a.nonstop == true ? 30 : max(30, a.scheduleSeconds ?? 300),
-                        on: a.running ?? false, run_on: "server")
+                        on: running, run_on: location)
+        if location == "cloudpc" {
+            b.planner = chosen.planner
+            let supported: Set<String> = ["web", "files-read", "files-write", "shell", "browser"]
+            b.permissions = (a.permissions ?? []).filter { supported.contains($0) }
+            b.allow_actions = a.alwaysAllow ?? false
+        }
         await BGAgentStore.shared.save(b)
         if !BGAgentStore.shared.msg.hasPrefix("Saved") {
-            store.message = "Local agent saved, but server background sync failed: " + BGAgentStore.shared.msg
+            remoteSyncFailed(a, detail: BGAgentStore.shared.msg)
         }
+    }
+
+    func remoteSyncFailed(_ a: AgentProfile, detail: String) {
+        if let i = store.agents.firstIndex(where: { $0.id == a.id }) {
+            store.agents[i].running = false
+            store.save()
+        }
+        store.message = "Agent saved locally, but its remote schedule was not activated: " + detail
     }
     func testVortex() async {
         let a = store.agents.first { $0.provider == "vortex" } ?? store.agents.first
