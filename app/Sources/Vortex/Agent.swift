@@ -18,7 +18,8 @@ struct ToolSpec {
         get { UserDefaults.standard.object(forKey: "chatTools") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "chatTools") }
     }
-    static func tools(for model: String) -> [ToolSpec] {
+    static func tools(for model: String, agent explicit: AgentProfile? = nil) -> [ToolSpec] {
+        let profile = explicit ?? AgentStore.shared.active
         var t: [ToolSpec] = []
         if chatToolsOn { t += PluginStore.shared.enabledTools(); t += MCPStore.shared.enabledTools() }
         t += PCControl.shared.tools(for: model)   // PC tools follow the PC Control master switch, not 🔧
