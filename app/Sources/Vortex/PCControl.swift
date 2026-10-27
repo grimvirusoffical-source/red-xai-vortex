@@ -226,8 +226,18 @@ enum PCTools {
                 }
             }]
         case .input: return [
-            tool(k, "pc_type_text", "Type text into the focused app.", obj(["text": "string"], ["text"]), destructive: true) { a in
+            tool(k, "pc_type_text", "Type text only into a verified, non-Vortex focused app. Browser typing requires the expected tab URL and refuses search/address fields.", obj(["text": "string", "expected_url": "string"], ["text"]), destructive: true) { a in
                 try needAX(); let t = a["text"] as? String ?? ""; let target = try await targetApp(); try PCExecutionContext.check()
+                // Browser inputs can easily land in a search box instead of the
+                // intended app. Verify the active tab URL and focused AX element.
+                if let target, let app = NSRunningApplication(processIdentifier: target),
+                   ["com.google.Chrome", "com.apple.Safari", "com.microsoft.edgemac"].contains(app.bundleIdentifier ?? "") {
+                    guard let expected = a["expected_url"] as? String, expected.count >= 4 else {
+                        throw PCError.msg("Browser typing needs expected_url and a verified focused message editor. Nothing was typed.")
+                    }
+                    try await verifyBrowserTarget(app: app, expectedURL: expected)
+                }
+                try focusedInputIsNotSearchField()
                 let units = Array(t.utf16); var offset = 0
                 while offset < units.count {
                     try PCExecutionContext.check()
@@ -319,7 +329,10 @@ enum PCTools {
         let (pid, activated) = try await MainActor.run { () throws -> (pid_t?, Bool) in
             try PCExecutionContext.check()
             if let f = NSWorkspace.shared.frontmostApplication, f.processIdentifier != getpid() { return (f.processIdentifier, false) }
-            guard let other = lastOther, !other.isTerminated else { return (nil, false) }
+            guard let other = lastOther, !other.isTerminated,
+                  other.processIdentifier != getpid() else {
+                throw PCError.msg("No verified target app is selected. Focus the intended application and try again. Nothing was typed.")
+            }
             other.activate(); return (other.processIdentifier, true)
         }
         if activated { try await Task.sleep(nanoseconds: 400_000_000) }
@@ -328,8 +341,44 @@ enum PCTools {
     }
     static func send(_ e: CGEvent?, to target: pid_t?) throws {
         try PCExecutionContext.check()
-        guard let e else { return }
-        if let pid = target ?? NSWorkspace.shared.frontmostApplication?.processIdentifier { e.postToPid(pid) } else { e.post(tap: .cghidEventTap) }
+        guard let e, let pid = target, pid != getpid() else {
+            throw PCError.msg("Input target could not be verified. Refusing to type into Vortex.")
+        }
+        e.postToPid(pid)
+    }
+
+    static func verifyBrowserTarget(app: NSRunningApplication, expectedURL: String) async throws {
+        guard let appName = app.localizedName, ["Google Chrome", "Safari", "Microsoft Edge"].contains(appName) else {
+            throw PCError.msg("Unknown browser target.")
+        }
+        let script: String
+        if appName == "Safari" { script = "tell application \"Safari\" to return URL of front document" }
+        else { script = "tell application \"\(appName)\" to return URL of active tab of front window" }
+        let address = await MainActor.run { () -> String in
+            var err: NSDictionary?
+            return NSAppleScript(source: script)?.executeAndReturnError(&err).stringValue ?? ""
+        }
+        guard !address.isEmpty && address.lowercased().contains(expectedURL.lowercased()) else {
+            throw PCError.msg("The active browser tab does not match the target URL. Nothing was typed.")
+        }
+    }
+
+    static func focusedInputIsNotSearchField() throws {
+        let system = AXUIElementCreateSystemWide()
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let element = focused else {
+            throw PCError.msg("Could not verify the focused input. Nothing was typed.")
+        }
+        let ui = unsafeBitCast(element, to: AXUIElement.self)
+        var role: CFTypeRef?, title: CFTypeRef?, placeholder: CFTypeRef?
+        _ = AXUIElementCopyAttributeValue(ui, kAXRoleAttribute as CFString, &role)
+        _ = AXUIElementCopyAttributeValue(ui, kAXTitleAttribute as CFString, &title)
+        _ = AXUIElementCopyAttributeValue(ui, "AXPlaceholderValue" as CFString, &placeholder)
+        let details = [title, placeholder].compactMap { $0 as? String }.joined(separator: " ").lowercased()
+        if ["search", "address", "url", "location bar"].contains(where: { details.contains($0) }) {
+            throw PCError.msg("The focused element looks like a search/address field, not the requested message editor. Nothing was typed.")
+        }
     }
     static func needAX() throws {
         try PCExecutionContext.check()
