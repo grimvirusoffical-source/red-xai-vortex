@@ -151,6 +151,14 @@ func (s *Server) agentToggle(in map[string]any) map[string]any {
         if enabled && (s.agentsStopped() || a.ScheduleS<=0 || a.Goal=="") {
             return map[string]any{"ok":false,"message":"Clear Emergency Stop and set a schedule and goal before starting."}
         }
+        if agentRemoteMode(a)=="cloudpc" && enabled {
+            return map[string]any{"ok":false,"message":"Cloud PC worker has not connected yet."}
+        }
+        if agentRemoteMode(a)=="server" {
+            if err:=s.toggleServerAgent(a.ID,enabled);err!=nil {
+                return map[string]any{"ok":false,"message":"Server background agent could not change state: "+err.Error()}
+            }
+        }
         a.Running=enabled
         a.Updated=time.Now()
         if enabled { a.LastRun=time.Time{} }
