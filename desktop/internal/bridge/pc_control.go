@@ -181,6 +181,12 @@ func (s *Server) autoApprove(ctx context.Context, r *Run) bool {
 	if !r.localOperator || s.pcForceAsk || s.pcCheckLocked(ctx, r) != nil {
 		return false
 	}
+	// Both machine-level consent AND the individual agent's explicit opt-in
+	// are required for unattended writes. Existing non-agent run fixtures
+	// continue to honor the machine policy.
+	if r.AgentID!="" && !r.agentAutoAllow {
+		return false
+	}
 	policy, err := s.St.PCPolicy()
 	return err == nil && policy.AlwaysAllow
 }
