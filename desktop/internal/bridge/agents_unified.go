@@ -172,6 +172,13 @@ func (s *Server) agentToggle(in map[string]any) map[string]any {
 func (s *Server) agentDelete(in map[string]any) map[string]any {
     id:=str(in,"id")
     if id=="vortex-default" || id=="" { return map[string]any{"ok":false,"message":"The default Vortex agent cannot be removed."} }
+    for _,a:=range s.St.Agents {
+        if a.ID==id && agentRemoteMode(a)=="server" {
+            if err:=s.deleteServerAgent(id);err!=nil {
+                return map[string]any{"ok":false,"message":"Remote agent was not deleted: "+err.Error()}
+            }
+        }
+    }
     if !s.St.DeleteAgent(id) { return map[string]any{"ok":false,"message":"Unknown agent"} }
     s.cancelAgentRuns(id)
     _=keyring.Set("agent-key-"+id,"")
