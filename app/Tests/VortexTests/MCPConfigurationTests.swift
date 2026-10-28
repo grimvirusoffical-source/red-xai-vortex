@@ -2,6 +2,17 @@ import XCTest
 @testable import Vortex
 
 final class MCPConfigurationTests: XCTestCase {
+    func testOriginalMemberwiseConstructionRemainsCompatible() throws {
+        let local = MCPServerDef(id: "legacy", name: "Legacy", type: "stdio", command: "npx", args: ["-y", "example-mcp"], env: ["MODE": "test"])
+        XCTAssertEqual(local.command, "npx")
+        XCTAssertEqual(local.args, ["-y", "example-mcp"])
+        XCTAssertEqual(local.env["MODE"], "test")
+        XCTAssertNoThrow(try local.validated())
+        let remote = MCPServerDef(id: "remote", name: "Remote", type: "http", url: "https://example.com/mcp", headers: ["X-Service": "compatible"], enabled: false)
+        XCTAssertFalse(remote.enabled)
+        XCTAssertNoThrow(try remote.validated())
+    }
+
     private func remote() -> MCPServerDef {
         var d = MCPServerDef(id: "firecrawl", name: "Firecrawl")
         d.type = "http"; d.url = "https://mcp.firecrawl.dev/v2/mcp"; return d
