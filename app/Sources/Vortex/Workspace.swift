@@ -227,7 +227,7 @@ enum BaseClient {
     var assetsDirectory: URL { directory.appendingPathComponent("assets", isDirectory: true) }
     var usedMemoryBytes: Int { state.memories.reduce(0) { $0 + $1.storageBytes } }
 
-    init(directory: URL? = nil, preferences: UserDefaults = .standard) {
+    init(directory: URL? = nil, preferences: UserDefaults = AccountProfile.preferences) {
         self.directory = directory ?? ChatStore.dir.appendingPathComponent("Workspace", isDirectory: true)
         self.preferences = preferences
         do {

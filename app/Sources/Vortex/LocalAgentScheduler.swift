@@ -9,7 +9,7 @@ import SwiftUI
     private var tasks: [String: Task<Void, Never>] = [:]
     private var timer: Timer?
 
-    var stopped: Bool { UserDefaults.standard.bool(forKey: "agents.emergencyStop") }
+    var stopped: Bool { AccountProfile.preferences.bool(forKey: "agents.emergencyStop") }
 
     private init() {
         timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
@@ -60,7 +60,7 @@ import SwiftUI
             ActivityLog.add("agent.blocked", summary: reason, agent: ActivityAgent(id: a.id, name: a.name))
             return
         }
-        let base = UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL
+        let base = AccountProfile.preferences.string(forKey: "serverURL") ?? Defaults.serverURL
         let gatewayKey = Keychain.get() ?? ""
         let available = (try? await API.models(base: base, key: gatewayKey)) ?? []
         let selected = AgentModelRouter.select(task: goal, profile: a, available: available)
@@ -115,9 +115,15 @@ import SwiftUI
         }
     }
 
+    func suspendForAccountSwitch() {
+        timer?.invalidate(); timer = nil
+        for task in tasks.values { task.cancel() }
+        tasks.removeAll(); activeIDs.removeAll()
+    }
+
     func stopAll() {
         // Local Stop is immediate and persisted before any network request.
-        UserDefaults.standard.set(true, forKey: "agents.emergencyStop")
+        AccountProfile.preferences.set(true, forKey: "agents.emergencyStop")
         for task in tasks.values { task.cancel() }
         tasks.removeAll()
         activeIDs.removeAll()
@@ -139,7 +145,7 @@ import SwiftUI
     }
 
     func resetStop() {
-        UserDefaults.standard.set(false, forKey: "agents.emergencyStop")
+        AccountProfile.preferences.set(false, forKey: "agents.emergencyStop")
         if PCControl.shared.killed { PCControl.shared.resume() }
         AgentStore.shared.message = "Emergency stop reset. All agents remain paused until you enable them."
     }

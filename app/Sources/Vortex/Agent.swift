@@ -15,8 +15,8 @@ struct ToolSpec {
 /// Collects the tools that are switched on for a chat/model.
 @MainActor enum ToolRegistry {
     static var chatToolsOn: Bool {
-        get { UserDefaults.standard.object(forKey: "chatTools") as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: "chatTools") }
+        get { AccountProfile.preferences.object(forKey: "chatTools") as? Bool ?? true }
+        set { AccountProfile.preferences.set(newValue, forKey: "chatTools") }
     }
     static func tools(for model: String, agent explicit: AgentProfile? = nil) -> [ToolSpec] {
         let profile = explicit ?? AgentStore.shared.active

@@ -45,6 +45,7 @@ func phoneInfo() (string, string) {
 
 // applyPhone starts or stops the LAN listener to match Settings.PhoneChat.
 func (s *Server) applyPhone() {
+    if !s.profileLive(){return}
 	phone.Lock()
 	defer phone.Unlock()
 	if !s.St.Settings.PhoneChat {

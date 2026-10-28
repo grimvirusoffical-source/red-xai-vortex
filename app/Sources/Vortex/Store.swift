@@ -25,13 +25,7 @@ final class ChatStore: ObservableObject {
         generation.invalidate(); streaming = false; task = nil; save()
     }
 
-    static var dir: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let d = base.appendingPathComponent("Red-XAI Vortex"), old = base.appendingPathComponent("Dolphino")
-        if !FileManager.default.fileExists(atPath: d.path), FileManager.default.fileExists(atPath: old.path) { try? FileManager.default.moveItem(at: old, to: d) } // one-time move from the old app name
-        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
-        return d
-    }
+    static var dir: URL { AccountProfile.directory }
     var file: URL { Self.dir.appendingPathComponent("chats.json") }
 
     init() {
@@ -114,7 +108,7 @@ final class ChatStore: ObservableObject {
         chats[i].messages.append(assistant)
         chats[i].updated = Date(); streaming = true; status = "Thinking…"
         // Stream by default; retain an explicitly saved finished-only preference.
-        let whole = UserDefaults.standard.object(forKey: "replyWhenFinished") as? Bool ?? false
+        let whole = AccountProfile.preferences.object(forKey: "replyWhenFinished") as? Bool ?? false
         let buffer = ReplyBuffer()
         if whole { status = "Vortex is typing…" }
         if params.model.hasPrefix("redx-merge-") {
@@ -147,8 +141,8 @@ final class ChatStore: ObservableObject {
                     let on = await MainActor.run { () -> Bool in
                         if pc.enabled && !pc.killed { return true }
                         // First time a computer action is asked for with PC Control off: offer to turn it on (once).
-                        if pc.killed || UserDefaults.standard.bool(forKey: "pc.askedEnable") { return false }
-                        UserDefaults.standard.set(true, forKey: "pc.askedEnable")
+                        if pc.killed || AccountProfile.preferences.bool(forKey: "pc.askedEnable") { return false }
+                        AccountProfile.preferences.set(true, forKey: "pc.askedEnable")
                         let ok = Confirm.ask("Let Vortex control this Mac?", "You asked for something on your computer. Turn on PC Control so Vortex can open apps, manage files, read the screen and more? Risky actions still ask first. You can change this in Settings → PC Control.")
                         if ok { pc.setEnabled(true); pc.enable(PCKind.safe) }
                         return ok
@@ -185,7 +179,7 @@ final class ChatStore: ObservableObject {
                 }
                 let tps: Double?
                 do { tps = try await API.stream(p, messages: hist, onToken: onTok) }
-                catch let e as URLError where e.code != .cancelled && !Task.isCancelled && !params.model.hasPrefix("local:") && (UserDefaults.standard.object(forKey: "autoFailover") as? Bool ?? true) {
+                catch let e as URLError where e.code != .cancelled && !Task.isCancelled && !params.model.hasPrefix("local:") && (AccountProfile.preferences.object(forKey: "autoFailover") as? Bool ?? true) {
                     await MainActor.run { self?.setStatus("Server unreachable, failing over…", runID: runID) }
                     if let s = await ServerStore.shared.failover() {
                         p.baseURL = s.chatURL; p.apiKey = ServerStore.shared.key(for: s)

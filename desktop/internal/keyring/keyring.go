@@ -1,13 +1,17 @@
 package keyring
 
 import (
+	"errors"
+	oskeyring "github.com/zalando/go-keyring"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
-// Cross-platform secret store. Prefers OS keychain via dbus/secret-service on Linux,
-// Credential Manager on Windows (via file fallback with 0600 when libs unavailable).
+// New account-scoped credentials require the real OS secret store.
+// Legacy login storage is retained only for the existing sign-in coordinator;
+// scoped keys never fall back to legacy files or inherited credentials.
 // Never logs or prints values.
 
 var (
@@ -32,6 +36,21 @@ func init() {
 func Set(account, value string) error {
 	mu.Lock()
 	defer mu.Unlock()
+	if strings.HasPrefix(account, "profile-") {
+		if value == "" {
+			mem[account] = ""
+			err := oskeyring.Delete("com.redxai.vortex.accounts", account)
+			if errors.Is(err, oskeyring.ErrNotFound) {
+				return nil
+			}
+			return err
+		}
+		if err := oskeyring.Set("com.redxai.vortex.accounts", account, value); err != nil {
+			return errors.New("OS credential store unavailable; no plaintext fallback was written")
+		}
+		mem[account] = value
+		return nil
+	}
 	if value == "" {
 		// An explicit logout must shadow an inherited environment credential
 		// for the rest of the process, including phone helpers on macOS.
@@ -48,6 +67,14 @@ func Get(account string) string {
 	defer mu.Unlock()
 	if v, ok := mem[account]; ok {
 		return v
+	}
+	if strings.HasPrefix(account, "profile-") {
+		value, err := oskeyring.Get("com.redxai.vortex.accounts", account)
+		if err != nil {
+			return ""
+		}
+		mem[account] = value
+		return value
 	}
 	// Use an inherited Mac phone-helper credential only until an explicit
 	// local Set/Logout. A signed-out session must never be resurrected by env.

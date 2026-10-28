@@ -25,8 +25,8 @@ private struct VortexApprovedSession {
     @Published private(set) var code = ""
     @Published private(set) var message = ""
     @Published private(set) var busy = false
-    @Published var browserChoice = UserDefaults.standard.string(forKey: "vortexLoginBrowser") ?? "default" {
-        didSet { UserDefaults.standard.set(browserChoice, forKey: "vortexLoginBrowser") }
+    @Published var browserChoice = AccountProfile.preferences.string(forKey: "vortexLoginBrowser") ?? "default" {
+        didSet { AccountProfile.preferences.set(browserChoice, forKey: "vortexLoginBrowser") }
     }
     private var openedBrowserIdentifier: String?
     private let issuer = "https://red-xai.com"
@@ -36,6 +36,10 @@ private struct VortexApprovedSession {
     private let subKey = "redx-vortex-subject"
     private let session = URLSession(configuration: .ephemeral, delegate: VortexNoRedirect(), delegateQueue: nil)
     private var linked: VortexApprovedSession?
+    var authenticatedSubject: String? {
+        guard let linked, linked.expires > Date() else { return nil }
+        return linked.sub
+    }
     private var generation = 0
     private var connectTask: Task<Void, Never>?
 
@@ -121,7 +125,29 @@ private struct VortexApprovedSession {
         linked = approved
     }
 
+    private var handoffConsumed = false
+    func sessionHandoff() -> Data? {
+        guard let linked, !linked.remember, linked.expires > Date() else { return nil }
+        return try? JSONSerialization.data(withJSONObject: ["refresh": linked.refresh, "subject": linked.sub, "until": Date().addingTimeInterval(60).timeIntervalSince1970])
+    }
+    private func restoreHandoff() async {
+        guard !handoffConsumed else { return }; handoffConsumed = true
+        guard ProcessInfo.processInfo.arguments.contains("--account-session-handoff"), !AccountProfile.isTesting else { return }
+        guard let data = try? FileHandle.standardInput.read(upToCount: 8192),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let refresh = payload["refresh"] as? String, refresh.hasPrefix("rxcr_"), refresh.count == 48,
+              let subject = payload["subject"] as? String,
+              let until = payload["until"] as? Double, until > Date().timeIntervalSince1970, until < Date().addingTimeInterval(65).timeIntervalSince1970,
+              (try? AccountProfile.identifier(subject: subject)) == AccountProfile.current else { return }
+        do {
+            let (status,json) = try await call("refresh", body: ["client_id": clientID, "refresh_token": refresh])
+            guard status == 200 else { return }
+            let approved = try readSession(json, expected: subject)
+            linked = VortexApprovedSession(access: approved.access, refresh: approved.refresh, sub: approved.sub, email: approved.email, expires: approved.expires, remember: false)
+        } catch { message = "Session-only account approval could not be resumed. Sign in again." }
+    }
     func restore() async -> String? {
+        await restoreHandoff()
         if let linked, linked.expires > Date().addingTimeInterval(60) { return linked.email }
         // No device trust is memory-only, not an extra password challenge.
         let refresh = (linked?.remember == false) ? linked?.refresh : Keychain.get(account: refreshKey)
@@ -199,10 +225,8 @@ private struct VortexApprovedSession {
                     try save(approved)
                     self.code = ""
                     message = ""
-                    AccountGate.shared.username = approved.email
-                    AccountGate.shared.signedIn = true
-                    AccountGate.shared.accountSignInSucceeded()
-                    UserDefaults.standard.set(approved.email, forKey: "redxUser")
+                    guard AccountGate.shared.acceptVerifiedIdentity(subject: approved.sub, displayName: approved.email) else { return }
+                    AccountGate.shared.owner = await AccountGate.shared.isOwner()
                     PhoneHost.sync()
                     focusVortexAndHideAuthBrowser()
                     return

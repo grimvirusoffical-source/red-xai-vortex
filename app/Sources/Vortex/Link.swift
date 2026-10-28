@@ -24,19 +24,19 @@ final class RedXLink: ObservableObject {
 
     /// "link" (default) or "ssh" (owner-only tunnel).
     static var mode: String {
-        get { UserDefaults.standard.string(forKey: "connectionMode") ?? "link" }
-        set { UserDefaults.standard.set(newValue, forKey: "connectionMode") }
+        get { AccountProfile.preferences.string(forKey: "connectionMode") ?? "link" }
+        set { AccountProfile.preferences.set(newValue, forKey: "connectionMode") }
     }
     static var enabled: Bool { mode == "link" }
     /// Secure chat (Red-SecretsXAI): carry all Link traffic as red-X barcode images. Per device, on by default.
     nonisolated static var secure: Bool {
-        get { UserDefaults.standard.object(forKey: "secureChat") as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: "secureChat") }
+        get { AccountProfile.preferences.object(forKey: "secureChat") as? Bool ?? true }
+        set { AccountProfile.preferences.set(newValue, forKey: "secureChat") }
     }
     /// Phone chat over the local network (PIN-protected web page served by the helper).
     nonisolated static var phone: Bool {
-        get { UserDefaults.standard.bool(forKey: "phoneChat") }
-        set { UserDefaults.standard.set(newValue, forKey: "phoneChat") }
+        get { AccountProfile.preferences.bool(forKey: "phoneChat") }
+        set { AccountProfile.preferences.set(newValue, forKey: "phoneChat") }
     }
     static let phonePort = 18192
     /// QR code (black on white) for the phone URL, generated locally with Core Image.
@@ -169,9 +169,9 @@ final class RedXLink: ObservableObject {
 struct LinkSettingsBox: View {
     @StateObject var link = RedXLink.shared
     @StateObject var ss = ServerStore.shared
-    @AppStorage("connectionMode") var mode = "link"
-    @AppStorage("secureChat") var secure = true
-    @AppStorage("phoneChat") var phone = false
+    @AppStorage("connectionMode", store: AccountProfile.preferences) var mode = "link"
+    @AppStorage("secureChat", store: AccountProfile.preferences) var secure = true
+    @AppStorage("phoneChat", store: AccountProfile.preferences) var phone = false
     @Local var keyText = ""
     @Local var addrEdit: [String: String] = [:]
     @Local var checking = false

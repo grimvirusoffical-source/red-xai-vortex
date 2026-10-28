@@ -1,5 +1,15 @@
-const bridge = window.vortex || {
-  async call(m, a){ return fetch('/bridge/'+m,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(a||{})}).then(r=>r.json()) }
+let accountScope = '', accountIdentity = '', displayedProfile = '';
+window.vortexAccountStorage={getItem:key=>accountIdentity?localStorage.getItem('vortex.account.'+accountIdentity+'.'+key):null,setItem:(key,value)=>{if(accountIdentity)localStorage.setItem('vortex.account.'+accountIdentity+'.'+key,value)}};
+const bridge = {
+  async call(m, a) {
+    const control = /^(gate|redx)\./.test(m);
+    const startedScope = accountScope;
+    const r = await fetch('/bridge/'+m, {method:'POST',headers:{'Content-Type':'application/json',...(control?{}:{'X-Vortex-Profile':startedScope})},body:JSON.stringify(a||{})});
+    const value=await r.json();
+    if(!control && startedScope!==accountScope) throw Error('Discarded response from a previous account');
+    if(value.accountChanged || value.accountRequired) { accountScope='';document.getElementById('gate').style.display='flex'; }
+    return value;
+  }
 };
 const $ = (s)=>document.querySelector(s);
 const $$ = (s)=>[...document.querySelectorAll(s)];
@@ -479,13 +489,17 @@ async function gate(){
     $('#gTermsText').textContent=await fetch('terms.md').then(r=>r.text()).catch(()=>'Terms unavailable.');
     show('gTerms'); return;
   }
-  if(!(g.signedIn||g.owner)){
+  if(g.signedIn!==true){
+    accountScope='';state={...state,chats:[],agents:[],active:null,models:[]};renderAgents();renderChats();$('#chatlog').replaceChildren();
     $('#fUser').textContent='';
-    $('#gOwnerContinue').hidden=g.ownerAvailable!==true;
+
     $('#gate').style.display='flex';
     show('gLogin');
     return;
   }
+  if(displayedProfile && displayedProfile!==g.profile){accountScope='';accountIdentity='';location.reload();return;}
+  const changed=accountScope!==g.profile;accountScope=g.profile||'';displayedProfile=accountScope;accountIdentity=g.accountID||'';window.dispatchEvent(new Event('vortex-account-ready'));
+  if(changed){state={...state,chats:[],agents:[],active:null,models:[]};$('#chatlog').replaceChildren();await refresh();}
   $('#fUser').textContent=g.username?('· '+g.username):(g.owner?'· owner mode':'');
   $('#gate').style.display='none';
 }
@@ -510,12 +524,12 @@ let accountSignOutBusy=false;
 async function signOutVortex(e){
   e?.preventDefault();
   if(accountSignOutBusy)return;
-  accountSignOutBusy=true;
+  accountSignOutBusy=true;accountScope='';accountIdentity='';$('#gate').style.display='flex';show('gLogin');
   $('#accountLogOut').disabled=true;
   try{
     const r=await bridge.call('redx.logout',{});
     if(r?.ok!==true)throw Error(r?.error||'Could not sign out safely.');
-    location.reload(); // Clears transient UI/account state, not saved chats.
+    accountScope='';state={...state,chats:[],agents:[],active:null,models:[]};location.reload(); // Saved data stays in its own account profile.
   }catch(error){
     accountSignOutBusy=false;
     $('#accountLogOut').disabled=false;
@@ -525,11 +539,6 @@ async function signOutVortex(e){
 }
 $('#accountLogOut').onclick=signOutVortex;
 $('#fSignOut').onclick=signOutVortex;
-$('#gOwnerContinue').onclick=async()=>{
-  const r=await bridge.call('redx.owner.continue',{}).catch(()=>({ok:false}));
-  if(r.ok) await gate();
-  else $('#gMsg').textContent=r.error||'Owner mode could not be opened.';
-};
 $('#fTerms').onclick=async e=>{e.preventDefault();const t=await fetch('terms.md').then(r=>r.text());const w=window.open('','_blank');if(w){w.document.body.innerHTML='<pre style="white-space:pre-wrap"></pre>';w.document.querySelector('pre').textContent=t;}else alert(t);};
 gate();
 

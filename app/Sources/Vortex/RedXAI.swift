@@ -15,13 +15,13 @@ enum PII {
 extension ChatStore {
     /// Training mode: send a rated (and optionally corrected) reply to Red-XAI's dataset. PII is scrubbed here and again on the server.
     func sendFeedback(messageID: UUID, rating: Int, correction: String?) {
-        guard UserDefaults.standard.bool(forKey: "trainingMode"), UserDefaults.standard.bool(forKey: "trainingConsent") else { return }
+        guard AccountProfile.preferences.bool(forKey: "trainingMode"), AccountProfile.preferences.bool(forKey: "trainingConsent") else { return }
         guard let c = chats.first(where: { $0.messages.contains { $0.id == messageID } }),
               let i = c.messages.firstIndex(where: { $0.id == messageID }) else { return }
         let ctx = c.messages[..<i].suffix(8).filter { $0.role != "system" && !$0.content.hasPrefix("⚠️") }
             .map { ["role": $0.role, "content": PII.scrub($0.content)] }
         var body: [String: Any] = ["consent": true, "rating": rating, "messages": ctx, "response": PII.scrub(c.messages[i].content),
-                                   "model": UserDefaults.standard.string(forKey: "model") ?? ""]
+                                   "model": AccountProfile.preferences.string(forKey: "model") ?? ""]
         if let correction, !correction.isEmpty { body["correction"] = PII.scrub(correction) }
         if let j = idx(c.id) { chats[j].messages[i].rating = rating; save() }
         Task { do { _ = try await Admin.call("POST", "/v1/redxai/feedback", body); status = "Thanks — saved for Vortex training" } catch { status = "Feedback failed: \(error.localizedDescription)" } }
@@ -31,7 +31,7 @@ extension ChatStore {
 struct FeedbackBar: View {
     let message: Message
     @EnvironmentObject var store: ChatStore
-    @AppStorage("trainingMode") var trainingMode = false
+    @AppStorage("trainingMode", store: AccountProfile.preferences) var trainingMode = false
     @Local var correcting = false
     @Local var text = ""
     var body: some View {
@@ -63,8 +63,8 @@ struct RedXAIView: View {
     @Local var maxPages = 200
     @Local var delay = 2.0
     @Local var busy = ""
-    @AppStorage("trainingMode") var trainingMode = false
-    @AppStorage("trainingConsent") var trainingConsent = false
+    @AppStorage("trainingMode", store: AccountProfile.preferences) var trainingMode = false
+    @AppStorage("trainingConsent", store: AccountProfile.preferences) var trainingConsent = false
     @Local var distill: [String: Any] = [:]
     @Local var st: [String: Any] = [:]
     @Local var stKind = ""

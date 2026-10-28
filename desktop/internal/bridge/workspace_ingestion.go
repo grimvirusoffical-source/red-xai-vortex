@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/ingest"
-	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/keyring"
 	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/store"
 	"os"
 	"path/filepath"
@@ -98,7 +97,7 @@ func (s *Server) workspaceIngestionAction(in map[string]any) map[string]any {
 		if !store.ValidAttachmentID(id) {
 			return workspaceError(errors.New("valid source ID required"))
 		}
-		if e := keyring.Set("document-token-"+id, ""); e != nil {
+		if e := s.secretSet("document-token-"+id, ""); e != nil {
 			return workspaceError(errors.New("document credential could not be removed"))
 		}
 		if e := s.updateIngestion(func(state *ingestionState) {
@@ -130,7 +129,7 @@ func (s *Server) cleanupDocumentSubscriptions() {
 	removed := false
 	for _, document := range state.Documents {
 		if !available[document.SourceID] {
-			_ = keyring.Set("document-token-"+document.SourceID, "")
+			_ = s.secretSet("document-token-"+document.SourceID, "")
 			removed = true
 		}
 	}
@@ -202,7 +201,7 @@ func (s *Server) fetchDocumentSource(in map[string]any) map[string]any {
 	}
 	token := strings.TrimSpace(str(in, "accessToken"))
 	if token == "" {
-		token = keyring.Get("document-token-" + sourceID)
+		token = s.secretGet("document-token-" + sourceID)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -241,7 +240,7 @@ func (s *Server) fetchDocumentSource(in map[string]any) map[string]any {
 		return workspaceError(e)
 	}
 	if token != "" {
-		if e = keyring.Set("document-token-"+sourceID, token); e != nil {
+		if e = s.secretSet("document-token-"+sourceID, token); e != nil {
 			return workspaceError(errors.New("document imported, but its refresh credential could not be saved"))
 		}
 	}

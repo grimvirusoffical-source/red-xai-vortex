@@ -37,7 +37,7 @@ struct BGAgent: Codable, Identifiable, Equatable {
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in Task { @MainActor in await BGAgentStore.shared.refresh(notify: true) } }
     }
     private func req(_ path: String, _ method: String = "GET", _ body: [String: Any]? = nil, timeout: Double = 30) async throws -> Data {
-        let base = UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL
+        let base = AccountProfile.preferences.string(forKey: "serverURL") ?? Defaults.serverURL
         var r = URLRequest(url: API.url(base, path)!, timeoutInterval: timeout)
         r.httpMethod = method
         r.setValue("Bearer \(Keychain.get() ?? "")", forHTTPHeaderField: "Authorization")
@@ -174,7 +174,7 @@ struct BackgroundAgentsView: View {
     @Local var edit: BGAgent? = nil
     @Local var chatWith: BGAgent? = nil
     @Local var atLogin = LoginHelper.enabled
-    @AppStorage("model") var chatModel = Defaults.model
+    @AppStorage("model", store: AccountProfile.preferences) var chatModel = Defaults.model
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {

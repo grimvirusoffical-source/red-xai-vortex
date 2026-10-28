@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/keyring"
 	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/store"
 )
 
@@ -32,7 +31,7 @@ func (s *Server) gw(method, path string, body any) map[string]any {
 	}
 	req, _ := http.NewRequest(method, strings.TrimRight(s.St.Settings.BaseURL, "/")+path, rd)
 	req.Header.Set("Content-Type", "application/json")
-	if k := keyring.Get("vortex-api-key"); k != "" {
+	if k := s.secretGet("vortex-api-key"); k != "" {
 		req.Header.Set("Authorization", "Bearer "+k)
 	}
 	res, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
@@ -184,7 +183,7 @@ func (s *Server) mediaRec(id string) *mediaRec {
 	if media.recs == nil {
 		media.recs = map[string]*mediaRec{}
 	}
-	if r := media.recs[id]; r != nil {
+	if r := media.recs[s.St.Dir+"\x00"+id]; r != nil {
 		return r
 	}
 	if !regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`).MatchString(id) {
@@ -198,7 +197,7 @@ func (s *Server) mediaRec(id string) *mediaRec {
 	if json.Unmarshal(b, r) != nil {
 		return nil
 	}
-	media.recs[id] = r
+	media.recs[s.St.Dir+"\x00"+id] = r
 	return r
 }
 
@@ -207,7 +206,7 @@ func (s *Server) saveRec(r *mediaRec) {
 	if media.recs == nil {
 		media.recs = map[string]*mediaRec{}
 	}
-	media.recs[r.ID] = r
+	media.recs[s.St.Dir+"\x00"+r.ID] = r
 	b, _ := json.MarshalIndent(r, "", " ")
 	media.Unlock()
 	os.WriteFile(filepath.Join(s.mediaDir(), r.ID+".json"), b, 0600)
@@ -287,6 +286,9 @@ func (s *Server) postChat(chatID, role, content string) {
 // mediaWatch polls a job until it finishes so in-chat media is saved even if no viewer is open.
 func (s *Server) mediaWatch(id string) {
 	for i := 0; i < 1200; i++ {
+		if !s.profileLive() {
+			return
+		}
 		r := s.mediaJob(id)
 		if st, _ := r["status"].(string); st == "done" || st == "failed" || st == "error" {
 			return

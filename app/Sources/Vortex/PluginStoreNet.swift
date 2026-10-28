@@ -28,7 +28,7 @@ struct StorePlugin: Identifiable, Hashable {
 
 enum StoreNet {
     static let signInMsg = "You must sign in to Red-XAI first to upload."
-    static var root: String { UserDefaults.standard.string(forKey: "pluginStoreRoot") ?? "https://45.77.105.187/plugins" }
+    static var root: String { AccountProfile.preferences.string(forKey: "pluginStoreRoot") ?? "https://45.77.105.187/plugins" }
     static func iconURL(_ p: StorePlugin) -> URL? { p.hasIcon && !p.icon.isEmpty ? URL(string: root + "/" + p.icon + "?v=" + (p.updated.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")) : nil }
     struct NeedSignIn: Error {}
     /// Returns (status, json). Throws NeedSignIn when auth is required and missing/rejected.

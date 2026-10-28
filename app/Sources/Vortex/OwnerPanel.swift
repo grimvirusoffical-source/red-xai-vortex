@@ -153,16 +153,16 @@ struct OwnerPanelView: View {
                     Section("VPS model downloads") {
                         Text("Use the Library tab to pull or remove models on the VPS. Those actions require this unlock.")
                             .font(.caption).foregroundStyle(.secondary)
-                        Button("Open Library") { UserDefaults.standard.set("library", forKey: "hubTab") }
+                        Button("Open Library") { AccountProfile.preferences.set("library", forKey: "hubTab") }
                     }
                     Section("Servers / nodes") {
-                        Button("Open Servers") { UserDefaults.standard.set("servers", forKey: "hubTab") }
+                        Button("Open Servers") { AccountProfile.preferences.set("servers", forKey: "hubTab") }
                     }
                     Section("Learning & storage") {
-                        Button("Open Vortex") { UserDefaults.standard.set("redxai", forKey: "hubTab") }
+                        Button("Open Vortex") { AccountProfile.preferences.set("redxai", forKey: "hubTab") }
                     }
                     Section("API keys") {
-                        Button("Open API Keys") { UserDefaults.standard.set("keys", forKey: "hubTab") }
+                        Button("Open API Keys") { AccountProfile.preferences.set("keys", forKey: "hubTab") }
                     }
                     AccessControlSection()
                     Section("Bans") {

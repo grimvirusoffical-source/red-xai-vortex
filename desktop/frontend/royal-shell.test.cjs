@@ -41,8 +41,8 @@ function harness({phone = false, fullscreen = true, local = true, savedPalette =
     return {...status};
   }};
   const storage = new Map([['vortex.royalPalette', savedPalette]]);
-  const window = {matchMedia: () => matcher, setInterval(callback) { timers.push(callback); },
-    localStorage: {
+  const window = {addEventListener(name,callback){events[name]=callback;},matchMedia: () => matcher, setInterval(callback) { timers.push(callback); },
+    vortexAccountStorage: {
       getItem(key) { if (storageBlocked) throw new Error('Storage unavailable'); return storage.get(key); },
       setItem(key, value) { if (storageBlocked) throw new Error('Storage unavailable'); storage.set(key, value); },
     },
@@ -157,4 +157,11 @@ test('invalid or unavailable palette storage falls back safely without blocking 
   await settle();
   assert.equal(unavailable.document.documentElement.dataset.royalPalette, 'red');
   assert.equal(unavailable.node('royalControlStop').disabled, false);
+});
+
+test('verified account change restores only that account’s palette',async()=>{
+ const h=harness({savedPalette:'purple'});await settle();
+ assert.equal(h.document.documentElement.dataset.royalPalette,'purple');
+ h.storage.set('vortex.royalPalette','red');h.events['vortex-account-ready']();
+ assert.equal(h.document.documentElement.dataset.royalPalette,'red');
 });

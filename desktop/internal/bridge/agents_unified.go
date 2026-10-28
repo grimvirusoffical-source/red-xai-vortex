@@ -8,12 +8,11 @@ import (
     "time"
 
     "github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/activity"
-    "github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/keyring"
     "github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/store"
 )
 
 var validAgentPermissions = map[string]bool{
-    "web": true, "files-read": true, "files-write": true, "shell": true,
+    "web": true, "files-read": true, "files-write": true, "shell": true, "plugins": true,
 }
 const agentContinuousDelay = 15 * time.Second
 
@@ -126,9 +125,9 @@ func (s *Server) saveUnifiedAgent(in map[string]any) map[string]any {
     if len(a.Permissions)==0 { a.ToolsOn=false }
     if a.Provider!="vortex" {
         if key:=strings.TrimSpace(str(in,"apiKey"));key!="" {
-            if err:=keyring.Set("agent-key-"+a.ID,key);err!=nil {return map[string]any{"ok":false,"message":"Could not securely save provider key."}}
+            if err:=s.secretSet("agent-key-"+a.ID,key);err!=nil {return map[string]any{"ok":false,"message":"Could not securely save provider key."}}
         }
-        if keyring.Get("agent-key-"+a.ID)=="" {
+        if s.secretGet("agent-key-"+a.ID)=="" {
             // Local Ollama is allowed with no key; external providers must be configured.
             if a.Provider!="ollama" {return map[string]any{"ok":false,"message":"Provide this external provider's API key; it is stored only locally."}}
         }
@@ -183,7 +182,7 @@ func (s *Server) agentDelete(in map[string]any) map[string]any {
     }
     if !s.St.DeleteAgent(id) { return map[string]any{"ok":false,"message":"Unknown agent"} }
     s.cancelAgentRuns(id)
-    _=keyring.Set("agent-key-"+id,"")
+    _=s.secretSet("agent-key-"+id,"")
     return map[string]any{"ok":true}
 }
 
@@ -263,11 +262,12 @@ func (s *Server) agentScheduleLoop() {
     ticker:=time.NewTicker(5*time.Second)
     defer ticker.Stop()
     for range ticker.C {
+        if !s.profileLive(){return}
         s.agentScheduleStep(time.Now())
     }
 }
 func (s *Server) agentScheduleStep(now time.Time) {
-    if s.agentsStopped() {return}
+    if !s.profileLive() || s.agentsStopped() {return}
     for _,a:=range s.St.AgentsSnapshot() {
         if agentRemoteMode(a)!="local" || !agentDue(a,now) {continue}
         if requiresDesktopBrowser(a.Goal) {

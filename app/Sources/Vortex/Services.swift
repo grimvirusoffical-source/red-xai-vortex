@@ -5,21 +5,9 @@ import Security
 enum Keychain {
     static let service = "com.redxai.dolphino" // kept so existing Keychain items keep working
     static let account = "api-key"
-    static func get() -> String? {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                kSecAttrAccount as String: account, kSecReturnData as String: true]
-        var out: AnyObject?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
-        return String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-    static func set(_ value: String) {
-        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                   kSecAttrAccount as String: account]
-        SecItemDelete(base as CFDictionary)
-        guard !value.isEmpty else { return }
-        var add = base; add[kSecValueData as String] = Data(value.utf8)
-        SecItemAdd(add as CFDictionary, nil)
-    }
+    static func get() -> String? { get(account: account) }
+    static func set(_ value: String) { set(value, account: account) }
+
 }
 
 /// Keeps an SSH port-forward open to the VPS so the model API stays private (localhost on both ends).
@@ -162,7 +150,7 @@ enum API {
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.setValue("Bearer \(p.apiKey)", forHTTPHeaderField: "Authorization")
         // training mode: let Vortex learn from whatever model is active (server must have learning on)
-        if UserDefaults.standard.bool(forKey: "trainingMode"), UserDefaults.standard.bool(forKey: "trainingConsent") { r.setValue("1", forHTTPHeaderField: "X-Vortex-Train") }
+        if AccountProfile.preferences.bool(forKey: "trainingMode"), AccountProfile.preferences.bool(forKey: "trainingConsent") { r.setValue("1", forHTTPHeaderField: "X-Vortex-Train") }
         var body: [String: Any] = ["model": p.model, "stream": true,
             "messages": messages.map { ["role": $0.role, "content": $0.apiContent] as [String: Any] },
             "temperature": p.temperature, "top_p": p.topP, "top_k": p.topK,

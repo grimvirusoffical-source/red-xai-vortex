@@ -250,6 +250,7 @@ func (s *Server) startRun(agentID, task, chatID string) map[string]any {
 }
 
 func (s *Server) startRunFrom(agentID, task, chatID string, local bool, scheduled ...bool) map[string]any {
+    if !s.profileLive(){return map[string]any{"ok":false,"message":"Sign in before starting an agent"}}
 	isScheduled := len(scheduled) > 0 && scheduled[0]
 	epoch := s.pcCurrentEpoch()
 	task = strings.TrimSpace(task)
@@ -285,7 +286,7 @@ func (s *Server) startRunFrom(agentID, task, chatID string, local bool, schedule
 	runs.mu.Lock()
 	copy := *r
 	runs.mu.Unlock()
-	go s.loop(ctx, r, me, agentRunTools(agent))
+	go s.loop(ctx, r, me, append(agentRunTools(agent),s.mcpAgentTools(agent)...))
 	return map[string]any{"ok": true, "run": copy}
 }
 
@@ -439,11 +440,12 @@ func (s *Server) appendChat(chatID, name, text string) {
 
 func getRun(id string) *Run { runs.mu.Lock(); defer runs.mu.Unlock(); return runs.runs[id] }
 
-func listRuns() []Run {
+func (s *Server) listOwnRuns() []Run {
 	runs.mu.Lock()
 	defer runs.mu.Unlock()
 	out := []Run{}
 	for _, r := range runs.runs {
+        if r.server!=s {continue}
 		c := *r
 		if r.Pending != nil {
 			p := *r.Pending
@@ -477,14 +479,14 @@ func (s *Server) stopRun(runID string) map[string]any {
 	r := runs.runs[runID]
 	var cancel context.CancelFunc
 	var decided chan bool
-	if r != nil {
+	if r != nil && r.server == s {
 		cancel = r.cancel
 		if r.Pending != nil {
 			decided = r.Pending.decided
 		}
 	}
 	runs.mu.Unlock()
-	if r == nil {
+	if r == nil || r.server != s {
 		return map[string]any{"ok": false, "message": "No such run."}
 	}
 	if cancel != nil {

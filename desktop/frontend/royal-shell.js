@@ -76,12 +76,13 @@
     document.documentElement.dataset.royalPalette = chosen;
     palette.value = chosen;
     if (persist) {
-      try { window.localStorage?.setItem('vortex.royalPalette', chosen); } catch (_) { /* Theme still applies when storage is unavailable. */ }
+      try { window.vortexAccountStorage?.setItem('vortex.royalPalette', chosen); } catch (_) { /* Theme still applies when storage is unavailable. */ }
     }
   }
   let savedPalette = 'gold';
-  try { savedPalette = window.localStorage?.getItem('vortex.royalPalette') || 'gold'; } catch (_) {}
+  try { savedPalette = window.vortexAccountStorage?.getItem('vortex.royalPalette') || 'gold'; } catch (_) {}
   setPalette(savedPalette);
+  window.addEventListener('vortex-account-ready',()=>{let value='gold';try{value=window.vortexAccountStorage?.getItem('vortex.royalPalette')||'gold';}catch{}setPalette(value);});
   palette.addEventListener('change', () => setPalette(palette.value, true));
 
   function renderPolicy(value, message) {

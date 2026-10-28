@@ -14,3 +14,7 @@ dist/
 *.zip
 *.dmg
 ._*
+
+# Local repair build and verification outputs
+verification/
+ci-errors.log

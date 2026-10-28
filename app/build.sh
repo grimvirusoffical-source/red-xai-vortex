@@ -2,8 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 # Keep the Swift app and its bundled Go phone bridge on the same release.
-export VORTEX_VERSION="${VORTEX_VERSION:-2.12.0}"
-export VORTEX_BUILD_NUMBER="${VORTEX_BUILD_NUMBER:-51}"
+export VORTEX_VERSION="${VORTEX_VERSION:-2.12.1}"
+export VORTEX_BUILD_NUMBER="${VORTEX_BUILD_NUMBER:-52}"
 [[ "$VORTEX_VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]] || { echo "Invalid VORTEX_VERSION" >&2; exit 2; }
 [[ "$VORTEX_BUILD_NUMBER" =~ ^[0-9]+$ ]] || { echo "Invalid VORTEX_BUILD_NUMBER" >&2; exit 2; }
 if [ -z "${SIGN_ID:-}" ]; then

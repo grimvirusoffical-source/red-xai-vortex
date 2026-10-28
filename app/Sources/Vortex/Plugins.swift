@@ -103,11 +103,11 @@ enum PluginCatalog {
             guard let data = try? Data(contentsOf: d.appendingPathComponent("plugin.json")) else { return nil }
             return try? JSONDecoder().decode(PluginManifest.self, from: data)
         }.sorted { $0.name < $1.name }
-        modes = UserDefaults.standard.dictionary(forKey: "pluginModes") as? [String: String] ?? [:]
-        if modes.isEmpty { for id in UserDefaults.standard.stringArray(forKey: "pluginsEnabled") ?? [] { modes[id] = "auto" } } // migrate old on/off
+        modes = AccountProfile.preferences.dictionary(forKey: "pluginModes") as? [String: String] ?? [:]
+        if modes.isEmpty { for id in AccountProfile.preferences.stringArray(forKey: "pluginsEnabled") ?? [] { modes[id] = "auto" } } // migrate old on/off
         enabled = Set(modes.filter { $0.value != "off" }.keys)
-        if UserDefaults.standard.object(forKey: "pluginsSeeded") == nil {   // first run: install the starters, enabled off
-            UserDefaults.standard.set(true, forKey: "pluginsSeeded")
+        if AccountProfile.preferences.object(forKey: "pluginsSeeded") == nil {   // first run: install the starters, enabled off
+            AccountProfile.preferences.set(true, forKey: "pluginsSeeded")
             for p in PluginCatalog.starters { try? install(p, enable: false) }
         }
     }
@@ -142,7 +142,7 @@ enum PluginCatalog {
     func mode(_ id: String) -> String { modes[id] ?? "off" }
     func setMode(_ id: String, _ m: String) {
         modes[id] = m; enabled = Set(modes.filter { $0.value != "off" }.keys)
-        UserDefaults.standard.set(modes, forKey: "pluginModes"); UserDefaults.standard.set(Array(enabled), forKey: "pluginsEnabled")
+        AccountProfile.preferences.set(modes, forKey: "pluginModes"); AccountProfile.preferences.set(Array(enabled), forKey: "pluginsEnabled")
     }
     var alwaysOn: [PluginManifest] { installed.filter { mode($0.id) == "always" } }
     func importFile(_ url: URL) {
@@ -167,7 +167,7 @@ enum PluginCatalog {
         Plugin to build: \(description)
         """
         let srv = ServerStore.shared.active
-        let base = srv?.chatURL ?? (UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL)
+        let base = srv?.chatURL ?? (AccountProfile.preferences.string(forKey: "serverURL") ?? Defaults.serverURL)
         // Prefer Keychain (same key SelfTest / chat use); ServerStore.key can be empty when Link is on.
         let key: String = {
             if let k = Keychain.get(), !k.isEmpty { return k }
@@ -177,7 +177,7 @@ enum PluginCatalog {
             }
             return ""
         }()
-        let p = ChatParams(baseURL: base, apiKey: key, model: UserDefaults.standard.string(forKey: "pluginMakerModel") ?? "vortex",
+        let p = ChatParams(baseURL: base, apiKey: key, model: AccountProfile.preferences.string(forKey: "pluginMakerModel") ?? "vortex",
                            temperature: 0.2, topP: 0.9, repeatPenalty: 1.05, topK: 40, maxTokens: 1500, seed: -1)
         let j = try await Agent.complete(p, messages: [["role": "user", "content": prompt]], tools: [])
         var txt = (((j["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any])?["content"] as? String) ?? ""
@@ -246,7 +246,7 @@ enum PluginCatalog {
     }
     func genIcon(_ prompt: String) async throws -> NSImage {
         let srv = ServerStore.shared.active
-        let base = srv?.chatURL ?? (UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL)
+        let base = srv?.chatURL ?? (AccountProfile.preferences.string(forKey: "serverURL") ?? Defaults.serverURL)
         let key = Keychain.get() ?? srv.map { ServerStore.shared.key(for: $0) } ?? ""
         guard let u = URL(string: base + "/images/generations") else { throw err("Bad server URL") }
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = 180
@@ -430,7 +430,7 @@ struct PluginsView: View {
     @Local var eVer = ""
     @Local var eDesc = ""
     @Local var eIcon: String?
-    @AppStorage("chatTools") var chatTools = true
+    @AppStorage("chatTools", store: AccountProfile.preferences) var chatTools = true
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {

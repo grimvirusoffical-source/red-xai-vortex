@@ -3,61 +3,107 @@ import Foundation
 
 /// First-run gate: accept the Terms (re-prompted when the version changes), then sign in with a red-xai.com account.
 /// Sign-in goes straight to api.red-xai.com over HTTPS. The session token lives in the Keychain and is never shown.
-/// The owner (a valid admin key on the owner's server) is exempt from sign-in.
+/// Owner credentials never bypass account sign-in or profile isolation.
 @MainActor final class AccountGate: ObservableObject {
     static let shared = AccountGate()
     static let api = "https://api.red-xai.com/v1/accounts/"
-    @Published var termsOK = UserDefaults.standard.string(forKey: "termsAccepted") == Terms.version
+    @Published var termsOK = AccountProfile.preferences.string(forKey: "termsAccepted") == Terms.version
     @Published var signedIn = false
     @Published var owner = false
     // An explicit sign-out must show account login even if owner mode is enabled.
-    @Published var requireAccountSignIn = UserDefaults.standard.bool(forKey: "vortexRequireAccountSignIn")
+    @Published var requireAccountSignIn = AccountProfile.preferences.bool(forKey: "vortexRequireAccountSignIn")
     @Published var checking = true
-    @Published var username = UserDefaults.standard.string(forKey: "redxUser") ?? ""
+    @Published var username = AccountProfile.preferences.string(forKey: "redxUser") ?? ""
     @Published var msg = ""
     @Published var flow = ""          // 2FA flow token (memory only)
     @Published var totp = false
     @Published var call = false
     @Published var selectedMethod = "totp"
 
-    var ready: Bool { termsOK && (signedIn || (owner && !requireAccountSignIn)) }
+    @Published private(set) var verifiedSubject = ""
+    @Published private(set) var restartRequired = false
+    private var authGeneration = 0
+    var ready: Bool { termsOK && signedIn && !restartRequired && !verifiedSubject.isEmpty }
+
+    @discardableResult func acceptVerifiedIdentity(subject: String, displayName: String) -> Bool {
+        do {
+            let target = try AccountProfile.identifier(subject: subject)
+            guard target == AccountProfile.current else {
+                signedIn = false; owner = false; verifiedSubject = ""; restartRequired = true
+                let preferences = UserDefaults(suiteName: "com.redxai.vortex.profile." + target)!
+                if termsOK { preferences.set(Terms.version, forKey: "termsAccepted") }
+                AccountProfile.select(target)
+                msg = "Switching to your private account profile. Restart Vortex if it does not reopen automatically."
+                suspendSession()
+                AccountProfile.relaunch(sessionHandoff: VortexQuickLogin.shared.sessionHandoff())
+                return false
+            }
+            verifiedSubject = subject; username = displayName; signedIn = true
+            accountSignInSucceeded()
+            AccountProfile.preferences.set(username, forKey: "redxUser")
+            if !AccountProfile.isTesting {
+                Task { await MCPStore.shared.connectEnabled() }
+                _ = LocalAgentScheduler.shared
+            }
+            return true
+        } catch { signedIn = false; owner = false; msg = error.localizedDescription; return false }
+    }
+
+    private func suspendSession() {
+        guard !AccountProfile.isTesting else { return }
+        ChatStoreRef.store?.stop()
+        LocalAgentScheduler.shared.suspendForAccountSwitch()
+        MCPStore.shared.stopAll()
+        ManagedBaseHosting.shared.stopAll()
+        ServerStore.shared.stopAll()
+        RedXLink.shared.stop()
+        ModelBrowserServer.shared.stop()
+        PCExecutionState.shared.revoke(stopped: true)
+        Confirm.cancelPCApproval()
+        OwnerGate.shared.unlocked = false
+    }
 
     func accountSignInSucceeded() {
         requireAccountSignIn = false
-        UserDefaults.standard.removeObject(forKey: "vortexRequireAccountSignIn")
+        AccountProfile.preferences.removeObject(forKey: "vortexRequireAccountSignIn")
     }
 
     func continueAsOwner() {
-        // Keep the original owner override available on user request.
-        requireAccountSignIn = false
-        UserDefaults.standard.removeObject(forKey: "vortexRequireAccountSignIn")
+        // An installed admin credential is not proof of the signed-in identity.
+        msg = "Sign in to your Red-XAI account. Owner privileges never bypass account authentication."
     }
 
-    func acceptTerms() { UserDefaults.standard.set(Terms.version, forKey: "termsAccepted"); termsOK = true }
+    func acceptTerms() { AccountProfile.preferences.set(Terms.version, forKey: "termsAccepted"); termsOK = true }
 
     func check() async {
+        let expectedGeneration = authGeneration
         checking = true; defer { checking = false }
-        owner = await isOwner()
-        if let approvedEmail = await VortexQuickLogin.shared.restore() {
-            username = approvedEmail; signedIn = true
-            accountSignInSucceeded()
-            UserDefaults.standard.set(username, forKey: "redxUser")
+        owner = false
+        if let approvedEmail = await VortexQuickLogin.shared.restore(),
+           let subject = VortexQuickLogin.shared.authenticatedSubject {
+            guard expectedGeneration == authGeneration else { return }
+            if acceptVerifiedIdentity(subject: subject, displayName: approvedEmail) { owner = await isOwner() }
             return
         }
-        guard let tok = Keychain.get(account: "redx-session"), !tok.isEmpty else { signedIn = false; return }
+        guard expectedGeneration == authGeneration,
+              let tok = Keychain.get(account: "redx-session"), !tok.isEmpty else { signedIn = false; return }
         let (st, m) = await call("me", session: tok)
-        if st == 200, let a = m["account"] as? [String: Any] {
-            username = (a["username"] as? String) ?? username; signedIn = true
-            accountSignInSucceeded()
-            UserDefaults.standard.set(username, forKey: "redxUser")
-        } else if st == 503 && !username.isEmpty {
-            signedIn = true; msg = "RedX accounts unreachable; using your saved sign-in."   // offline grace
-        } else { signedIn = false; Keychain.set("", account: "redx-session") }
+        guard expectedGeneration == authGeneration else { return }
+        if st == 200, let a = m["account"] as? [String: Any],
+           let subject = (a["id"] as? String) ?? (a["sub"] as? String) ?? (a["accountId"] as? String) {
+            let label = (a["username"] as? String) ?? (a["email"] as? String) ?? "Red-XAI account"
+            if acceptVerifiedIdentity(subject: subject, displayName: label) { owner = await isOwner() }
+        } else {
+            signedIn = false; verifiedSubject = ""
+            if st == 503 { msg = "Your account could not be verified. Saved data is preserved; sign in when the service is available." }
+            else if st == 401 || st == 403 { Keychain.set("", account: "redx-session") }
+        }
     }
 
     func isOwner() async -> Bool {
+        guard signedIn && !verifiedSubject.isEmpty && !restartRequired else { return false }
         guard let k = Keychain.get(account: "admin-primary"), !k.isEmpty,
-              let u = URL(string: (UserDefaults.standard.string(forKey: "adminBaseURL") ?? "http://127.0.0.1:18092") + "/admin/system") else { return false }
+              let u = URL(string: (AccountProfile.preferences.string(forKey: "adminBaseURL") ?? "http://127.0.0.1:18092") + "/admin/system") else { return false }
         var r = URLRequest(url: u, timeoutInterval: 6); r.setValue("Bearer \(k)", forHTTPHeaderField: "Authorization")
         guard let (_, resp) = try? await URLSession.shared.data(for: r) else { return false }
         return (resp as? HTTPURLResponse)?.statusCode == 200
@@ -94,7 +140,7 @@ import Foundation
         guard !tok.isEmpty else { msg = "Sign-in failed."; return }
         await VortexQuickLogin.shared.logout()
         Keychain.set(tok, account: "redx-session"); await check()
-        if !signedIn { msg = "Sign-in could not be verified." } else { await MainActor.run { PhoneHost.sync() } }
+        if !signedIn && !restartRequired { msg = "Sign-in could not be verified." } else { await MainActor.run { PhoneHost.sync() } }
     }
     func clearLegacyForQuick() {
         // The Vortex-scoped browser grant is sufficient. Clear any legacy
@@ -106,19 +152,25 @@ import Foundation
         }
     }
     func signOut() async {
+        authGeneration += 1
+        signedIn = false; owner = false; verifiedSubject = ""
+        suspendSession()
         // Switch accounts locally before any network token-revocation request.
         // Do not delete the owner's admin key, chats, or settings.
         let legacy = Keychain.get(account: "redx-session") ?? ""
         Keychain.set("", account: "redx-session")
         requireAccountSignIn = true
-        UserDefaults.standard.set(true, forKey: "vortexRequireAccountSignIn")
+        AccountProfile.preferences.set(true, forKey: "vortexRequireAccountSignIn")
         signedIn = false; username = ""; msg = ""; flow = ""
-        UserDefaults.standard.removeObject(forKey: "redxUser")
+        AccountProfile.preferences.removeObject(forKey: "redxUser")
         await VortexQuickLogin.shared.logout()
         // A running phone companion must not inherit the previous account's
         // session from its original process environment.
         PhoneHost.sync()
         if !legacy.isEmpty { _ = await call("logout", session: legacy, body: [:]) }
+        if AccountProfile.current != "guest" {
+            restartRequired = true; AccountProfile.select("guest"); AccountProfile.relaunch()
+        }
     }
 
     private func call(_ route: String, flow: String = "", session: String = "", body: [String: Any]? = nil) async -> (Int, [String: Any]) {
@@ -151,7 +203,7 @@ struct GateView<Content: View>: View {
         .task { await g.check() }
     }
     var signIn: some View {
-        VStack(spacing: 14) {
+        ScrollView { VStack(spacing: 14) {
             Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 72, height: 72)
             Text("Sign in to Red-XAI Vortex").font(.title2.bold())
             Text("Use your red-xai.com account.").foregroundStyle(.secondary)
@@ -210,16 +262,13 @@ struct GateView<Content: View>: View {
                 }
             }
             if !g.msg.isEmpty { Text(g.msg).font(.callout).foregroundStyle(.orange).frame(width: 340) }
-            if g.owner && g.requireAccountSignIn {
-                Button("Continue in owner mode instead") { g.continueAsOwner() }
-                    .buttonStyle(.bordered)
-            }
+
             HStack(spacing: 16) {
                 Link("Create an account", destination: URL(string: "https://red-xai.com/")!)
                 Link("Terms", destination: URL(string: "https://red-xai.com/vortex/terms")!)
                 Link("Donate", destination: URL(string: "https://red-xai.com/vortex/donate")!)
             }.font(.caption)
-        }.padding(40).frame(maxWidth: .infinity, maxHeight: .infinity)
+        }.padding(40).frame(maxWidth: .infinity) }.scrollIndicators(.visible)
     }
     func go() { busy = true; Task { await g.login(login, password); password = ""; busy = false } }
 }

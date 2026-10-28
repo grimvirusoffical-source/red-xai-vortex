@@ -441,3 +441,17 @@ html[data-royal-palette=light] .royal-brand #logo { filter: grayscale(1) sepia(.
   .chat-empty { padding: 12px 0 20px; }
   .chat-empty > p:not(.eyebrow) { margin-bottom: 20px; }
 }
+
+/* Keep every editor reachable at small window sizes and browser zoom. */
+main, .panel, .workspace-content, .workspace-panel { min-height: 0; min-width: 0; }
+.panel { overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+#tab-agents, #tab-settings, #tab-mcp { overflow-y: auto; max-height: 100%; }
+#agentEditor { min-height: 0; overflow: visible; }
+.ws-modal .ws-editor, dialog { max-height: calc(100dvh - 40px); overflow-y: auto; scrollbar-gutter: stable; }
+#gate { overscroll-behavior: contain; }
+#gate > * { max-height: calc(100dvh - 24px); overflow: auto; }
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-thumb { background: #81724f; border: 3px solid #171819; border-radius: 10px; }
+::-webkit-scrollbar-track { background: #171819; }
+* { scrollbar-width: auto; scrollbar-color: #81724f #171819; }
+@media (max-height: 620px) { body { min-height: 0; } .royal-windowbar { min-height: 45px; padding-block: 5px; } }

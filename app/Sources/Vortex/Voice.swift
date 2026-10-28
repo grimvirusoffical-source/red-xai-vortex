@@ -14,9 +14,9 @@ import AVFoundation
 
     var dir: URL { let d = ChatStore.dir.appendingPathComponent("voice", isDirectory: true); try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true); return d }
     var whisperBin: String? { ["/opt/homebrew/bin/whisper-cli", "/usr/local/bin/whisper-cli"].first { FileManager.default.isExecutableFile(atPath: $0) } }
-    var whisperModel: String { dir.appendingPathComponent(UserDefaults.standard.string(forKey: "whisperModel") ?? "ggml-base.en.bin").path }
+    var whisperModel: String { dir.appendingPathComponent(AccountProfile.preferences.string(forKey: "whisperModel") ?? "ggml-base.en.bin").path }
     var piperBin: String { dir.appendingPathComponent("piper-venv/bin/piper").path }
-    var piperVoice: String { dir.appendingPathComponent(UserDefaults.standard.string(forKey: "piperVoice") ?? "en_US-lessac-medium.onnx").path }
+    var piperVoice: String { dir.appendingPathComponent(AccountProfile.preferences.string(forKey: "piperVoice") ?? "en_US-lessac-medium.onnx").path }
     var sttReady: Bool { whisperBin != nil && FileManager.default.fileExists(atPath: whisperModel) }
     var piperReady: Bool { FileManager.default.isExecutableFile(atPath: piperBin) && FileManager.default.fileExists(atPath: piperVoice) }
 
@@ -63,7 +63,7 @@ import AVFoundation
     private func feed(_ chunk: [Float], rms: Float) {
         guard recording else { return }
         samples += chunk; level = min(1, rms * 12)
-        let threshold = Float(UserDefaults.standard.object(forKey: "vadThreshold") as? Double ?? 0.015)
+        let threshold = Float(AccountProfile.preferences.object(forKey: "vadThreshold") as? Double ?? 0.015)
         if rms > threshold { lastVoice = Date(); heardVoice = true }
         // hands-free: end of utterance after 1.2 s of silence
         if handsFree && heardVoice && Date().timeIntervalSince(lastVoice) > 1.2 { finishListening() }

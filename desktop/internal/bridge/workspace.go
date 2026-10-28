@@ -15,7 +15,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/ingest"
-	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/keyring"
 	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/store"
 )
 
@@ -405,7 +404,7 @@ func (s *Server) workspaceDelete(in map[string]any) map[string]any {
 		if err := s.deleteManagedPublication(id); err != nil {
 			return workspaceError(errors.New("Base deleted, but its stopped hosting copy could not be removed"))
 		}
-		if err = keyring.Set("base-token-"+id, ""); err != nil {
+		if err = s.secretSet("base-token-"+id, ""); err != nil {
 			return workspaceError(err)
 		}
 	}

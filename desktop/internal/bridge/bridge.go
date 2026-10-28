@@ -14,11 +14,25 @@ import (
 	"time"
 
 	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/activity"
-	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/keyring"
 	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/store"
 )
 
 type Server struct {
+	accountIsolation  bool
+	accountMu         sync.Mutex
+	accountVerifyMu   sync.Mutex
+	accountGeneration uint64
+	activeAccount     *Server
+	accountExpires    time.Time
+	accountRoot       *Server
+	profileID         string
+	profileToken      string
+	accountSession    string
+	profileState      profileState
+	mcpMu             sync.Mutex
+	mcpConfigMu       sync.Mutex
+	mcpConnections    map[string]*mcpConnection
+
 	St             *store.Store
 	Act            *activity.Log
 	Addr           string
@@ -42,16 +56,13 @@ func Start(st *store.Store) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{St: st, Act: activity.Open(st.Dir), Addr: "http://" + ln.Addr().String(), ln: ln}
+	s := &Server{accountIsolation: true, St: st, Act: activity.Open(st.Dir), Addr: "http://" + ln.Addr().String(), ln: ln}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/bridge/", s.handle)
 	mux.Handle("/", http.FileServer(http.Dir(frontendDir())))
 	s.mux = mux
 	go http.Serve(ln, mux)
-	s.applyLink()
-	s.applyPhone()
-	go s.restoreManagedHosts()
-	go s.agentScheduleLoop()
+	// Account-scoped helpers start only after a server-verified sign-in.
 	return s, nil
 }
 
@@ -73,7 +84,7 @@ func frontendDir() string {
 	return "."
 }
 
-func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 	method := strings.TrimPrefix(r.URL.Path, "/bridge/")
 	if strings.HasPrefix(method, "pcControl.") {
 		s.handlePCControl(w, r, method)
@@ -128,6 +139,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) dispatch(m string, in map[string]any) map[string]any {
+	if strings.HasPrefix(m, "mcp.") {
+		return s.mcpAction(m, in)
+	}
 	switch m {
 	case "update.check":
 		return s.manualUpdateCheck()
@@ -159,7 +173,9 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 			st.NoAutoUpdate = !au
 		}
 		if k, _ := in["apiKey"].(string); k != "" {
-			_ = keyring.Set("vortex-api-key", strings.TrimSpace(k))
+			if err := s.secretSet("vortex-api-key", strings.TrimSpace(k)); err != nil {
+				return map[string]any{"ok": false, "error": err.Error()}
+			}
 		}
 		if v, ok := in["secureChat"].(bool); ok {
 			st.PlainChat = !v
@@ -237,7 +253,7 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 				}
 			}
 		}
-		return s.partyNewWithLeader(str(in,"title"),ms,str(in,"leaderID"),str(in,"workspaceName"),str(in,"instructions"))
+		return s.partyNewWithLeader(str(in, "title"), ms, str(in, "leaderID"), str(in, "workspaceName"), str(in, "instructions"))
 	case "chat.delete":
 		s.St.DeleteChat(str(in, "id"))
 		return map[string]any{"ok": true}
@@ -251,10 +267,10 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		return s.agentKillAll(in)
 	case "agent.resume":
 		return s.agentResume(in)
-    case "agent.worker.status":
-        return s.cloudWorkerStatus()
-    case "agent.remote.list":
-        return s.gw("GET","/agents",nil)
+	case "agent.worker.status":
+		return s.cloudWorkerStatus()
+	case "agent.remote.list":
+		return s.gw("GET", "/agents", nil)
 	case "agent.testVortex":
 		return s.testVortex()
 	case "integration":
@@ -290,7 +306,7 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 	case "run.start":
 		return s.startRunFrom(str(in, "agentID"), str(in, "task"), str(in, "chatID"), in["__localOperator"] == true)
 	case "run.list":
-		return map[string]any{"runs": listRuns()}
+		return map[string]any{"runs": s.listOwnRuns()}
 	case "run.approve":
 		return s.approve(str(in, "runID"), in["allow"] == true)
 	case "run.stop":
@@ -298,7 +314,7 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 	case "activity.search":
 		return map[string]any{"events": s.Act.Search(s.activityQuery(in))}
 	case "activity.stats":
-		return map[string]any{"agents": s.Act.Stats(), "runs": listRuns()}
+		return map[string]any{"agents": s.Act.Stats(), "runs": s.listOwnRuns()}
 	case "activity.export":
 		return s.activityExport(in)
 	case "notif.list":
@@ -322,7 +338,7 @@ func chatSummaries(cs []store.Chat) []map[string]any {
 }
 
 func (s *Server) listModels() ([]string, bool) {
-	key := keyring.Get("vortex-api-key")
+	key := s.secretGet("vortex-api-key")
 	req, _ := http.NewRequest("GET", s.chatBase()+"/models", nil)
 	if key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
@@ -471,7 +487,7 @@ func (s *Server) chatSend(in map[string]any) map[string]any {
 
 func (s *Server) resolveEndpoint(agentID string) (base, key string) {
 	base = s.chatBase()
-	key = keyring.Get("vortex-api-key")
+	key = s.secretGet("vortex-api-key")
 	for _, a := range s.St.Agents {
 		if a.ID != agentID {
 			continue
@@ -501,7 +517,7 @@ func (s *Server) resolveEndpoint(agentID string) (base, key string) {
 				// custom / openai-compatible: use BaseURL from agent
 			}
 		}
-		if k := keyring.Get("agent-key-" + a.ID); k != "" {
+		if k := s.secretGet("agent-key-" + a.ID); k != "" {
 			key = k
 		}
 		return base, key
@@ -514,7 +530,7 @@ func (s *Server) agentSave(in map[string]any) map[string]any {
 }
 
 func (s *Server) testVortex() map[string]any {
-	key := keyring.Get("vortex-api-key")
+	key := s.secretGet("vortex-api-key")
 	body := map[string]any{
 		"model": "vortex",
 		"messages": []map[string]string{
@@ -547,7 +563,7 @@ func (s *Server) testVortex() map[string]any {
 
 func (s *Server) integration(id string) map[string]any {
 	home, _ := os.UserHomeDir()
-	key := keyring.Get("vortex-api-key")
+	key := s.secretGet("vortex-api-key")
 	base := strings.TrimSuffix(s.St.Settings.BaseURL, "/v1")
 	switch id {
 	case "omniroute":

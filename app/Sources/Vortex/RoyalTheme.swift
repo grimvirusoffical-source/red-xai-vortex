@@ -12,7 +12,7 @@ extension EnvironmentValues {
 }
 
 enum RoyalTheme {
-    static var palette: String { UserDefaults.standard.string(forKey: "royalPalette") ?? "gold" }
+    static var palette: String { AccountProfile.preferences.string(forKey: "royalPalette") ?? "gold" }
     static func adaptive(_ dark: UInt32, _ light: UInt32) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
             let rgb = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
@@ -133,7 +133,7 @@ struct RoyalDragSurface: NSViewRepresentable {
         override func mouseDown(with event: NSEvent) {
             guard let window else { return }
             if event.clickCount == 2 {
-                switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+                switch AccountProfile.preferences.string(forKey: "AppleActionOnDoubleClick") {
                 case "Minimize": window.miniaturize(nil)
                 case "None": break
                 default: window.zoom(nil)
