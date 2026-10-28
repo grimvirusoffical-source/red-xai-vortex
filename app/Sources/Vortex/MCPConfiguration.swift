@@ -28,7 +28,13 @@ struct MCPServerDef: Codable, Identifiable, Hashable {
     var blockedTools: [String] = []
     var reconnectOnStart = true
 
-    init(id: String, name: String) { self.id = id; self.name = name }
+    init(id: String, name: String, type: String = "stdio", command: String = "",
+         args: [String] = [], env: [String: String] = [:], url: String = "",
+         headers: [String: String] = [:], enabled: Bool = true) {
+        self.id = id; self.name = name; self.type = type; self.command = command
+        self.args = args; self.env = env; self.url = url; self.headers = headers
+        self.enabled = enabled
+    }
 
     enum CodingKeys: String, CodingKey {
         case id, name, type, command, args, env, url, headers, enabled
