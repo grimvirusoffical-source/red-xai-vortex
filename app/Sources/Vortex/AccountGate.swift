@@ -42,7 +42,11 @@ import Foundation
             accountSignInSucceeded()
             AccountProfile.preferences.set(username, forKey: "redxUser")
             if !AccountProfile.isTesting {
-                Task { await MCPStore.shared.connectEnabled() }
+                Task { @MainActor in
+                    guard AccountGate.shared.ready else { return }
+                    ServerStore.shared.startConnections()
+                    await MCPStore.shared.connectEnabled()
+                }
                 _ = LocalAgentScheduler.shared
             }
             return true

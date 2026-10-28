@@ -62,18 +62,30 @@ final class ServerStore: ObservableObject {
         repair()
         activeID = AccountProfile.preferences.string(forKey: "activeServer") ?? servers[0].id
         if !servers.contains(where: { $0.id == activeID }) { activeID = servers[0].id }
-        startMonitor()
-        // Never stay on a server whose SSH host is unusable; fall back to the primary.
-        if let a = active, !Self.validHost(a.sshHost), let p = servers.first(where: { $0.primary }) { activate(p.id) }
-        if AccountGate.shared.ready && RedXLink.enabled {
-            AccountProfile.preferences.set(RedXLink.chatURL, forKey: "serverURL")
-            Task { @MainActor in RedXLink.shared.start() }
+        // Initialization must only hydrate state. Calling activate() here can
+        // start RedXLink, whose serverList() reads ServerStore.shared before its
+        // one-time initialization has completed (libdispatch recursive-lock trap).
+        // Keep an unconfigured placeholder visible, but never connect it.
+        if let a = active, !Self.validHost(a.sshHost),
+           a.linkAddr?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+           let p = servers.first(where: { $0.primary && Self.validHost($0.sshHost) }) {
+            activeID = p.id
         }
+    }
+
+    private(set) var connectionsStarted = false
+    /// Called only after verified sign-in, never from this singleton's initializer.
+    func startConnections() {
+        guard AccountGate.shared.ready, !connectionsStarted else { return }
+        connectionsStarted = true
+        startMonitor()
+        activate(activeID)
     }
     func setLinkAddr(_ id: String, _ a: String) {
         guard let i = servers.firstIndex(where: { $0.id == id }) else { return }
         let v = a.trimmingCharacters(in: .whitespaces)
-        servers[i].linkAddr = v.isEmpty ? nil : v; save(); RedXLink.shared.start(force: true)
+        servers[i].linkAddr = v.isEmpty ? nil : v; save()
+        if AccountGate.shared.ready { RedXLink.shared.start(force: true) }
     }
     /// SSH tunnels are owner-only: start them only when this Mac has the SSH key.
     static func hasSSHKey(_ s: ServerDef) -> Bool { FileManager.default.fileExists(atPath: (s.keyPath as NSString).expandingTildeInPath) }
@@ -98,7 +110,7 @@ final class ServerStore: ObservableObject {
     }
     /// After launch: if the active server's tunnel can't come up but the primary answers, switch back.
     func healthCheckActive() async {
-        guard let a = active else { return }
+        guard AccountGate.shared.ready, let a = active else { return }
         if await ping(a) { return }
         if a.primary { if await failover() != nil { await ChatStoreRef.refresh() }; return }
         guard let p = servers.first(where: { $0.primary }) else { return }
@@ -108,11 +120,11 @@ final class ServerStore: ObservableObject {
     /// reachable one (respecting the auto-failover toggle); when the primary returns, prefer it again.
     private var monitor: Task<Void, Never>?
     func startMonitor() {
-        guard monitor == nil else { return }
+        guard AccountGate.shared.ready, monitor == nil else { return }
         monitor = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(30))
-                guard let self, AccountProfile.preferences.object(forKey: "autoFailover") as? Bool ?? true, let a = self.active else { continue }
+                do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                guard !Task.isCancelled, let self, AccountGate.shared.ready, AccountProfile.preferences.object(forKey: "autoFailover") as? Bool ?? true, let a = self.active else { continue }
                 if await self.ping(a) {
                     if !a.primary, let p = self.servers.first(where: { $0.primary }), await self.ping(p) { self.activate(p.id); await ChatStoreRef.refresh() }
                     continue
@@ -131,10 +143,14 @@ final class ServerStore: ObservableObject {
         let t = TunnelManager(); tunnels[s.id] = t; return t
     }
     func ensureTunnel(_ s: ServerDef) {
+        guard AccountGate.shared.ready, Self.validHost(s.sshHost), Self.hasSSHKey(s) else { return }
         let t = tunnel(s)
         if !t.running { t.start(host: s.sshHost, local: s.localPort, remote: s.remotePort, keyPath: s.keyPath) }
     }
-    func stopAll() { tunnels.values.forEach { $0.stop() } }
+    func stopAll() {
+        monitor?.cancel(); monitor = nil; connectionsStarted = false
+        tunnels.values.forEach { $0.stop() }
+    }
 
     func activate(_ id: String) {
         guard let s = server(id) else { return }
@@ -142,6 +158,7 @@ final class ServerStore: ObservableObject {
         // Chat: RedX Link proxy (default) or the public gateway port through SSH (18091). Admin stays on localPort (18092).
         AccountProfile.preferences.set(RedXLink.enabled ? RedXLink.chatURL : s.chatURL, forKey: "serverURL")
         AccountProfile.preferences.set(s.adminBase, forKey: "adminBaseURL")
+        guard AccountGate.shared.ready else { return }
         let k = key(for: s)
         if !k.isEmpty {
             // RedX Link: one link-enabled key serves every server, so failover keeps the chat key.
@@ -154,10 +171,12 @@ final class ServerStore: ObservableObject {
     }
 
     func ping(_ s: ServerDef) async -> Bool {
+        guard AccountGate.shared.ready else { return false }
         if RedXLink.enabled, let a = RedXLink.address(s) {
             if await RedXLink.ping(a) { health[s.id] = true; return true }
             if !Self.hasSSHKey(s) { health[s.id] = false; return false }
         }
+        guard Self.validHost(s.sshHost), Self.hasSSHKey(s) else { health[s.id] = false; return false }
         ensureTunnel(s)
         for _ in 0..<6 {
             // Prefer the public chat port — that is what the chat window needs.
@@ -274,6 +293,7 @@ struct ServersView: View {
             Text("Install / Update runs the bundled server installer over SSH: llama.cpp, the gateway and the model manager. Only the encrypted RedX Link port is open to the internet; admin tools reach each server through its own SSH tunnel.").font(.caption).foregroundStyle(.secondary)
         }
         .padding()
+        .task { ss.startConnections() }
         .sheet(item: $keyEdit) { s in
             VStack(alignment: .leading, spacing: 10) {
                 Text("Admin key for \(s.name)").font(.headline)
