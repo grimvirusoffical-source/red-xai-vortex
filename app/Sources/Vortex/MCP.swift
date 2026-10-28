@@ -1,151 +1,161 @@
 import SwiftUI
-
-/// MCP servers (Model Context Protocol): stdio (local command) or Streamable HTTP. Their tools are offered to models.
-struct MCPServerDef: Codable, Identifiable, Hashable {
-    var id: String
-    var name: String
-    var type: String = "stdio"            // stdio | http
-    var command: String = ""
-    var args: [String] = []
-    var env: [String: String] = [:]
-    var url: String = ""
-    var headers: [String: String] = [:]
-    var enabled = true
-}
+import Darwin
 
 struct MCPTool { var name: String; var description: String; var schema: [String: Any]; var destructive: Bool }
 
-/// One live connection. JSON-RPC 2.0 over newline-delimited stdio, or HTTP POST (JSON or SSE replies).
+/// JSON-RPC over stdio or Streamable HTTP. Model execution retains the existing
+/// ToolSpec destructive-action confirmation and never bypasses server permissions.
 final class MCPClient: @unchecked Sendable {
     let def: MCPServerDef
     private var proc: Process?
-    private var inPipe = Pipe(), outPipe = Pipe(), errPipe = Pipe()
+    private let inPipe = Pipe(), outPipe = Pipe(), errPipe = Pipe()
     private var buf = Data()
     private var nextID = 1
     private var waiting: [Int: CheckedContinuation<[String: Any], Error>] = [:]
     private let lock = NSLock()
-    private var session: String?
-    var stderrTail = ""
+    private var sessionID: String?
+    private var protocolVersion = "2025-11-25"
+    private var stderrTail = ""
+    private let transport = MCPHTTPTransport()
 
-    init(_ d: MCPServerDef) { def = d }
-
+    init(_ definition: MCPServerDef) { def = definition }
     func start() async throws -> [MCPTool] {
+        _ = try def.validated()
         if def.type == "stdio" {
-            let p = Process()
-            // run through a login shell so npx/uvx/node from Homebrew/nvm are on PATH
-            p.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            let cmd = ([def.command] + def.args).map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }.joined(separator: " ")
-            p.arguments = ["-lc", "exec " + cmd]
-            var e = ProcessInfo.processInfo.environment; for (k, v) in def.env { e[k] = v }; p.environment = e
-            p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = errPipe
-            outPipe.fileHandleForReading.readabilityHandler = { [weak self] h in self?.onData(h.availableData) }
-            errPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
-                if let s = String(data: h.availableData, encoding: .utf8) { self?.lock.lock(); self?.stderrTail = String(((self?.stderrTail ?? "") + s).suffix(800)); self?.lock.unlock() }
+            let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            let command = ([def.command] + def.args).map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }.joined(separator: " ")
+            p.arguments = [def.inheritEnvironment ? "-lc" : "-c", "exec " + command]
+            p.environment = try def.resolvedEnvironment(base: ProcessInfo.processInfo.environment)
+            if !def.workingDirectory.isEmpty {
+                let directory = (def.workingDirectory as NSString).expandingTildeInPath
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory), isDirectory.boolValue else { throw MCPConfig.error("The configured working directory does not exist.") }
+                p.currentDirectoryURL = URL(fileURLWithPath: directory)
             }
-            p.terminationHandler = { [weak self] _ in self?.failAll("MCP server exited. \(self?.stderrTail ?? "")") }
+            p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = errPipe
+            outPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in self?.onData(handle.availableData) }
+            errPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+                let bytes = handle.availableData
+                guard let self, !bytes.isEmpty, let value = String(data: bytes, encoding: .utf8) else { return }
+                self.lock.lock(); self.stderrTail = String((self.stderrTail + self.def.redacted(value)).suffix(800)); self.lock.unlock()
+            }
+            p.terminationHandler = { [weak self] _ in
+                guard let self else { return }
+                self.lock.lock(); let tail = self.stderrTail; self.lock.unlock()
+                self.failAll("MCP server exited. " + self.def.redacted(tail))
+            }
             try p.run(); proc = p
         }
-        _ = try await request("initialize", ["protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any],
-                                              "clientInfo": ["name": "Red-XAI Vortex", "version": "2.2"]], timeout: 60)
+        let initialized = try await request("initialize", ["protocolVersion": protocolVersion, "capabilities": [:] as [String: Any],
+            "clientInfo": ["name": "Red-XAI Vortex", "version": "2.12.1"]], timeout: Double(def.connectTimeoutSeconds))
+        if let version = initialized["protocolVersion"] as? String {
+            guard ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"].contains(version) else { throw MCPConfig.error("MCP server negotiated an unsupported protocol version.") }
+            protocolVersion = version
+        }
         try await notify("notifications/initialized")
-        let r = try await request("tools/list", [:], timeout: 30)
-        return (r["tools"] as? [[String: Any]] ?? []).map {
-            let ann = $0["annotations"] as? [String: Any] ?? [:]
-            return MCPTool(name: $0["name"] as? String ?? "", description: $0["description"] as? String ?? "",
-                           schema: $0["inputSchema"] as? [String: Any] ?? ["type": "object", "properties": [:] as [String: Any]],
-                           destructive: (ann["destructiveHint"] as? Bool) == true)
-        }
+        var tools: [MCPTool] = [], cursor: String?, visited = Set<String>()
+        repeat {
+            let result = try await request("tools/list", cursor.map { ["cursor": $0] } ?? [:], timeout: Double(def.connectTimeoutSeconds))
+            guard let rows = result["tools"] as? [[String: Any]] else { throw MCPConfig.error("MCP server returned an invalid tool list.") }
+            for row in rows {
+                guard let name = row["name"] as? String, !name.isEmpty, def.permitsTool(name) else { continue }
+                let annotations = row["annotations"] as? [String: Any] ?? [:]
+                tools.append(MCPTool(name: name, description: row["description"] as? String ?? "",
+                    schema: row["inputSchema"] as? [String: Any] ?? ["type": "object", "properties": [:] as [String: Any]],
+                    destructive: annotations["destructiveHint"] as? Bool == true))
+            }
+            cursor = result["nextCursor"] as? String
+            if let cursor { guard visited.insert(cursor).inserted, visited.count <= 100 else { throw MCPConfig.error("MCP tool pagination repeated or exceeded its limit.") } }
+            guard tools.count <= 2000 else { throw MCPConfig.error("MCP server advertised too many tools.") }
+        } while cursor != nil
+        return tools
     }
-    func stop() { outPipe.fileHandleForReading.readabilityHandler = nil; errPipe.fileHandleForReading.readabilityHandler = nil; if proc?.isRunning == true { proc?.terminate() }; proc = nil; failAll("stopped") }
-
+    func stop() {
+        transport.cancelAll()
+        outPipe.fileHandleForReading.readabilityHandler = nil; errPipe.fileHandleForReading.readabilityHandler = nil
+        if proc?.isRunning == true { proc?.terminate() }
+        proc = nil; failAll("MCP connection stopped.")
+    }
     func call(_ tool: String, _ args: [String: Any]) async throws -> String {
-        let r = try await request("tools/call", ["name": tool, "arguments": args], timeout: 300)
-        let parts = (r["content"] as? [[String: Any]] ?? []).map { c -> String in
-            if let t = c["text"] as? String { return t }
-            if let t = c["type"] as? String { return "[\(t) content]" }
+        guard def.permitsTool(tool) else { throw MCPConfig.error("This MCP tool is disabled in server settings.") }
+        let result = try await request("tools/call", ["name": tool, "arguments": args], timeout: Double(def.requestTimeoutSeconds))
+        var output = (result["content"] as? [[String: Any]] ?? []).map { content -> String in
+            if let value = content["text"] as? String { return value }
+            if let type = content["type"] as? String { return "[\(type) content]" }
             return ""
+        }.joined(separator: "\n")
+        if output.isEmpty, let structured = result["structuredContent"], let data = try? JSONSerialization.data(withJSONObject: structured) { output = String(data: data, encoding: .utf8) ?? "" }
+        if result["isError"] as? Bool == true { return "error: " + def.redacted(output) }
+        return output
+    }
+    private func onData(_ data: Data) {
+        guard !data.isEmpty else { failAll("MCP server closed its output stream."); return }
+        lock.lock(); buf.append(data)
+        if buf.count > def.maxResponseBytes { buf.removeAll(); lock.unlock(); failAll("MCP response exceeds the configured size limit."); return }
+        var messages: [[String: Any]] = []
+        while let newline = buf.firstIndex(of: 10) {
+            let line = buf[..<newline]; buf.removeSubrange(...newline)
+            if let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any] { messages.append(message) }
         }
-        var out = parts.joined(separator: "\n")
-        if out.isEmpty, let sc = r["structuredContent"], let d = try? JSONSerialization.data(withJSONObject: sc) { out = String(data: d, encoding: .utf8) ?? "" }
-        if (r["isError"] as? Bool) == true { return "error: " + out }
-        return out
+        lock.unlock(); messages.forEach(deliver)
     }
-
-    // MARK: transport
-    private func onData(_ d: Data) {
-        lock.lock(); buf.append(d)
-        var msgs: [[String: Any]] = []
-        while let nl = buf.firstIndex(of: 0x0A) {
-            let line = buf[..<nl]; buf.removeSubrange(...nl)
-            if let o = try? JSONSerialization.jsonObject(with: line) as? [String: Any] { msgs.append(o) }
-        }
-        lock.unlock()
-        msgs.forEach(deliver)
+    private func deliver(_ message: [String: Any]) {
+        guard let id = message["id"] as? Int else { return }
+        lock.lock(); let continuation = waiting.removeValue(forKey: id); lock.unlock()
+        if let error = message["error"] as? [String: Any] { continuation?.resume(throwing: MCPConfig.error(def.redacted(error["message"] as? String ?? "MCP error"))) }
+        else { continuation?.resume(returning: message["result"] as? [String: Any] ?? [:]) }
     }
-    private func deliver(_ o: [String: Any]) {
-        guard let id = o["id"] as? Int else { return }    // ignore server notifications/requests
-        lock.lock(); let c = waiting.removeValue(forKey: id); lock.unlock()
-        if let e = o["error"] as? [String: Any] { c?.resume(throwing: NSError(domain: "MCP", code: e["code"] as? Int ?? -1, userInfo: [NSLocalizedDescriptionKey: e["message"] as? String ?? "MCP error"])) }
-        else { c?.resume(returning: o["result"] as? [String: Any] ?? [:]) }
+    private func failAll(_ message: String) {
+        lock.lock(); let all = waiting; waiting.removeAll(); lock.unlock()
+        for continuation in all.values { continuation.resume(throwing: MCPConfig.error(def.redacted(message))) }
     }
-    private func failAll(_ m: String) {
-        lock.lock(); let all = waiting; waiting = [:]; lock.unlock()
-        for c in all.values { c.resume(throwing: NSError(domain: "MCP", code: -1, userInfo: [NSLocalizedDescriptionKey: m])) }
+    private func write(_ message: [String: Any]) throws {
+        var data = try JSONSerialization.data(withJSONObject: message); data.append(10)
+        guard data.count <= def.maxResponseBytes else { throw MCPConfig.error("MCP request exceeds the configured size limit.") }
+        try inPipe.fileHandleForWriting.write(contentsOf: data)
     }
     private func notify(_ method: String) async throws {
-        let msg: [String: Any] = ["jsonrpc": "2.0", "method": method]
-        if def.type == "stdio" { try write(msg) } else { _ = try? await http(msg) }
-    }
-    private func write(_ o: [String: Any]) throws {
-        var d = try JSONSerialization.data(withJSONObject: o); d.append(0x0A)
-        try inPipe.fileHandleForWriting.write(contentsOf: d)
+        let message: [String: Any] = ["jsonrpc": "2.0", "method": method]
+        if def.type == "stdio" { try write(message) }
+        else { _ = try await http(message, timeout: Double(def.connectTimeoutSeconds)) }
     }
     func request(_ method: String, _ params: [String: Any], timeout: Double) async throws -> [String: Any] {
         lock.lock(); let id = nextID; nextID += 1; lock.unlock()
-        let msg: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method, "params": params]
+        let message: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method, "params": params]
         if def.type == "http" {
-            let o = try await http(msg)
-            if let e = o["error"] as? [String: Any] { throw NSError(domain: "MCP", code: -1, userInfo: [NSLocalizedDescriptionKey: e["message"] as? String ?? "MCP error"]) }
-            return o["result"] as? [String: Any] ?? [:]
+            let response = try await http(message, timeout: timeout)
+            if let error = response["error"] as? [String: Any] { throw MCPConfig.error(def.redacted(error["message"] as? String ?? "MCP error")) }
+            return response["result"] as? [String: Any] ?? [:]
         }
-        return try await withThrowingTaskGroup(of: [String: Any].self) { g in
-            g.addTask {
-                try await withCheckedThrowingContinuation { c in
-                    self.lock.lock(); self.waiting[id] = c; self.lock.unlock()
-                    do { try self.write(msg) } catch { self.lock.lock(); self.waiting.removeValue(forKey: id); self.lock.unlock(); c.resume(throwing: error) }
+        return try await withThrowingTaskGroup(of: [String: Any].self) { group in
+            group.addTask {
+                try await withCheckedThrowingContinuation { continuation in
+                    self.lock.lock(); self.waiting[id] = continuation; self.lock.unlock()
+                    do { try self.write(message) }
+                    catch { self.lock.lock(); let pending = self.waiting.removeValue(forKey: id); self.lock.unlock(); pending?.resume(throwing: error) }
                 }
             }
-            g.addTask {
+            group.addTask {
                 try await Task.sleep(nanoseconds: UInt64(timeout * 1e9))
-                self.lock.lock(); let c = self.waiting.removeValue(forKey: id); self.lock.unlock()
-                c?.resume(throwing: NSError(domain: "MCP", code: -2, userInfo: [NSLocalizedDescriptionKey: "\(method) timed out"]))
+                self.lock.lock(); let pending = self.waiting.removeValue(forKey: id); self.lock.unlock()
+                pending?.resume(throwing: MCPConfig.error("\(method) timed out."))
                 throw CancellationError()
             }
-            let r = try await g.next()!; g.cancelAll(); return r
+            let result = try await group.next()!; group.cancelAll(); return result
         }
     }
-    private func http(_ msg: [String: Any]) async throws -> [String: Any] {
-        guard let u = URL(string: def.url) else { throw URLError(.badURL) }
-        var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = 300
-        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        r.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
-        r.setValue("2025-06-18", forHTTPHeaderField: "MCP-Protocol-Version")
-        if let s = session { r.setValue(s, forHTTPHeaderField: "Mcp-Session-Id") }
-        for (k, v) in def.headers { r.setValue(v, forHTTPHeaderField: k) }
-        r.httpBody = try JSONSerialization.data(withJSONObject: msg)
-        let (d, resp) = try await URLSession.shared.data(for: r)
-        let h = resp as? HTTPURLResponse
-        if let s = h?.value(forHTTPHeaderField: "Mcp-Session-Id") { session = s }
-        if let c = h?.statusCode, c >= 300 { throw NSError(domain: "MCP", code: c, userInfo: [NSLocalizedDescriptionKey: "HTTP \(c): \(String(data: d.prefix(300), encoding: .utf8) ?? "")"]) }
-        if msg["id"] == nil { return [:] }
-        if (h?.value(forHTTPHeaderField: "Content-Type") ?? "").contains("text/event-stream") {
-            let text = String(data: d, encoding: .utf8) ?? ""
-            for line in text.components(separatedBy: "\n") where line.hasPrefix("data:") {
-                if let o = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any], o["id"] != nil { return o }
-            }
-            return [:]
-        }
-        return (try? JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? [:]
+    private func http(_ message: [String: Any], timeout: Double) async throws -> [String: Any] {
+        var request = URLRequest(url: try MCPConfig.endpoint(def.url)); request.httpMethod = "POST"; request.timeoutInterval = timeout
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue(protocolVersion, forHTTPHeaderField: "MCP-Protocol-Version")
+        lock.lock(); let savedSession = sessionID; lock.unlock()
+        if let savedSession { request.setValue(savedSession, forHTTPHeaderField: "Mcp-Session-Id") }
+        for (key, value) in try def.resolvedHeaders() { request.setValue(value, forHTTPHeaderField: key) }
+        request.httpBody = try JSONSerialization.data(withJSONObject: message)
+        let response = try await transport.post(request, messageID: message["id"] as? Int, limit: def.maxResponseBytes)
+        if let newSession = response.sessionID { lock.lock(); sessionID = newSession; lock.unlock() }
+        return response.object
     }
 }
 
@@ -156,146 +166,222 @@ final class MCPClient: @unchecked Sendable {
     @Published var status: [String: String] = [:]
     @Published var message = ""
     private var clients: [String: MCPClient] = [:]
+    private var unavailableSecrets = Set<String>()
     var file: URL { ChatStore.dir.appendingPathComponent("mcp.json") }
-
     init() {
-        if let d = try? Data(contentsOf: file), let s = try? JSONDecoder().decode([MCPServerDef].self, from: d) { servers = s }
-    }
-    func save() { let e = JSONEncoder(); e.outputFormatting = [.prettyPrinted, .sortedKeys]; if let d = try? e.encode(servers) { try? d.write(to: file, options: .atomic); try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path) } }
-    func upsert(_ s: MCPServerDef) { if let i = servers.firstIndex(where: { $0.id == s.id }) { servers[i] = s } else { servers.append(s) }; save() }
-    func delete(_ id: String) { disconnect(id); servers.removeAll { $0.id == id }; save() }
-
-    func connect(_ id: String) async {
-        guard let d = servers.first(where: { $0.id == id }) else { return }
-        disconnect(id); status[id] = "Connecting…"
-        let c = MCPClient(d)
+        guard FileManager.default.fileExists(atPath: file.path) else { return }
         do {
-            let t = try await c.start()
-            clients[id] = c; tools[id] = t; status[id] = "Connected · \(t.count) tools"
-        } catch { c.stop(); status[id] = "Error: \(error.localizedDescription)" }
+            let decoded = try JSONDecoder().decode([MCPServerDef].self, from: Data(contentsOf: file))
+            for original in decoded {
+                do { servers.append(try MCPSecretVault.hydrate(original)) }
+                catch { servers.append(original); unavailableSecrets.insert(original.id); status[original.id] = "Error: " + error.localizedDescription }
+            }
+        } catch { message = "Could not read MCP settings. Existing file left unchanged: " + error.localizedDescription }
+    }
+    private func writeProfiles(_ profiles: [MCPServerDef]) throws {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(profiles)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let temp = file.deletingLastPathComponent().appendingPathComponent(".mcp-" + UUID().uuidString + ".tmp")
+        guard FileManager.default.createFile(atPath: temp.path, contents: nil, attributes: [.posixPermissions: 0o600]) else { throw MCPConfig.error("Cannot create MCP settings file.") }
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let handle = try FileHandle(forWritingTo: temp)
+        do { try handle.write(contentsOf: data); try handle.synchronize(); try handle.close() }
+        catch { try? handle.close(); throw error }
+        guard Darwin.rename(temp.path, file.path) == 0 else { throw MCPConfig.error("Cannot atomically save MCP settings.") }
+    }
+    @discardableResult func upsert(_ original: MCPServerDef) -> Bool {
+        do {
+            let definition = try original.validated(); var updated = servers
+            let stored = try MCPSecretVault.persist(definition)
+            if let index = updated.firstIndex(where: { $0.id == stored.id }) { updated[index] = stored } else { updated.append(stored) }
+            for i in updated.indices where updated[i].secretRef == nil && (!updated[i].env.isEmpty || !updated[i].headers.isEmpty) { updated[i] = try MCPSecretVault.persist(updated[i]) }
+            try writeProfiles(updated)
+            disconnect(stored.id); servers = updated; unavailableSecrets.remove(stored.id)
+            message = "Saved. MCP credentials are stored in macOS Keychain."; return true
+        } catch { message = "Not saved: " + error.localizedDescription; return false }
+    }
+    func delete(_ id: String) {
+        let definition = servers.first { $0.id == id }
+        do {
+            var remaining = servers.filter { $0.id != id }
+            for i in remaining.indices where remaining[i].secretRef == nil && (!remaining[i].env.isEmpty || !remaining[i].headers.isEmpty) { remaining[i] = try MCPSecretVault.persist(remaining[i]) }
+            try writeProfiles(remaining); disconnect(id); servers = remaining; unavailableSecrets.remove(id); MCPSecretVault.remove(definition?.secretRef)
+        } catch { message = "Not deleted: " + error.localizedDescription }
+    }
+    func connect(_ id: String) async {
+        guard let definition = servers.first(where: { $0.id == id }), definition.enabled else { return }
+        guard !unavailableSecrets.contains(id) else { status[id] = "Error: Re-enter this server's unavailable Keychain credentials in Edit."; return }
+        disconnect(id); status[id] = "Connecting…"
+        let client = MCPClient(definition)
+        do { let available = try await client.start(); clients[id] = client; tools[id] = available; status[id] = "Connected · \(available.count) tools" }
+        catch { client.stop(); status[id] = "Error: " + definition.redacted(error.localizedDescription) }
     }
     func disconnect(_ id: String) { clients[id]?.stop(); clients[id] = nil; tools[id] = nil; status[id] = nil }
-    func connectEnabled() async { for s in servers where s.enabled && clients[s.id] == nil { await connect(s.id) } }
-    func stopAll() { for id in clients.keys { disconnect(id) } }
-
+    func connectEnabled() async { for definition in servers where definition.enabled && definition.reconnectOnStart && clients[definition.id] == nil { await connect(definition.id) } }
+    func stopAll() { for id in Array(clients.keys) { disconnect(id) } }
     static func toolName(_ server: String, _ tool: String) -> String {
         let raw = "mcp_\(server)_\(tool)".map { $0.isLetter || $0.isNumber || $0 == "_" ? $0 : "_" }
         return String(String(raw).prefix(64))
     }
     func enabledTools() -> [ToolSpec] {
-        servers.filter { $0.enabled }.flatMap { s -> [ToolSpec] in
-            guard let c = clients[s.id] else { return [] }
-            return (tools[s.id] ?? []).map { t in
-                ToolSpec(name: Self.toolName(s.id, t.name), description: "[\(s.name)] " + t.description, schema: t.schema,
-                         source: "mcp:\(s.id)", destructive: t.destructive) { args in try await c.call(t.name, args) }
+        servers.filter { $0.enabled }.flatMap { definition -> [ToolSpec] in
+            guard let client = clients[definition.id] else { return [] }
+            return (tools[definition.id] ?? []).map { tool in
+                ToolSpec(name: Self.toolName(definition.id, tool.name), description: "[\(definition.name)] " + tool.description, schema: tool.schema,
+                         source: "mcp:\(definition.id)", destructive: tool.destructive) { args in try await client.call(tool.name, args) }
             }
         }
     }
-
-    /// Import servers from Claude Desktop / Cursor style JSON ({"mcpServers": {...}}).
     func importConfig(_ url: URL) {
-        guard let d = try? Data(contentsOf: url), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
-              let m = (o["mcpServers"] ?? o["servers"]) as? [String: [String: Any]] else { message = "No mcpServers found in \(url.lastPathComponent)."; return }
-        var n = 0
-        for (k, v) in m {
-            let id = k.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" }.reduce("") { $0 + String($1) }
-            var s = MCPServerDef(id: id, name: k)
-            if let u = v["url"] as? String { s.type = "http"; s.url = u; s.headers = v["headers"] as? [String: String] ?? [:] }
-            else { s.command = v["command"] as? String ?? ""; s.args = v["args"] as? [String] ?? []; s.env = v["env"] as? [String: String] ?? [:] }
-            s.enabled = false
-            upsert(s); n += 1
-        }
-        message = "Imported \(n) server(s) (off until you enable them)."
+        do {
+            let data = try Data(contentsOf: url)
+            guard data.count <= 1024 * 1024, let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let entries = (object["mcpServers"] ?? object["servers"]) as? [String: [String: Any]] else { throw MCPConfig.error("Expected a mcpServers or servers object.") }
+            var imported = 0, skipped = 0
+            for (name, value) in entries {
+                let id = String(name.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" }.prefix(32))
+                if servers.contains(where: { $0.id == id }) { skipped += 1; continue }
+                var d = MCPServerDef(id: id, name: name)
+                if let endpoint = value["url"] as? String { d.type = "http"; d.url = endpoint }
+                else { d.command = value["command"] as? String ?? ""; d.args = value["args"] as? [String] ?? [] }
+                d.env = value["env"] as? [String: String] ?? [:]; d.headers = value["headers"] as? [String: String] ?? [:]
+                d.workingDirectory = value["cwd"] as? String ?? ""; d.enabled = false
+                if upsert(d) { imported += 1 } else { skipped += 1 }
+            }
+            message = "Imported \(imported) server(s), disabled until enabled. Skipped \(skipped) duplicate or invalid entries. Existing profiles were not overwritten."
+        } catch { message = "Import failed: " + error.localizedDescription }
     }
 }
 
 struct MCPView: View {
-    @StateObject var ms = MCPStore.shared
-    @Local var editing: MCPServerDef?
+    @StateObject private var store = MCPStore.shared
+    @Local private var editing: MCPServerDef?
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("MCP Servers").font(.largeTitle.bold()); Spacer()
-                    Button("Add Server") { editing = MCPServerDef(id: "server-\(ms.servers.count + 1)", name: "") }
-                    Button("Import from Claude Desktop") {
-                        ms.importConfig(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Claude/claude_desktop_config.json"))
-                    }
-                    Button("Import JSON…") {
-                        let p = NSOpenPanel(); p.allowedContentTypes = [.json]
-                        p.begin { if $0 == .OK, let u = p.url { Task { @MainActor in MCPStore.shared.importConfig(u) } } }
-                    }
-                }
-                Text("Model Context Protocol servers give models more tools: local commands (stdio, e.g. npx -y @modelcontextprotocol/server-filesystem ~/Documents) or remote Streamable HTTP endpoints. Tools appear to the model as mcp_<server>_<tool>. Tools marked destructive always ask first.")
+                header
+                Text("Connect local stdio tools or remote Streamable HTTP servers. Authentication and advanced settings are optional. API keys, header values and environment values are stored in Keychain. Destructive tools retain the existing approval rules.")
                     .font(.callout).foregroundStyle(.secondary)
-                if !ms.message.isEmpty { Text(ms.message).font(.callout) }
-                ForEach(ms.servers) { s in
-                    GroupBox {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(s.name).bold(); Text(s.type).font(.caption).padding(.horizontal, 6).background(Capsule().fill(.quaternary))
-                                Spacer()
-                                Toggle("Enabled", isOn: Binding(get: { s.enabled }, set: { v in var x = s; x.enabled = v; ms.upsert(x); Task { v ? await ms.connect(s.id) : ms.disconnect(s.id) } }))
-                                Button("Reconnect") { Task { await ms.connect(s.id) } }.disabled(!s.enabled)
-                                Button("Edit") { editing = s }
-                                Button(role: .destructive) { ms.delete(s.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
-                            }
-                            Text(s.type == "http" ? s.url : ([s.command] + s.args).joined(separator: " ")).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
-                            if let st = ms.status[s.id] { Text(st).font(.caption).foregroundStyle(st.hasPrefix("Error") ? .red : .green).textSelection(.enabled) }
-                            if let t = ms.tools[s.id], !t.isEmpty {
-                                Text(t.map { $0.name + ($0.destructive ? " ⚠︎" : "") }.joined(separator: " · ")).font(.caption2.monospaced()).foregroundStyle(.secondary)
-                            }
-                        }.padding(4)
-                    }
+                if !store.message.isEmpty {
+                    Text(store.message).font(.callout).textSelection(.enabled)
                 }
-                if ms.servers.isEmpty { Text("No servers yet.").foregroundStyle(.secondary) }
-            }.padding(20)
+                serverList
+            }
+            .padding(20)
         }
-        .task { await ms.connectEnabled() }
-        .sheet(item: $editing) { s in MCPEditor(def: s) { ms.upsert($0); editing = nil; let id = $0.id; Task { await ms.connect(id) } } cancel: { editing = nil } }
+        .task { await store.connectEnabled() }
+        .sheet(item: $editing) { (definition: MCPServerDef) in
+            MCPEditor(def: definition, existing: store.servers.contains { $0.id == definition.id }, save: saveEdited, cancel: { editing = nil })
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            Text("MCP Servers").font(.largeTitle.bold())
+            Spacer()
+            Button("Add Server") {
+                editing = MCPServerDef(id: "server-\(store.servers.count + 1)", name: "")
+            }
+            Button("Import from Claude Desktop") {
+                let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Claude/claude_desktop_config.json")
+                store.importConfig(url)
+            }
+            Button("Import JSON…", action: importJSON)
+        }
+    }
+
+    private var serverList: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(store.servers) { (definition: MCPServerDef) in
+                MCPServerCard(
+                    definition: definition,
+                    status: store.status[definition.id],
+                    tools: store.tools[definition.id] ?? [],
+                    setEnabled: { (enabled: Bool) in setEnabled(definition, enabled) },
+                    reconnect: { Task { await store.connect(definition.id) } },
+                    edit: { editing = definition },
+                    remove: { store.delete(definition.id) }
+                )
+            }
+            if store.servers.isEmpty {
+                Text("No servers yet.").foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func setEnabled(_ definition: MCPServerDef, _ enabled: Bool) {
+        var updated = definition
+        updated.enabled = enabled
+        guard store.upsert(updated), enabled else { return }
+        Task { await store.connect(updated.id) }
+    }
+
+    private func saveEdited(_ definition: MCPServerDef) -> String? {
+        guard store.upsert(definition) else { return store.message }
+        editing = nil
+        if definition.enabled { Task { await store.connect(definition.id) } }
+        return nil
+    }
+
+    private func importJSON() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.begin { result in
+            guard result == .OK, let url = panel.url else { return }
+            Task { @MainActor in MCPStore.shared.importConfig(url) }
+        }
     }
 }
 
-struct MCPEditor: View {
-    @Local var def: MCPServerDef
-    @Local var argsText = ""
-    @Local var envText = ""
-    @Local var hdrText = ""
-    var save: (MCPServerDef) -> Void
-    var cancel: () -> Void
-    init(def: MCPServerDef, save: @escaping (MCPServerDef) -> Void, cancel: @escaping () -> Void) {
-        _def = Local(wrappedValue: def); self.save = save; self.cancel = cancel
-        _argsText = Local(wrappedValue: def.args.joined(separator: "\n"))
-        _envText = Local(wrappedValue: def.env.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: "\n"))
-        _hdrText = Local(wrappedValue: def.headers.map { "\($0.key): \($0.value)" }.sorted().joined(separator: "\n"))
+private struct MCPServerCard: View {
+    let definition: MCPServerDef
+    let status: String?
+    let tools: [MCPTool]
+    let setEnabled: (Bool) -> Void
+    let reconnect: () -> Void
+    let edit: () -> Void
+    let remove: () -> Void
+
+    private var enabled: Binding<Bool> {
+        Binding<Bool>(get: { definition.enabled }, set: setEnabled)
+    }
+    private var toolSummary: String {
+        tools.map { $0.name + ($0.destructive ? " ⚠︎" : "") }.joined(separator: " · ")
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("MCP Server").font(.title2.bold())
-            TextField("Name", text: $def.name)
-            TextField("Id (a-z, 0-9, -)", text: $def.id)
-            Picker("Transport", selection: $def.type) { Text("stdio (local command)").tag("stdio"); Text("Streamable HTTP").tag("http") }.pickerStyle(.segmented)
-            if def.type == "stdio" {
-                TextField("Command (e.g. npx)", text: $def.command)
-                Text("Arguments, one per line").font(.caption)
-                TextEditor(text: $argsText).font(.caption.monospaced()).frame(height: 70).border(.quaternary)
-                Text("Environment (KEY=value per line; stored in mcp.json, mode 600)").font(.caption)
-                TextEditor(text: $envText).font(.caption.monospaced()).frame(height: 50).border(.quaternary)
-            } else {
-                TextField("URL (https://…/mcp)", text: $def.url)
-                Text("Headers (Name: value per line, e.g. Authorization: Bearer …)").font(.caption)
-                TextEditor(text: $hdrText).font(.caption.monospaced()).frame(height: 50).border(.quaternary)
+        GroupBox {
+            VStack(alignment: .leading, spacing: 6) {
+                controls
+                Text(definition.type == "http" ? definition.url : definition.command)
+                    .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                if let status {
+                    Text(status).font(.caption)
+                        .foregroundStyle(status.hasPrefix("Error") ? Color.red : Color.green)
+                        .textSelection(.enabled)
+                }
+                if !tools.isEmpty {
+                    Text(toolSummary).font(.caption2.monospaced()).foregroundStyle(.secondary)
+                }
             }
-            HStack { Spacer(); Button("Cancel", action: cancel)
-                Button("Save & Connect") {
-                    var d = def
-                    d.args = argsText.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-                    d.env = Dictionary(envText.split(separator: "\n").compactMap { l -> (String, String)? in let p = l.split(separator: "=", maxSplits: 1); return p.count == 2 ? (String(p[0]).trimmingCharacters(in: .whitespaces), String(p[1])) : nil }, uniquingKeysWith: { $1 })
-                    d.headers = Dictionary(hdrText.split(separator: "\n").compactMap { l -> (String, String)? in let p = l.split(separator: ":", maxSplits: 1); return p.count == 2 ? (String(p[0]).trimmingCharacters(in: .whitespaces), String(p[1]).trimmingCharacters(in: .whitespaces)) : nil }, uniquingKeysWith: { $1 })
-                    d.enabled = true
-                    save(d)
-                }.buttonStyle(.borderedProminent).disabled(def.name.isEmpty || def.id.range(of: "^[a-z0-9-]{1,32}$", options: .regularExpression) == nil)
+            .padding(4)
+        }
+    }
+    private var controls: some View {
+        HStack {
+            Text(definition.name).bold()
+            Text(definition.type).font(.caption)
+            if definition.authMode != "none" {
+                Text(definition.authMode).font(.caption).foregroundStyle(.secondary)
             }
-        }.padding(20).frame(width: 560)
+            Spacer()
+            Toggle("Enabled", isOn: enabled)
+            Button("Test / Reconnect", action: reconnect).disabled(!definition.enabled)
+            Button("Edit", action: edit)
+            Button(role: .destructive, action: remove) {
+                Image(systemName: "trash")
+            }.buttonStyle(.borderless)
+        }
     }
 }
