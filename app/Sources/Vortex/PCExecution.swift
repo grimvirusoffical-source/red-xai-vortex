@@ -4,7 +4,7 @@ import Darwin
 /// A stopped run stays revoked after the user resets the switch. The generation
 /// belongs to the local execution session, never to model-supplied arguments.
 final class PCExecutionState: @unchecked Sendable {
-    static let shared = PCExecutionState(stopped: UserDefaults.standard.bool(forKey: "pc.killed"))
+    static let shared = PCExecutionState(stopped: AccountProfile.defaults.bool(forKey: "pc.killed"))
     private let lock = NSLock()
     private var generation: UInt64 = 0
     private var stopped: Bool

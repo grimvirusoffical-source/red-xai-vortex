@@ -13,7 +13,7 @@ struct Skill: Codable, Identifiable, Hashable {
 @MainActor final class SkillStore: ObservableObject {
     static let shared = SkillStore()
     @Published var skills: [Skill] = []
-    @Published var modes: [String: String] = UserDefaults.standard.dictionary(forKey: "skillModes") as? [String: String] ?? [:]
+    @Published var modes: [String: String] = AccountProfile.defaults.dictionary(forKey: "skillModes") as? [String: String] ?? [:]
     var file: URL { ChatStore.dir.appendingPathComponent("skills.json") }
 
     static let starters: [Skill] = [
@@ -33,11 +33,11 @@ struct Skill: Codable, Identifiable, Hashable {
 
     init() {
         if let d = try? Data(contentsOf: file), let s = try? JSONDecoder().decode([Skill].self, from: d) { skills = s } else { skills = Self.starters; save() }
-        if let old = UserDefaults.standard.string(forKey: "activeSkill"), !old.isEmpty, modes.isEmpty { setMode(old, "always") } // migrate the old single pick
-        UserDefaults.standard.removeObject(forKey: "activeSkill")
+        if let old = AccountProfile.defaults.string(forKey: "activeSkill"), !old.isEmpty, modes.isEmpty { setMode(old, "always") } // migrate the old single pick
+        AccountProfile.defaults.removeObject(forKey: "activeSkill")
     }
     func mode(_ id: String) -> String { modes[id] ?? "off" }
-    func setMode(_ id: String, _ m: String) { modes[id] = m; UserDefaults.standard.set(modes, forKey: "skillModes") }
+    func setMode(_ id: String, _ m: String) { modes[id] = m; AccountProfile.defaults.set(modes, forKey: "skillModes") }
     var always: [Skill] { skills.filter { mode($0.id) == "always" } }
     var auto: [Skill] { skills.filter { mode($0.id) == "auto" } }
     func save() { let e = JSONEncoder(); e.outputFormatting = .prettyPrinted; try? e.encode(skills).write(to: file, options: .atomic) }
@@ -53,9 +53,9 @@ struct Skill: Codable, Identifiable, Hashable {
         tools must be a subset of: web_search, fetch_url, read_file, list_folder, calculator, weather, wikipedia, now (or empty).
         Skill to build: \(description)
         """
-        let base = UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL
+        let base = AccountProfile.defaults.string(forKey: "serverURL") ?? Defaults.serverURL
         let key = Keychain.get() ?? ""
-        let p = ChatParams(baseURL: base, apiKey: key, model: UserDefaults.standard.string(forKey: "pluginMakerModel") ?? "vortex",
+        let p = ChatParams(baseURL: base, apiKey: key, model: AccountProfile.defaults.string(forKey: "pluginMakerModel") ?? "vortex",
                            temperature: 0.2, topP: 0.9, repeatPenalty: 1.05, topK: 40, maxTokens: 1200, seed: -1)
         let j = try await Agent.complete(p, messages: [["role": "user", "content": prompt]], tools: [])
         var txt = (((j["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any])?["content"] as? String) ?? ""
@@ -64,7 +64,7 @@ struct Skill: Codable, Identifiable, Hashable {
         guard s.id.range(of: "^[a-z0-9-]{1,40}$", options: .regularExpression) != nil else { throw NSError(domain: "Vortex", code: 1, userInfo: [NSLocalizedDescriptionKey: "Bad skill id"]) }
         return s
     }
-    func delete(_ id: String) { skills.removeAll { $0.id == id }; modes[id] = nil; UserDefaults.standard.set(modes, forKey: "skillModes"); save() }
+    func delete(_ id: String) { skills.removeAll { $0.id == id }; modes[id] = nil; AccountProfile.defaults.set(modes, forKey: "skillModes"); save() }
 
     /// "/skill-id rest of message" activates a skill for this chat and strips the prefix.
     func applySlash(_ text: inout String) {

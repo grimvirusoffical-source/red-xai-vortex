@@ -28,7 +28,7 @@ final class AccountSwitchTests: XCTestCase {
             account.requireAccountSignIn = true
             XCTAssertFalse(account.ready)
             account.continueAsOwner()
-            XCTAssertTrue(account.ready, "the existing owner mode must remain accessible by choice")
+            XCTAssertFalse(account.ready, "owner credentials must never bypass account authentication")
         }
     }
 }

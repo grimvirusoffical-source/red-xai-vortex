@@ -108,14 +108,14 @@ struct FileBackup: Codable { var path: String; var existed: Bool; var backup: St
     @Published var toolsScanned = false
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     var localBase: String { RedXLink.enabled ? RedXLink.base : "http://127.0.0.1:\(Defaults.sshLocalPort - 1)" }
-    var publicBase: String { (UserDefaults.standard.string(forKey: "publicBaseURL") ?? "").replacingOccurrences(of: "/v1", with: "") }
+    var publicBase: String { (AccountProfile.defaults.string(forKey: "publicBaseURL") ?? "").replacingOccurrences(of: "/v1", with: "") }
     var envFile: String { home + "/.config/red-xai-vortex/env" }
     static let marker = "# red-xai-vortex integrations (added by the Red-XAI Vortex app; removed on Disconnect)"
 
     init() {
-        if let d = UserDefaults.standard.data(forKey: "integrationsState"), let s = try? JSONDecoder().decode([String: IntegrationState].self, from: d) { state = s }
+        if let d = AccountProfile.defaults.data(forKey: "integrationsState"), let s = try? JSONDecoder().decode([String: IntegrationState].self, from: d) { state = s }
     }
-    func save() { UserDefaults.standard.set(try? JSONEncoder().encode(state), forKey: "integrationsState") }
+    func save() { AccountProfile.defaults.set(try? JSONEncoder().encode(state), forKey: "integrationsState") }
     func base(_ i: Integration) -> String { (i.publicOnly && !publicBase.isEmpty) ? publicBase : localBase }
 
     // ---------- files ----------

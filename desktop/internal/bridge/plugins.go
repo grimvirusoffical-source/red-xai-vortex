@@ -12,8 +12,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/keyring"
 )
 
 // Plugin store client. The store runs on the Vortex (Vultr) server behind https://<host>/plugins/.
@@ -44,7 +42,7 @@ func (s *Server) pluginReq(method, suffix string, body any, auth bool) map[strin
 	req, _ := http.NewRequest(method, s.storeBase()+suffix, rd)
 	req.Header.Set("Content-Type", "application/json")
 	if auth {
-		tok := keyring.Get("redx-session")
+		tok := s.credential("redx-session")
 		if tok == "" {
 			return map[string]any{"ok": false, "needSignIn": true, "message": "You must sign in to Red-XAI first to upload."}
 		}
@@ -171,7 +169,7 @@ func (s *Server) pluginInstall(id string) map[string]any {
 	if err := os.WriteFile(filepath.Join(s.pluginsDir(), id+".json"), b, 0600); err != nil {
 		return map[string]any{"ok": false, "message": err.Error()}
 	}
-	c := s.pluginReq("POST", "/"+id+"/install", map[string]any{}, keyring.Get("redx-session") != "")
+	c := s.pluginReq("POST", "/"+id+"/install", map[string]any{}, s.credential("redx-session") != "")
 	return map[string]any{"ok": true, "message": "Installed " + id, "installs": c["installs"]}
 }
 
@@ -192,7 +190,7 @@ func (s *Server) pluginIcon(prompt string) map[string]any {
 		prompt = "plugin"
 	}
 	base := s.St.Settings.BaseURL
-	key := keyring.Get("vortex-api-key")
+	key := s.credential("vortex-api-key")
 	body, _ := json.Marshal(map[string]any{"model": "vortex-image", "prompt": "flat app icon, centered, dark background, red accent: " + prompt, "size": "256x256", "n": 1, "response_format": "b64_json"})
 	req, _ := http.NewRequest("POST", base+"/images/generations", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

@@ -8,7 +8,7 @@ import AppKit
     static let shared = Updater()
     static let teamID = "NZPU8H843J"
     var api: String { ProcessInfo.processInfo.environment["VORTEX_UPDATE_API"] ?? "https://api.github.com/repos/grimvirusoffical-source/red-xai-vortex" }
-    var enabled: Bool { !UserDefaults.standard.bool(forKey: "noAutoUpdate") }
+    var enabled: Bool { !AccountProfile.defaults.bool(forKey: "noAutoUpdate") }
     @Published private(set) var checking = false
     @Published private(set) var status = "Updates are checked when Vortex starts and every four hours."
     private var timer: Timer?

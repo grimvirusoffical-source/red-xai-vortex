@@ -6,8 +6,8 @@ enum Admin {
     /// Gateway admin port (SSH localPort, usually 18092). Never the chat/public URL.
     /// Written by ServerStore.activate into "adminBaseURL".
     static var base: String {
-        if let a = UserDefaults.standard.string(forKey: "adminBaseURL"), !a.isEmpty { return a }
-        let s = UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL
+        if let a = AccountProfile.defaults.string(forKey: "adminBaseURL"), !a.isEmpty { return a }
+        let s = AccountProfile.defaults.string(forKey: "serverURL") ?? Defaults.serverURL
         var b = s.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
         if b.hasSuffix("/v1") { b.removeLast(3) }
         if b.hasSuffix(":18091") { return String(b.dropLast(2) + "92") }
@@ -15,7 +15,7 @@ enum Admin {
     }
     static var adminKey: String {
         if let k = Keychain.get(account: "admin-primary"), !k.isEmpty { return k }
-        if let id = UserDefaults.standard.string(forKey: "activeServer"),
+        if let id = AccountProfile.defaults.string(forKey: "activeServer"),
            let k = Keychain.get(account: "admin-" + id), !k.isEmpty { return k }
         return Keychain.get() ?? ""
     }
@@ -146,7 +146,7 @@ final class HubStore: ObservableObject {
     func setDefault(_ id: String) {
         run {
             _ = try await Admin.call("POST", "/admin/default", ["id": id]); self.defaultModel = id
-            UserDefaults.standard.set(id, forKey: "model")
+            AccountProfile.defaults.set(id, forKey: "model")
         }
     }
 
@@ -221,7 +221,7 @@ final class HubStore: ObservableObject {
 enum ChatStoreRef {
     @MainActor static weak var store: ChatStore?
     @MainActor static func refresh() async {
-        if let m = try? await API.models(base: UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL, key: Keychain.get() ?? ""), !m.isEmpty {
+        if let m = try? await API.models(base: AccountProfile.defaults.string(forKey: "serverURL") ?? Defaults.serverURL, key: Keychain.get() ?? ""), !m.isEmpty {
             store?.availableModels = m
         }
         try? await HubStore.shared.loadMerges()
@@ -231,7 +231,7 @@ enum ChatStoreRef {
 // MARK: - Hub window
 struct HubView: View {
     @StateObject var hub = HubStore.shared
-    @AppStorage("hubTab") var tab = "library"
+    @AppStorage("hubTab", store: AccountProfile.defaults) var tab = "library"
     var body: some View {
         VStack(spacing: 0) {
             TabView(selection: $tab) {
@@ -442,7 +442,7 @@ struct MergesView: View {
                         }
                         Spacer()
                         Button("Test") { hub.testMerge(m.name) }
-                        Button("Use") { UserDefaults.standard.set("redx-merge-\(m.name)", forKey: "model") }
+                        Button("Use") { AccountProfile.defaults.set("redx-merge-\(m.name)", forKey: "model") }
                         Button(role: .destructive) { hub.deleteMerge(m.name) } label: { Label("Remove", systemImage: "trash") }
                     }
                 }
@@ -585,8 +585,8 @@ struct KeysView: View {
 }
 
 struct DocsView: View {
-    static var publicBase: String { UserDefaults.standard.string(forKey: "publicBaseURL") ?? "https://ai.example.com/v1" }
-    @AppStorage("publicAPIReady") var publicReady = false
+    static var publicBase: String { AccountProfile.defaults.string(forKey: "publicBaseURL") ?? "https://ai.example.com/v1" }
+    @AppStorage("publicAPIReady", store: AccountProfile.defaults) var publicReady = false
     func block(_ title: String, _ code: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack { Text(title).font(.headline); Spacer(); Button("Copy") { copyToClipboard(code) }.controlSize(.small) }
@@ -601,7 +601,7 @@ struct DocsView: View {
                 Text("The server speaks the OpenAI API. Any app that lets you set a custom OpenAI base URL and key works. Create a key in API Keys, then use:").foregroundStyle(.secondary)
                 block("Base URL (OpenAI-compatible)", Self.publicBase)
                 if !publicReady {
-                    Label("If your public address isn't set up yet, apps on this Mac can use http://127.0.0.1:18091/v1 with this command running: ssh -N -L 18091:127.0.0.1:8091 root@\(UserDefaults.standard.string(forKey: "sshHost")?.components(separatedBy: "@").last ?? "YOUR_SERVER")", systemImage: "exclamationmark.triangle").font(.caption)
+                    Label("If your public address isn't set up yet, apps on this Mac can use http://127.0.0.1:18091/v1 with this command running: ssh -N -L 18091:127.0.0.1:8091 root@\(AccountProfile.defaults.string(forKey: "sshHost")?.components(separatedBy: "@").last ?? "YOUR_SERVER")", systemImage: "exclamationmark.triangle").font(.caption)
                 }
                 block("Endpoints", "Outside provider models (Providers tab) appear as ext-… ids and work the same way.\nGET  /v1/models\nPOST /v1/chat/completions\nPOST /v1/completions\nPOST /v1/embeddings   (model: nomic-embed-v1.5)\nMerge models: redx-merge-auto, redx-merge-draft-refine, redx-merge-panel, …")
                 block("Connect any app", "OpenAI-style apps: base URL \(Self.publicBase), API key redx_ai_… (or redx_xai_…)\nOllama-style apps: base URL \(Self.publicBase.replacingOccurrences(of: "/v1", with: "")) with header Authorization: Bearer <key> (/api/tags, /api/chat, /api/generate, /api/embed)\nModels: any installed model, vortex (learning model), redx-merge-<name>, ext-… providers\nCustom GPT Actions: import docs/openapi-gpt-actions.yaml, Authentication = API Key, Bearer. Needs the public https URL.")

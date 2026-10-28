@@ -289,6 +289,9 @@ func (s *Server) startManagedHost(id string, c store.HostingConfig) (hostingStat
 	cmd := exec.Command(helper, args...)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
+	if s.profileClosed.Load() {
+		return hostingStatus{}, errors.New("account session ended")
+	}
 	if err = cmd.Start(); err != nil {
 		return hostingStatus{}, errors.New("Base helper could not start")
 	}
@@ -357,6 +360,9 @@ func (s *Server) stopManagedHost(id string, persist bool) error {
 	return nil
 }
 func (s *Server) restoreManagedHosts() {
+	if s.profileClosed.Load() {
+		return
+	}
 	for _, b := range s.St.WorkspaceSnapshot().Bases {
 		if b.Hosting != nil && b.Hosting.Enabled && b.Endpoint == "" {
 			_, _ = s.startManagedHost(b.ID, *b.Hosting)

@@ -19,12 +19,12 @@ struct ConnectionSettings: View {
     @StateObject private var updater = Updater.shared
     @EnvironmentObject var tunnel: TunnelManager
     @EnvironmentObject var store: ChatStore
-    @AppStorage("serverURL") var serverURL = Defaults.serverURL
-    @AppStorage("useTunnel") var useTunnel = true
-    @AppStorage("sshHost") var sshHost = Defaults.sshHost
-    @AppStorage("sshKey") var sshKey = "~/.ssh/id_ed25519"
-    @AppStorage("sshLocalPort") var sshLocalPort = Defaults.sshLocalPort
-    @AppStorage("sshRemotePort") var sshRemotePort = Defaults.sshRemotePort
+    @AppStorage("serverURL", store: AccountProfile.defaults) var serverURL = Defaults.serverURL
+    @AppStorage("useTunnel", store: AccountProfile.defaults) var useTunnel = false
+    @AppStorage("sshHost", store: AccountProfile.defaults) var sshHost = Defaults.sshHost
+    @AppStorage("sshKey", store: AccountProfile.defaults) var sshKey = "~/.ssh/id_ed25519"
+    @AppStorage("sshLocalPort", store: AccountProfile.defaults) var sshLocalPort = Defaults.sshLocalPort
+    @AppStorage("sshRemotePort", store: AccountProfile.defaults) var sshRemotePort = Defaults.sshRemotePort
     @Local var key = ""
     @Local var keySaved = false
     // keySaved filled in .onAppear — never Keychain in property initializers used by View body
@@ -32,7 +32,7 @@ struct ConnectionSettings: View {
     var body: some View {
         Form {
             Section("Updates") {
-                Toggle("Auto-update from GitHub Releases (SHA256 + Developer ID verified)", isOn: Binding(get: { !UserDefaults.standard.bool(forKey: "noAutoUpdate") }, set: { UserDefaults.standard.set(!$0, forKey: "noAutoUpdate") }))
+                Toggle("Auto-update from GitHub Releases (SHA256 + Developer ID verified)", isOn: Binding(get: { !AccountProfile.defaults.bool(forKey: "noAutoUpdate") }, set: { AccountProfile.defaults.set(!$0, forKey: "noAutoUpdate") }))
                 Button(updater.checking ? "Checking for updates…" : "Check for updates now") {
                     Task { await updater.check(manual: true) }
                 }
@@ -93,14 +93,14 @@ struct ConnectionSettings: View {
 
 struct ModelSettings: View {
     @EnvironmentObject var store: ChatStore
-    @AppStorage("model") var model = Defaults.model
-    @AppStorage("temperature") var temperature = 0.7
-    @AppStorage("topP") var topP = 0.9
-    @AppStorage("topK") var topK = 40
-    @AppStorage("maxTokens") var maxTokens = 1024
-    @AppStorage("contextTokens") var contextTokens = 8192
-    @AppStorage("repeatPenalty") var repeatPenalty = 1.1
-    @AppStorage("seed") var seed = -1
+    @AppStorage("model", store: AccountProfile.defaults) var model = Defaults.model
+    @AppStorage("temperature", store: AccountProfile.defaults) var temperature = 0.7
+    @AppStorage("topP", store: AccountProfile.defaults) var topP = 0.9
+    @AppStorage("topK", store: AccountProfile.defaults) var topK = 40
+    @AppStorage("maxTokens", store: AccountProfile.defaults) var maxTokens = 1024
+    @AppStorage("contextTokens", store: AccountProfile.defaults) var contextTokens = 8192
+    @AppStorage("repeatPenalty", store: AccountProfile.defaults) var repeatPenalty = 1.1
+    @AppStorage("seed", store: AccountProfile.defaults) var seed = -1
     var body: some View {
         Form {
             Section("Model") {
@@ -132,8 +132,8 @@ struct ModelSettings: View {
 }
 
 struct PersonaSettings: View {
-    @AppStorage("systemPrompt") var systemPrompt = Defaults.systemPrompt
-    @AppStorage("personasJSON") var personasJSON = ""
+    @AppStorage("systemPrompt", store: AccountProfile.defaults) var systemPrompt = Defaults.systemPrompt
+    @AppStorage("personasJSON", store: AccountProfile.defaults) var personasJSON = ""
     @Local var personas: [Persona] = []
     @Local var newName = ""
     var body: some View {
@@ -168,15 +168,15 @@ struct PersonaSettings: View {
 }
 
 struct AppearanceSettings: View {
-    @AppStorage("theme") var theme = "system"
-    @AppStorage("accent") var accent = "red"
-    @AppStorage("fontSize") var fontSize = 14.0
-    @AppStorage("bubbleStyle") var bubbleStyle = "rounded"
-    @AppStorage("markdown") var markdown = true
-    @AppStorage("sendOnEnter") var sendOnEnter = true
-    @AppStorage("showTimestamps") var showTimestamps = false
-    @AppStorage("replyWhenFinished") var replyWhenFinished = false
-    @AppStorage("royalPalette") var royalPalette = "gold"
+    @AppStorage("theme", store: AccountProfile.defaults) var theme = "system"
+    @AppStorage("accent", store: AccountProfile.defaults) var accent = "red"
+    @AppStorage("fontSize", store: AccountProfile.defaults) var fontSize = 14.0
+    @AppStorage("bubbleStyle", store: AccountProfile.defaults) var bubbleStyle = "rounded"
+    @AppStorage("markdown", store: AccountProfile.defaults) var markdown = true
+    @AppStorage("sendOnEnter", store: AccountProfile.defaults) var sendOnEnter = true
+    @AppStorage("showTimestamps", store: AccountProfile.defaults) var showTimestamps = false
+    @AppStorage("replyWhenFinished", store: AccountProfile.defaults) var replyWhenFinished = false
+    @AppStorage("royalPalette", store: AccountProfile.defaults) var royalPalette = "gold"
     var body: some View {
         Form {
             Picker("Vortex look", selection: $royalPalette) {
@@ -200,7 +200,7 @@ struct AppearanceSettings: View {
 
 struct DataSettings: View {
     @EnvironmentObject var store: ChatStore
-    @AppStorage("systemPrompt") var systemPrompt = Defaults.systemPrompt
+    @AppStorage("systemPrompt", store: AccountProfile.defaults) var systemPrompt = Defaults.systemPrompt
     @Local var confirm = false
     var body: some View {
         Form {
@@ -221,8 +221,8 @@ struct DataSettings: View {
 
 struct VortexTrainingSettings: View {
     @EnvironmentObject var store: ChatStore
-    @AppStorage("vortexSystemPrompt") var vortexPrompt = "You are Vortex, the Red-XAI Vortex assistant: direct, warm and precise."
-    @AppStorage("omniRouteURL") var omniRouteURL = ""
+    @AppStorage("vortexSystemPrompt", store: AccountProfile.defaults) var vortexPrompt = "You are Vortex, the Red-XAI Vortex assistant: direct, warm and precise."
+    @AppStorage("omniRouteURL", store: AccountProfile.defaults) var omniRouteURL = ""
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {

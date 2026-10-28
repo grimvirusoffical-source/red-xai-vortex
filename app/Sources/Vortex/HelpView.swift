@@ -46,7 +46,7 @@ private func inline(_ s: String) -> AttributedString {
 }
 
 struct HelpView: View {
-    @AppStorage("helpDoc") var doc = "USER-GUIDE"
+    @AppStorage("helpDoc", store: AccountProfile.defaults) var doc = "USER-GUIDE"
     @Local var query = ""
     var body: some View {
         NavigationSplitView {

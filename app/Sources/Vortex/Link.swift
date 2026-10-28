@@ -24,19 +24,19 @@ final class RedXLink: ObservableObject {
 
     /// "link" (default) or "ssh" (owner-only tunnel).
     static var mode: String {
-        get { UserDefaults.standard.string(forKey: "connectionMode") ?? "link" }
-        set { UserDefaults.standard.set(newValue, forKey: "connectionMode") }
+        get { AccountProfile.defaults.string(forKey: "connectionMode") ?? "link" }
+        set { AccountProfile.defaults.set(newValue, forKey: "connectionMode") }
     }
     static var enabled: Bool { mode == "link" }
     /// Secure chat (Red-SecretsXAI): carry all Link traffic as red-X barcode images. Per device, on by default.
     nonisolated static var secure: Bool {
-        get { UserDefaults.standard.object(forKey: "secureChat") as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: "secureChat") }
+        get { AccountProfile.defaults.object(forKey: "secureChat") as? Bool ?? true }
+        set { AccountProfile.defaults.set(newValue, forKey: "secureChat") }
     }
     /// Phone chat over the local network (PIN-protected web page served by the helper).
     nonisolated static var phone: Bool {
-        get { UserDefaults.standard.bool(forKey: "phoneChat") }
-        set { UserDefaults.standard.set(newValue, forKey: "phoneChat") }
+        get { AccountProfile.defaults.bool(forKey: "phoneChat") }
+        set { AccountProfile.defaults.set(newValue, forKey: "phoneChat") }
     }
     static let phonePort = 18192
     /// QR code (black on white) for the phone URL, generated locally with Core Image.
@@ -169,9 +169,9 @@ final class RedXLink: ObservableObject {
 struct LinkSettingsBox: View {
     @StateObject var link = RedXLink.shared
     @StateObject var ss = ServerStore.shared
-    @AppStorage("connectionMode") var mode = "link"
-    @AppStorage("secureChat") var secure = true
-    @AppStorage("phoneChat") var phone = false
+    @AppStorage("connectionMode", store: AccountProfile.defaults) var mode = "link"
+    @AppStorage("secureChat", store: AccountProfile.defaults) var secure = true
+    @AppStorage("phoneChat", store: AccountProfile.defaults) var phone = false
     @Local var keyText = ""
     @Local var addrEdit: [String: String] = [:]
     @Local var checking = false
@@ -263,15 +263,18 @@ struct LinkSettingsBox: View {
 /// PC control) behind a PIN. Its chat follows the Secure chat setting. It exits when the app quits.
 @MainActor enum PhoneHost {
     static var proc: Process?
+    static func stop() { proc?.terminate(); proc = nil }
     static func sync() {
         if let p = proc, p.isRunning { p.terminate() }
         proc = nil
-        guard RedXLink.phone, let key = Keychain.get(), !key.isEmpty,
+        guard AccountProfile.isActive, AccountGate.shared.ready, RedXLink.phone, let key = Keychain.get(), !key.isEmpty,
               let bin = Bundle.main.url(forResource: "vortex-phone", withExtension: nil),
               let res = Bundle.main.resourceURL else { return }
         let p = Process(); p.executableURL = bin; p.arguments = ["-phone", "-no-update"]
         var env = ProcessInfo.processInfo.environment
         env["VORTEX_API_KEY"] = key
+        env["VORTEX_HOST_PROFILE"] = AccountProfile.id ?? ""
+        env["VORTEX_DATA_DIR"] = AccountProfile.directory.appendingPathComponent("phone").path
         // RedX sign-in lives in the macOS Keychain; the phone server needs it too or the phone page asks to sign in again.
         if let t = Keychain.get(account: "redx-session"), !t.isEmpty { env["VORTEX_REDX_SESSION"] = t }
         env["VORTEX_SECURE"] = RedXLink.secure ? "1" : "0"

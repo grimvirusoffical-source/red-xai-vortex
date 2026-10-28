@@ -15,11 +15,11 @@ import (
 
 // RedX account gate: every desktop app requires a red-xai.com account,
 // checked against the public accounts API over plain HTTPS.
-// Owner mode (admin key + SSH tunnel to the admin port) is exempt.
+// Owner credentials never exempt a user from verified account sign-in.
 
 const redxAccounts = "https://api.red-xai.com/v1/accounts/"
 
-var redxCli = &http.Client{Timeout: 15 * time.Second}
+var redxCli = &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 
 func redxDo(method, path string, hdr map[string]string, body any) (int, map[string]any) {
 	var rd io.Reader
@@ -45,10 +45,13 @@ func redxDo(method, path string, hdr map[string]string, body any) (int, map[stri
 	return resp.StatusCode, out
 }
 
-func (s *Server) termsFile() string { return filepath.Join(s.St.Dir, "terms-accepted") }
+func (s *Server) termsFile() string { return filepath.Join(s.rootDirectory(), "terms-accepted") }
 
 func (s *Server) isOwner() bool {
-	k := keyring.Get("admin-primary")
+	if s.profileID == "" || s.profileClosed.Load() {
+		return false
+	}
+	k := s.credential("admin-primary")
 	if s.baseCredential != nil {
 		k = s.baseCredential("admin-primary") // isolate owner checks in tests
 	}
@@ -74,51 +77,65 @@ func (s *Server) redx(m string, in map[string]any) map[string]any {
 	switch m {
 	case "gate.status":
 		b, _ := os.ReadFile(s.termsFile())
-		res := map[string]any{"ok": true, "termsAccepted": strings.TrimSpace(string(b))}
-		// Fail closed during an intentional account switch. In particular, do
-		// not restore stale credentials inherited from a launcher environment.
+		terms := strings.TrimSpace(string(b))
 		if s.accountSwitchRequired() {
-			res["owner"] = false
-			res["ownerAvailable"] = s.isOwner()
-			return res
+			return s.accountGateResult(terms)
 		}
-		// A Vortex-scoped browser grant is a COMPLETE, alternative sign-in.
-		// Never require legacy password/MFA or a slow owner-admin check afterward.
+		epoch := s.accountEpoch()
 		if linked, email, message := s.quickSignedIn(); linked {
-			_ = s.setAccountSwitchRequired(false)
-			res["signedIn"] = true
-			res["username"] = email
-			return res
+			s.quickAuth.mu.Lock()
+			subject := s.quickAuth.account.sub
+			expires := s.quickAuth.account.expires
+			s.quickAuth.mu.Unlock()
+			if err := s.activateAccount(subject, email, "", expires, epoch); err != nil {
+				return map[string]any{"ok": false, "message": err.Error()}
+			}
+			return s.accountGateResult(terms)
 		} else if message != "" {
-			res["message"] = message
+			s.clearAccountWorkspace()
+			result := s.accountGateResult(terms)
+			result["message"] = message
+			return result
 		}
-		ownerAvailable := s.isOwner()
-		res["owner"] = ownerAvailable && !s.accountSwitchRequired()
-		res["ownerAvailable"] = ownerAvailable
-		if tok := keyring.Get("redx-session"); tok != "" {
-			st, me := redxDo("GET", "me", map[string]string{"X-RedX-Session": tok}, nil)
-			switch {
-			case st == 200:
-				_ = s.setAccountSwitchRequired(false)
-				res["signedIn"] = true
-				if a, ok := me["account"].(map[string]any); ok {
-					res["username"] = a["username"]
+		if token := keyring.Get("redx-session"); token != "" {
+			status, response := redxDo("GET", "me", map[string]string{"X-RedX-Session": token}, nil)
+			if status == 200 {
+				if account, ok := response["account"].(map[string]any); ok {
+					if err := s.activateAccount(accountSubject(account), asString(account["username"]), token, time.Now().Add(5*time.Minute), epoch); err == nil {
+						return s.accountGateResult(terms)
+					}
 				}
-			case st == 0 || st >= 500:
-				res["signedIn"] = true // offline grace with a saved session
-				res["message"] = "RedX accounts unreachable; using your saved sign-in."
-			default:
-				keyring.Set("redx-session", "")
+			}
+			// Do not interpret a cached username, transport outage or admin key
+			// as verified identity. Existing local data is kept, not loaded.
+			if status == 401 || status == 403 {
+				_ = keyring.Set("redx-session", "")
 			}
 		}
-		return res
+		s.clearAccountWorkspace()
+		return s.accountGateResult(terms)
 	case "redx.quick.start":
 		return s.quickStart()
 	case "redx.quick.open":
 		return s.quickOpen(str("browser"))
 	case "redx.quick.poll":
+		epoch := s.accountEpoch()
 		out := s.quickPoll()
-		if out["signedIn"] == true { _ = s.setAccountSwitchRequired(false) }
+		if out["signedIn"] == true {
+			s.quickAuth.mu.Lock()
+			a := s.quickAuth.account
+			s.quickAuth.mu.Unlock()
+			if err := s.activateAccount(a.sub, a.email, "", a.expires, epoch); err != nil {
+				return map[string]any{"ok": false, "error": err.Error()}
+			}
+			s.accounts.mu.Lock()
+			if epoch == s.accounts.epoch {
+				_ = s.setAccountSwitchRequired(false)
+			} else {
+				out = map[string]any{"ok": false, "error": "Sign-in cancelled"}
+			}
+			s.accounts.mu.Unlock()
+		}
 		return out
 	case "redx.quick.cancel":
 		return s.quickCancel()
@@ -126,11 +143,13 @@ func (s *Server) redx(m string, in map[string]any) map[string]any {
 		os.WriteFile(s.termsFile(), []byte(str("version")), 0600)
 		return map[string]any{"ok": true}
 	case "redx.login":
+		epoch := s.accountEpoch()
 		st, r := redxDo("POST", "login", nil, map[string]any{"login": str("login"), "password": in["password"]})
-		return s.redxFinish(st, r)
+		return s.redxFinishAt(st, r, epoch)
 	case "redx.2fa":
+		epoch := s.accountEpoch()
 		st, r := redxDo("POST", "login/2fa", map[string]string{"X-RedX-Flow": str("flow")}, map[string]any{"method": str("method"), "code": str("code")})
-		return s.redxFinish(st, r)
+		return s.redxFinishAt(st, r, epoch)
 	case "redx.call":
 		st, r := redxDo("POST", "login/call", map[string]string{"X-RedX-Flow": str("flow")}, map[string]any{})
 		r["ok"] = st == 200
@@ -141,6 +160,8 @@ func (s *Server) redx(m string, in map[string]any) map[string]any {
 		if err := s.setAccountSwitchRequired(true); err != nil {
 			return map[string]any{"ok": false, "error": "Could not save sign-out state: " + err.Error()}
 		}
+		s.clearAccountWorkspace()
+		s.quickCancel()
 		legacy := keyring.Get("redx-session")
 		_ = keyring.Set("redx-session", "")
 		s.quickLogout()
@@ -151,30 +172,52 @@ func (s *Server) redx(m string, in map[string]any) map[string]any {
 		}
 		return map[string]any{"ok": true}
 	case "redx.owner.continue":
-		if !s.isOwner() { return map[string]any{"ok": false, "error": "Owner mode is not available"} }
-		if err := s.setAccountSwitchRequired(false); err != nil {
-			return map[string]any{"ok": false, "error": "Could not restore owner mode"}
-		}
-		return map[string]any{"ok": true}
+		return map[string]any{"ok": false, "error": "Sign in to the owner’s Red-XAI account. A saved admin key does not bypass account authentication."}
 	}
 	return map[string]any{"ok": false, "error": "unknown method " + m}
 }
 
 func (s *Server) redxFinish(st int, r map[string]any) map[string]any {
-	if st == 200 {
-		if n, _ := r["next"].(string); n != "" {
-			return map[string]any{"ok": true, "next": n, "flow": r["token"], "methods": r["methods"]}
+	return s.redxFinishAt(st, r, s.accountEpoch())
+}
+func (s *Server) redxFinishAt(status int, response map[string]any, epoch uint64) map[string]any {
+	if status == 200 {
+		if next, _ := response["next"].(string); next != "" {
+			return map[string]any{"ok": true, "next": next, "flow": response["token"], "methods": response["methods"]}
 		}
-		if tok, _ := r["token"].(string); tok != "" {
+		if token, _ := response["token"].(string); token != "" {
+			st, me := redxDo("GET", "me", map[string]string{"X-RedX-Session": token}, nil)
+			account, ok := me["account"].(map[string]any)
+			if st != 200 || !ok {
+				return map[string]any{"ok": false, "error": "The account session could not be verified."}
+			}
 			s.quickLogout()
-			keyring.Set("redx-session", tok)
+			s.accounts.mu.Lock()
+			if epoch != s.accounts.epoch {
+				s.accounts.mu.Unlock()
+				return map[string]any{"ok": false, "error": "Sign-in cancelled"}
+			}
+			err := keyring.Set("redx-session", token)
+			s.accounts.mu.Unlock()
+			if err != nil {
+				return map[string]any{"ok": false, "error": "Could not save the account session."}
+			}
+			if err = s.activateAccount(accountSubject(account), asString(account["username"]), token, time.Now().Add(5*time.Minute), epoch); err != nil {
+				return map[string]any{"ok": false, "error": err.Error()}
+			}
+			s.accounts.mu.Lock()
+			if epoch != s.accounts.epoch {
+				s.accounts.mu.Unlock()
+				return map[string]any{"ok": false, "error": "Sign-in cancelled"}
+			}
 			_ = s.setAccountSwitchRequired(false)
+			s.accounts.mu.Unlock()
 			return map[string]any{"ok": true, "signedIn": true}
 		}
 	}
-	msg, _ := r["message"].(string)
-	if msg == "" {
-		msg = "Sign-in failed."
+	message, _ := response["message"].(string)
+	if message == "" {
+		message = "Sign-in failed."
 	}
-	return map[string]any{"ok": false, "error": msg}
+	return map[string]any{"ok": false, "error": message}
 }

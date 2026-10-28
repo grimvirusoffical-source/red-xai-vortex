@@ -113,5 +113,5 @@ struct ActiveItemsBar: View {
 /// Opens the Hub window on a given tab from anywhere in the chat.
 @MainActor enum HubNav {
     static var opener: (() -> Void)?
-    static func open(_ tab: String) { UserDefaults.standard.set(tab, forKey: "hubTab"); opener?() }
+    static func open(_ tab: String) { AccountProfile.defaults.set(tab, forKey: "hubTab"); opener?() }
 }

@@ -34,19 +34,9 @@ enum DeviceID {
 /// Do NOT call this from tests on the owner's real Mac — only when the gateway says so.
 enum OwnerWipe {
     static func run() {
-        let fm = FileManager.default
-        let app = "/Applications/Red-XAI Vortex.app"
-        try? fm.removeItem(atPath: app)
-        if let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-            try? fm.removeItem(at: support.appendingPathComponent("Red-XAI Vortex"))
-            try? fm.removeItem(at: support.appendingPathComponent("Dolphino"))
-        }
-        // Keychain: all items for our service
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Keychain.service]
-        SecItemDelete(q as CFDictionary)
-        let q2: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "com.redxai.vortex"]
-        SecItemDelete(q2 as CFDictionary)
-        DispatchQueue.main.async { NSApp.terminate(nil) }
+        // A remote owner lockout must never uninstall the app or erase other
+        // accounts' local profiles. Revoke this session, preserving local data.
+        Task { @MainActor in await AccountGate.shared.signOut() }
     }
 }
 
@@ -153,16 +143,16 @@ struct OwnerPanelView: View {
                     Section("VPS model downloads") {
                         Text("Use the Library tab to pull or remove models on the VPS. Those actions require this unlock.")
                             .font(.caption).foregroundStyle(.secondary)
-                        Button("Open Library") { UserDefaults.standard.set("library", forKey: "hubTab") }
+                        Button("Open Library") { AccountProfile.defaults.set("library", forKey: "hubTab") }
                     }
                     Section("Servers / nodes") {
-                        Button("Open Servers") { UserDefaults.standard.set("servers", forKey: "hubTab") }
+                        Button("Open Servers") { AccountProfile.defaults.set("servers", forKey: "hubTab") }
                     }
                     Section("Learning & storage") {
-                        Button("Open Vortex") { UserDefaults.standard.set("redxai", forKey: "hubTab") }
+                        Button("Open Vortex") { AccountProfile.defaults.set("redxai", forKey: "hubTab") }
                     }
                     Section("API keys") {
-                        Button("Open API Keys") { UserDefaults.standard.set("keys", forKey: "hubTab") }
+                        Button("Open API Keys") { AccountProfile.defaults.set("keys", forKey: "hubTab") }
                     }
                     AccessControlSection()
                     Section("Bans") {

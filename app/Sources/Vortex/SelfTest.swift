@@ -31,7 +31,7 @@ import AVFoundation
         try? e.encode(results).write(to: URL(fileURLWithPath: out))
     }
     static var params: ChatParams {
-        ChatParams(baseURL: UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL, apiKey: Keychain.get() ?? "", model: "vortex",
+        ChatParams(baseURL: AccountProfile.defaults.string(forKey: "serverURL") ?? Defaults.serverURL, apiKey: Keychain.get() ?? "", model: "vortex",
                    temperature: 0.2, topP: 0.9, repeatPenalty: 1.1, topK: 40, maxTokens: 200, seed: 7)
     }
     static func ask(_ model: String, _ msgs: [Message], max: Int = 120) async throws -> String {
@@ -47,7 +47,7 @@ import AVFoundation
         if let a = arg { out = a }
         NSApp.setActivationPolicy(.accessory)
         for w in NSApp.windows { w.miniaturize(nil) }
-        let ud = UserDefaults.standard
+        let ud = AccountProfile.defaults
         let saved: [String: Any?] = Dictionary(uniqueKeysWithValues: ["pluginModes", "pluginsEnabled", "skillModes", "chatTools", "pc.killed", "pc.enabled"].map { ($0, ud.object(forKey: $0)) } + PCKind.allCases.map { ($0.key, ud.object(forKey: $0.key)) })
         defer {
             for (k, v) in saved { if let v { ud.set(v, forKey: k) } else { ud.removeObject(forKey: k) } }
@@ -178,7 +178,7 @@ import AVFoundation
             if !RedXLink.enabled { return "connection mode is SSH; RedX Link helper present" }
             for _ in 0..<30 where !(await RedXLink.statusOK()) { try? await Task.sleep(for: .milliseconds(200)) }
             try expect(await RedXLink.statusOK(), "proxy \(RedXLink.base) not answering: \(RedXLink.shared.status)")
-            try expect(UserDefaults.standard.string(forKey: "serverURL") == RedXLink.chatURL, "chat URL is not the link proxy")
+            try expect(AccountProfile.defaults.string(forKey: "serverURL") == RedXLink.chatURL, "chat URL is not the link proxy")
             return "proxy \(RedXLink.base) up; chat uses it; \(RedXLink.shared.serverList().count) server(s)"
         }
         await t("RedX Link", "handshake + /v1/models on every server (no SSH)") {

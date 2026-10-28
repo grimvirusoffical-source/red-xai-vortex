@@ -101,13 +101,13 @@ struct WorkspaceState: Codable, Equatable {
 /// Remote credentials use a separate Keychain account for each connection and never enter JSON exports.
 enum BaseCredentials {
     static func get(_ id: UUID) -> String? {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "com.redxai.vortex.bases", kSecAttrAccount as String: id.uuidString, kSecReturnData as String: true]
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: AccountProfile.credentialService + ".bases", kSecAttrAccount as String: id.uuidString, kSecReturnData as String: true]
         var result: AnyObject?
         guard SecItemCopyMatching(q as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
         return String(data: data, encoding: .utf8)
     }
     static func set(_ token: String?, for id: UUID) throws {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "com.redxai.vortex.bases", kSecAttrAccount as String: id.uuidString]
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: AccountProfile.credentialService + ".bases", kSecAttrAccount as String: id.uuidString]
         let removed = SecItemDelete(q as CFDictionary)
         guard removed == errSecSuccess || removed == errSecItemNotFound else { throw WorkspaceStore.error("Keychain could not update this Base credential.") }
         guard let token, !token.isEmpty else { return }

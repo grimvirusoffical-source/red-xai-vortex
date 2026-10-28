@@ -33,26 +33,26 @@ type Approval struct {
 }
 
 type Run struct {
-	ID            string    `json:"id"`
-	AgentID       string    `json:"agentID"`
-	Agent         string    `json:"agent"`
-	Task          string    `json:"task"`
-	Status        string    `json:"status"` // running, waiting, done, stopped, error
-	Steps         int       `json:"steps"`
-	Result        string    `json:"result"`
-	Started       time.Time `json:"started"`
-	Ended         time.Time `json:"ended,omitempty"`
-	Pending       *Approval `json:"pending,omitempty"`
-	ChatID        string    `json:"chatID,omitempty"`
-	server        *Server
-	pcRun         bool
-	pcEpoch       uint64
-	localOperator bool
+	ID             string    `json:"id"`
+	AgentID        string    `json:"agentID"`
+	Agent          string    `json:"agent"`
+	Task           string    `json:"task"`
+	Status         string    `json:"status"` // running, waiting, done, stopped, error
+	Steps          int       `json:"steps"`
+	Result         string    `json:"result"`
+	Started        time.Time `json:"started"`
+	Ended          time.Time `json:"ended,omitempty"`
+	Pending        *Approval `json:"pending,omitempty"`
+	ChatID         string    `json:"chatID,omitempty"`
+	server         *Server
+	pcRun          bool
+	pcEpoch        uint64
+	localOperator  bool
 	agentAutoAllow bool
 	agentPolicySet bool
 	scheduled      bool
-	plannerModel  string
-	cancel        context.CancelFunc
+	plannerModel   string
+	cancel         context.CancelFunc
 }
 
 type runTable struct {
@@ -177,22 +177,33 @@ func runTools(pcOn bool) []tool {
 // Only explicitly granted categories are available to this agent. Legacy
 // agents without a permissions field retain their previous tools.
 func agentRunTools(a store.Agent) []tool {
-    if !a.ToolsOn { return nil }
-    all := runTools(a.PCControlOn)
-    if a.Permissions == nil { return all }
-    allow:=map[string]bool{}
-    for _,p:=range a.Permissions { allow[p]=true }
-    result:=[]tool{}
-    for _,t:=range all {
-        category:="files-read"
-        switch t.name {
-        case "fetch_url":category="web"
-        case "write_file":category="files-write"
-        case "run_command":category="shell"
-        }
-        if allow[category] {result=append(result,t)}
-    }
-    return result
+	if !a.ToolsOn {
+		return nil
+	}
+	all := runTools(a.PCControlOn)
+	if a.Permissions == nil {
+		return all
+	}
+	allow := map[string]bool{}
+	for _, p := range a.Permissions {
+		allow[p] = true
+	}
+	result := []tool{}
+	for _, t := range all {
+		category := "files-read"
+		switch t.name {
+		case "fetch_url":
+			category = "web"
+		case "write_file":
+			category = "files-write"
+		case "run_command":
+			category = "shell"
+		}
+		if allow[category] {
+			result = append(result, t)
+		}
+	}
+	return result
 }
 
 func clipS(s string, n int) string {
@@ -250,6 +261,9 @@ func (s *Server) startRun(agentID, task, chatID string) map[string]any {
 }
 
 func (s *Server) startRunFrom(agentID, task, chatID string, local bool, scheduled ...bool) map[string]any {
+	if s.profileClosed.Load() {
+		return map[string]any{"ok": false, "message": "Account session ended"}
+	}
 	isScheduled := len(scheduled) > 0 && scheduled[0]
 	epoch := s.pcCurrentEpoch()
 	task = strings.TrimSpace(task)
@@ -258,24 +272,39 @@ func (s *Server) startRunFrom(agentID, task, chatID string, local bool, schedule
 	}
 	me := s.memberFor(agentID)
 	var agent store.Agent
-	for _, a := range s.St.AgentsSnapshot() { if a.ID==agentID { agent=a; break } }
-	if agent.ID=="" {return map[string]any{"ok":false,"message":"Choose a saved agent before running tasks."}}
-	if isScheduled && !s.St.AgentIsRunning(agentID) {return map[string]any{"ok":false,"message":"Scheduled agent was paused before the task began."}}
-    if agentRemoteMode(agent)!="local" {
-        return map[string]any{"ok":false,"message":"This agent is configured for remote work. Start its server schedule or connect a Cloud PC worker; it cannot silently run on your local machine."}
-    }
-	if s.agentsStopped() {return map[string]any{"ok":false,"message":"Agent emergency stop is active."}}
+	for _, a := range s.St.AgentsSnapshot() {
+		if a.ID == agentID {
+			agent = a
+			break
+		}
+	}
+	if agent.ID == "" {
+		return map[string]any{"ok": false, "message": "Choose a saved agent before running tasks."}
+	}
+	if isScheduled && !s.St.AgentIsRunning(agentID) {
+		return map[string]any{"ok": false, "message": "Scheduled agent was paused before the task began."}
+	}
+	if agentRemoteMode(agent) != "local" {
+		return map[string]any{"ok": false, "message": "This agent is configured for remote work. Start its server schedule or connect a Cloud PC worker; it cannot silently run on your local machine."}
+	}
+	if s.agentsStopped() {
+		return map[string]any{"ok": false, "message": "Agent emergency stop is active."}
+	}
 	if requiresDesktopBrowser(task) {
-		return map[string]any{"ok":false,"message":"This desktop has no verified Chrome/Discord browser-action adapter. The agent will not type a message into the wrong app or claim it was sent. Configure a browser integration before running this task."}
+		return map[string]any{"ok": false, "message": "This desktop has no verified Chrome/Discord browser-action adapter. The agent will not type a message into the wrong app or claim it was sent. Configure a browser integration before running this task."}
 	}
-	available:=[]string{}
-	if agent.Provider=="vortex" {
-		if models,ok:=s.listModels();ok {available=models}
+	available := []string{}
+	if agent.Provider == "vortex" {
+		if models, ok := s.listModels(); ok {
+			available = models
+		}
 	}
-	model,planner:=availableAgentModels(agent,task,available)
-	if model!="" {me.Model=model}
+	model, planner := availableAgentModels(agent, task, available)
+	if model != "" {
+		me.Model = model
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &Run{ID: fmt.Sprintf("r-%d", time.Now().UnixNano()), AgentID: agentID, Agent: me.Name, Task: task, Status: "running", Started: time.Now(), ChatID: chatID, cancel: cancel, agentAutoAllow:agent.AlwaysAllow, agentPolicySet:true, scheduled:isScheduled, plannerModel:planner}
+	r := &Run{ID: fmt.Sprintf("r-%d", time.Now().UnixNano()), AgentID: agentID, Agent: me.Name, Task: task, Status: "running", Started: time.Now(), ChatID: chatID, cancel: cancel, agentAutoAllow: agent.AlwaysAllow, agentPolicySet: true, scheduled: isScheduled, plannerModel: planner}
 	r.localOperator = local
 	if !s.registerPCRunAt(r, epoch) {
 		cancel()
@@ -304,15 +333,17 @@ func (s *Server) loop(ctx context.Context, r *Run, me member, ts []tool) {
 	}
 	msgs := []map[string]string{{"role": "system", "content": sys}, {"role": "user", "content": r.Task}}
 	agentID := r.AgentID
-	if r.plannerModel!="" {
-		plan,err:=s.completeContext(ctx,agentID,r.plannerModel,[]map[string]string{
-			{"role":"system","content":"You are the planning specialist in a multi-model agent team. Give a concise, concrete step-by-step plan. Do not call tools, claim actions were completed, or disclose secrets."},
-			{"role":"user","content":r.Task},
-		},450)
-		if ctx.Err()!=nil {return}
-		if err==nil && strings.TrimSpace(plan)!="" {
-			msgs[0]["content"] += "\n\nSECOND-MODEL PLAN (suggestions only; verify through tools before declaring success):\n"+clipS(plan,2000)
-			s.log(r,"agent.plan",r.plannerModel,"Planning specialist reviewed task.",clipS(plan,2000))
+	if r.plannerModel != "" {
+		plan, err := s.completeContext(ctx, agentID, r.plannerModel, []map[string]string{
+			{"role": "system", "content": "You are the planning specialist in a multi-model agent team. Give a concise, concrete step-by-step plan. Do not call tools, claim actions were completed, or disclose secrets."},
+			{"role": "user", "content": r.Task},
+		}, 450)
+		if ctx.Err() != nil {
+			return
+		}
+		if err == nil && strings.TrimSpace(plan) != "" {
+			msgs[0]["content"] += "\n\nSECOND-MODEL PLAN (suggestions only; verify through tools before declaring success):\n" + clipS(plan, 2000)
+			s.log(r, "agent.plan", r.plannerModel, "Planning specialist reviewed task.", clipS(plan, 2000))
 		}
 	}
 	if strings.HasPrefix(agentID, "model:") {
@@ -439,11 +470,14 @@ func (s *Server) appendChat(chatID, name, text string) {
 
 func getRun(id string) *Run { runs.mu.Lock(); defer runs.mu.Unlock(); return runs.runs[id] }
 
-func listRuns() []Run {
+func (s *Server) listRuns() []Run {
 	runs.mu.Lock()
 	defer runs.mu.Unlock()
 	out := []Run{}
 	for _, r := range runs.runs {
+		if r.server != s {
+			continue
+		}
 		c := *r
 		if r.Pending != nil {
 			p := *r.Pending
@@ -477,14 +511,14 @@ func (s *Server) stopRun(runID string) map[string]any {
 	r := runs.runs[runID]
 	var cancel context.CancelFunc
 	var decided chan bool
-	if r != nil {
+	if r != nil && r.server == s {
 		cancel = r.cancel
 		if r.Pending != nil {
 			decided = r.Pending.decided
 		}
 	}
 	runs.mu.Unlock()
-	if r == nil {
+	if r == nil || r.server != s {
 		return map[string]any{"ok": false, "message": "No such run."}
 	}
 	if cancel != nil {

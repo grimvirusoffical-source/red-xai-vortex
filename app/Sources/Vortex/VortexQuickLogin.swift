@@ -25,8 +25,8 @@ private struct VortexApprovedSession {
     @Published private(set) var code = ""
     @Published private(set) var message = ""
     @Published private(set) var busy = false
-    @Published var browserChoice = UserDefaults.standard.string(forKey: "vortexLoginBrowser") ?? "default" {
-        didSet { UserDefaults.standard.set(browserChoice, forKey: "vortexLoginBrowser") }
+    @Published var browserChoice = AccountProfile.bootstrap.string(forKey: "vortexLoginBrowser") ?? "default" {
+        didSet { AccountProfile.bootstrap.set(browserChoice, forKey: "vortexLoginBrowser") }
     }
     private var openedBrowserIdentifier: String?
     private let issuer = "https://red-xai.com"
@@ -36,6 +36,7 @@ private struct VortexApprovedSession {
     private let subKey = "redx-vortex-subject"
     private let session = URLSession(configuration: .ephemeral, delegate: VortexNoRedirect(), delegateQueue: nil)
     private var linked: VortexApprovedSession?
+    var verifiedSubject: String? { linked?.sub }
     private var generation = 0
     private var connectTask: Task<Void, Never>?
 
@@ -122,6 +123,7 @@ private struct VortexApprovedSession {
     }
 
     func restore() async -> String? {
+        let current = generation
         if let linked, linked.expires > Date().addingTimeInterval(60) { return linked.email }
         // No device trust is memory-only, not an extra password challenge.
         let refresh = (linked?.remember == false) ? linked?.refresh : Keychain.get(account: refreshKey)
@@ -129,6 +131,7 @@ private struct VortexApprovedSession {
         guard let refresh, !refresh.isEmpty, let savedSub, !savedSub.isEmpty else { return nil }
         do {
             let (status, json) = try await call("refresh", body: ["client_id": clientID, "refresh_token": refresh])
+            guard current == generation else { return nil }
             if status == 401 {
                 Keychain.set("", account: refreshKey); Keychain.set("", account: subKey); linked = nil
                 return nil
@@ -199,10 +202,10 @@ private struct VortexApprovedSession {
                     try save(approved)
                     self.code = ""
                     message = ""
-                    AccountGate.shared.username = approved.email
-                    AccountGate.shared.signedIn = true
-                    AccountGate.shared.accountSignInSucceeded()
-                    UserDefaults.standard.set(approved.email, forKey: "redxUser")
+                    try AccountGate.shared.establish(subject: approved.sub, displayName: approved.email)
+                    let owner = await AccountGate.shared.isOwner()
+                    guard current == generation, AccountGate.shared.signedIn else { return }
+                    AccountGate.shared.owner = owner
                     PhoneHost.sync()
                     focusVortexAndHideAuthBrowser()
                     return
@@ -264,7 +267,7 @@ private struct VortexApprovedSession {
         Keychain.set("", account: subKey)
         linked = nil
         if let refresh, !refresh.isEmpty {
-            _ = try? await call("revoke", body: ["token": refresh])
+            Task { _ = try? await call("revoke", body: ["token": refresh]) }
         }
     }
 }

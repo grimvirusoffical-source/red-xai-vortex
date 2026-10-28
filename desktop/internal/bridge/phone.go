@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"net"
@@ -47,6 +48,9 @@ func phoneInfo() (string, string) {
 func (s *Server) applyPhone() {
 	phone.Lock()
 	defer phone.Unlock()
+	if s.profileClosed.Load() {
+		return
+	}
 	if !s.St.Settings.PhoneChat {
 		if phone.ln != nil {
 			phone.ln.Close()
@@ -75,6 +79,10 @@ func (s *Server) applyPhone() {
 
 func (s *Server) phoneGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.profileClosed.Load() {
+			http.Error(w, "Account session ended", 401)
+			return
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Frame-Options", "DENY")
 		if r.URL.Path == "/phone/login" && r.Method == http.MethodPost {
@@ -110,6 +118,15 @@ func (s *Server) phoneGate(next http.Handler) http.Handler {
 						http.Error(w, "bad origin", http.StatusForbidden)
 						return
 					}
+				}
+				// The PIN grants access only to the profile that opened this listener.
+				// It cannot sign into another account or inherit a replacement workspace.
+				if r.URL.Path == "/bridge/gate.status" && s.profileID != "" {
+					terms, _ := os.ReadFile(s.termsFile())
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(map[string]any{"ok": true, "signedIn": true, "owner": false,
+						"termsAccepted": strings.TrimSpace(string(terms)), "profileID": s.profileID, "profileLease": s.profileLease})
+					return
 				}
 				// The workspace bridge accepts a LAN host only after this gate has
 				// authenticated its phone session. A request header cannot forge this.

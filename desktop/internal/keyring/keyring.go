@@ -1,8 +1,12 @@
 package keyring
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 )
 
@@ -76,4 +80,33 @@ func sanitize(s string) string {
 		}
 	}
 	return string(out)
+}
+
+var profilePattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+
+func scopedAccount(profile, account string) (string, error) {
+	if !profilePattern.MatchString(profile) || account == "" {
+		return "", errors.New("verified account profile is required")
+	}
+	sum := sha256.Sum256([]byte(account))
+	return "profile-" + profile + "-" + hex.EncodeToString(sum[:]), nil
+}
+func GetScoped(profile, account string) string {
+	name, err := scopedAccount(profile, account)
+	if err != nil {
+		return ""
+	}
+	if profile == os.Getenv("VORTEX_HOST_PROFILE") && account == "vortex-api-key" {
+		if value := os.Getenv("VORTEX_API_KEY"); value != "" {
+			return value
+		}
+	}
+	return Get(name)
+}
+func SetScoped(profile, account, value string) error {
+	name, err := scopedAccount(profile, account)
+	if err != nil {
+		return err
+	}
+	return Set(name, value)
 }

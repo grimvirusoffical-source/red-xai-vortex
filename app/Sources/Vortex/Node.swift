@@ -15,8 +15,8 @@ final class NodeManager: ObservableObject {
     private var tunnel: Process?
     let port = 50052
 
-    nonisolated var host: String { UserDefaults.standard.string(forKey: "sshHost") ?? Defaults.sshHost }
-    nonisolated var key: String { ((UserDefaults.standard.string(forKey: "sshKey") ?? "~/.ssh/id_ed25519") as NSString).expandingTildeInPath }
+    nonisolated var host: String { AccountProfile.defaults.string(forKey: "sshHost") ?? Defaults.sshHost }
+    nonisolated var key: String { ((AccountProfile.defaults.string(forKey: "sshKey") ?? "~/.ssh/id_ed25519") as NSString).expandingTildeInPath }
     var workerBinary: String? { Bundle.main.url(forResource: "ggml-rpc-server", withExtension: nil)?.path }
 
     static func caps() -> (cpu: String, cores: Int, gpu: String, ramGB: Int64, vramGB: Double) {

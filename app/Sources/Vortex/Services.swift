@@ -3,23 +3,34 @@ import Darwin
 import Security
 
 enum Keychain {
-    static let service = "com.redxai.dolphino" // kept so existing Keychain items keep working
+    static var service: String { AccountProfile.credentialService }
     static let account = "api-key"
-    static func get() -> String? {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                kSecAttrAccount as String: account, kSecReturnData as String: true]
+    static func get() -> String? { get(account: account) }
+    static func set(_ value: String) { set(value, account: account) }
+    static func get(account: String) -> String? {
+        guard let scopedService = AccountProfile.service(for: account) else { return nil }
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: scopedService, kSecAttrAccount as String: account,
+            kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
         var out: AnyObject?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
-        return String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess,
+              let data = out as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
     }
-    static func set(_ value: String) {
-        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                   kSecAttrAccount as String: account]
-        SecItemDelete(base as CFDictionary)
-        guard !value.isEmpty else { return }
-        var add = base; add[kSecValueData as String] = Data(value.utf8)
-        SecItemAdd(add as CFDictionary, nil)
+    @discardableResult static func store(_ value: String, account: String) -> Bool {
+        guard let scopedService = AccountProfile.service(for: account) else { return false }
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: scopedService, kSecAttrAccount as String: account]
+        if value.isEmpty { let result = SecItemDelete(query as CFDictionary); return result == errSecSuccess || result == errSecItemNotFound }
+        let attrs: [String: Any] = [kSecValueData as String: Data(value.utf8)]
+        let result = SecItemUpdate(query as CFDictionary, attrs as CFDictionary)
+        if result == errSecSuccess { return true }
+        guard result == errSecItemNotFound else { return false }
+        var add = query; add[kSecValueData as String] = Data(value.utf8)
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
+    static func set(_ value: String, account: String) { _ = store(value, account: account) }
 }
 
 /// Keeps an SSH port-forward open to the VPS so the model API stays private (localhost on both ends).
@@ -162,7 +173,7 @@ enum API {
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.setValue("Bearer \(p.apiKey)", forHTTPHeaderField: "Authorization")
         // training mode: let Vortex learn from whatever model is active (server must have learning on)
-        if UserDefaults.standard.bool(forKey: "trainingMode"), UserDefaults.standard.bool(forKey: "trainingConsent") { r.setValue("1", forHTTPHeaderField: "X-Vortex-Train") }
+        if AccountProfile.defaults.bool(forKey: "trainingMode"), AccountProfile.defaults.bool(forKey: "trainingConsent") { r.setValue("1", forHTTPHeaderField: "X-Vortex-Train") }
         var body: [String: Any] = ["model": p.model, "stream": true,
             "messages": messages.map { ["role": $0.role, "content": $0.apiContent] as [String: Any] },
             "temperature": p.temperature, "top_p": p.topP, "top_k": p.topK,

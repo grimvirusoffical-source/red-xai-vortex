@@ -10,7 +10,7 @@ import (
 // silently skip the account gate after logout. This marker is per-installation
 // and survives a restart; it never stores a token or alters chats/settings.
 func (s *Server) accountSwitchPath() string {
-	return filepath.Join(s.St.Dir, "redx-account-switch-required")
+	return filepath.Join(s.rootDirectory(), "redx-account-switch-required")
 }
 
 func (s *Server) accountSwitchRequired() bool {

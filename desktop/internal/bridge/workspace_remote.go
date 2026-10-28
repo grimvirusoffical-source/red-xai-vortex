@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/keyring"
 	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/store"
 )
 
@@ -44,7 +43,7 @@ func (s *Server) remoteBaseJSON(b store.Base, path string, out any) error {
 	if s.baseCredential != nil {
 		token = s.baseCredential(b.ID)
 	} else {
-		token = keyring.Get("base-token-" + b.ID)
+		token = s.credential("base-token-" + b.ID)
 	}
 	if token == "" {
 		return errors.New("Base access token missing; reconnect this Base")
@@ -147,7 +146,7 @@ func (s *Server) workspaceBaseAction(action string, in map[string]any) map[strin
 		return workspaceError(errors.New("Base not found"))
 	}
 	if action == "base.disconnect" || action == "base.revoke" {
-		if err := keyring.Set("base-token-"+id, ""); err != nil {
+		if err := s.saveCredential("base-token-"+id, ""); err != nil {
 			return workspaceError(errors.New("could not remove Base credential"))
 		}
 		base.Status = "disconnected"
@@ -176,7 +175,7 @@ func (s *Server) workspaceBaseAction(action string, in map[string]any) map[strin
 		}
 		base.Endpoint = endpoint
 		base.RemoteID = str(in, "remoteID")
-		if err = keyring.Set("base-token-"+id, token); err != nil {
+		if err = s.saveCredential("base-token-"+id, token); err != nil {
 			return workspaceError(errors.New("could not store Base credential"))
 		}
 	}

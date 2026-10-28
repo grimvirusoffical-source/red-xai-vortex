@@ -6,12 +6,12 @@ struct ContentView: View {
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var tunnel: TunnelManager
     @ObservedObject private var account = AccountGate.shared
-    @AppStorage("accent") var accent = "red"
-    @AppStorage("useTunnel") var useTunnel = true
-    @AppStorage("sshHost") var sshHost = Defaults.sshHost
-    @AppStorage("sshKey") var sshKey = "~/.ssh/id_ed25519"
-    @AppStorage("sshLocalPort") var sshLocalPort = Defaults.sshLocalPort
-    @AppStorage("sshRemotePort") var sshRemotePort = Defaults.sshRemotePort
+    @AppStorage("accent", store: AccountProfile.defaults) var accent = "red"
+    @AppStorage("useTunnel", store: AccountProfile.defaults) var useTunnel = false
+    @AppStorage("sshHost", store: AccountProfile.defaults) var sshHost = Defaults.sshHost
+    @AppStorage("sshKey", store: AccountProfile.defaults) var sshKey = "~/.ssh/id_ed25519"
+    @AppStorage("sshLocalPort", store: AccountProfile.defaults) var sshLocalPort = Defaults.sshLocalPort
+    @AppStorage("sshRemotePort", store: AccountProfile.defaults) var sshRemotePort = Defaults.sshRemotePort
     @Local var search = ""
     @Local var renaming: UUID?
     @Local var renameText = ""
@@ -160,19 +160,19 @@ struct ChatView: View {
     @Environment(\.royalPalette) private var palette
     var toggleSidebar: () -> Void = {}
     @EnvironmentObject var store: ChatStore
-    @AppStorage("serverURL") var serverURL = Defaults.serverURL
-    @AppStorage("model") var model = Defaults.model
-    @AppStorage("temperature") var temperature = 0.7
-    @AppStorage("topP") var topP = 0.9
-    @AppStorage("topK") var topK = 40
-    @AppStorage("maxTokens") var maxTokens = 1024
-    @AppStorage("contextTokens") var contextTokens = 8192
-    @AppStorage("repeatPenalty") var repeatPenalty = 1.1
-    @AppStorage("seed") var seed = -1
-    @AppStorage("systemPrompt") var systemPrompt = Defaults.systemPrompt
-    @AppStorage("sendOnEnter") var sendOnEnter = true
-    @AppStorage("fontSize") var fontSize = 14.0
-    @AppStorage("accent") var accent = "red"
+    @AppStorage("serverURL", store: AccountProfile.defaults) var serverURL = Defaults.serverURL
+    @AppStorage("model", store: AccountProfile.defaults) var model = Defaults.model
+    @AppStorage("temperature", store: AccountProfile.defaults) var temperature = 0.7
+    @AppStorage("topP", store: AccountProfile.defaults) var topP = 0.9
+    @AppStorage("topK", store: AccountProfile.defaults) var topK = 40
+    @AppStorage("maxTokens", store: AccountProfile.defaults) var maxTokens = 1024
+    @AppStorage("contextTokens", store: AccountProfile.defaults) var contextTokens = 8192
+    @AppStorage("repeatPenalty", store: AccountProfile.defaults) var repeatPenalty = 1.1
+    @AppStorage("seed", store: AccountProfile.defaults) var seed = -1
+    @AppStorage("systemPrompt", store: AccountProfile.defaults) var systemPrompt = Defaults.systemPrompt
+    @AppStorage("sendOnEnter", store: AccountProfile.defaults) var sendOnEnter = true
+    @AppStorage("fontSize", store: AccountProfile.defaults) var fontSize = 14.0
+    @AppStorage("accent", store: AccountProfile.defaults) var accent = "red"
     @Local var input = ""
     @Local var pending: [Attachment] = []
     @Local var attachError = ""
@@ -266,7 +266,7 @@ struct ChatView: View {
                     Toggle(isOn: Binding(get: { ToolRegistry.chatToolsOn }, set: { ToolRegistry.chatToolsOn = $0; store.objectWillChange.send() })) { Label("Tools", systemImage: "wrench.and.screwdriver") }.toggleStyle(.button).help("Let the model call tools (plugins, MCP, PC control)")
                     Button { groupSetup = true } label: { Image(systemName: (store.current?.participants?.isEmpty == false) ? "person.3.fill" : "person.3") }.help("Group chat: several models reply in turn; @mention one to ask only it").accessibilityLabel("Group chat")
                     Button { voiceCall = true } label: { Image(systemName: "phone") }.help("Voice call (whisper.cpp + Piper on this Mac)").accessibilityLabel("Start voice call")
-                    Button { if let u = URL(string: UserDefaults.standard.string(forKey: "cloudpc.url") ?? "https://45.77.105.187/vortex/cloudpc/") { NSWorkspace.shared.open(u) } } label: { Image(systemName: "cloud") }.help("Cloud PC: open your private Linux desktop in the browser").accessibilityLabel("Open Cloud PC")
+                    Button { if let u = URL(string: AccountProfile.defaults.string(forKey: "cloudpc.url") ?? "https://45.77.105.187/vortex/cloudpc/") { NSWorkspace.shared.open(u) } } label: { Image(systemName: "cloud") }.help("Cloud PC: open your private Linux desktop in the browser").accessibilityLabel("Open Cloud PC")
                     Button { store.regenerate(systemPrompt: systemPrompt, contextTokens: contextTokens, params: params) } label: { Image(systemName: "arrow.clockwise") }.help("Regenerate last reply").accessibilityLabel("Regenerate last reply").disabled(store.streaming)
                     OpenHubToolbar()
                     SettingsLink { Image(systemName: "gearshape") }.help("Settings").accessibilityLabel("Settings")
@@ -363,11 +363,11 @@ struct ComposeField: View {
 struct BubbleView: View {
     @Environment(\.royalPalette) private var palette
     let message: Message
-    @AppStorage("bubbleStyle") var bubbleStyle = "rounded"
-    @AppStorage("markdown") var markdown = true
-    @AppStorage("fontSize") var fontSize = 14.0
-    @AppStorage("accent") var accent = "red"
-    @AppStorage("showTimestamps") var showTimestamps = false
+    @AppStorage("bubbleStyle", store: AccountProfile.defaults) var bubbleStyle = "rounded"
+    @AppStorage("markdown", store: AccountProfile.defaults) var markdown = true
+    @AppStorage("fontSize", store: AccountProfile.defaults) var fontSize = 14.0
+    @AppStorage("accent", store: AccountProfile.defaults) var accent = "red"
+    @AppStorage("showTimestamps", store: AccountProfile.defaults) var showTimestamps = false
     var isUser: Bool { message.role == "user" }
 
     var rendered: Text {

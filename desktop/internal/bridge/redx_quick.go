@@ -435,6 +435,6 @@ func (s *Server) quickLogout() {
 	q.account = quickAccount{}
 	q.mu.Unlock()
 	if refresh != "" {
-		_, _, _ = quickRequest("revoke", map[string]any{"token": refresh})
+		go func() { _, _, _ = quickRequest("revoke", map[string]any{"token": refresh}) }()
 	}
 }

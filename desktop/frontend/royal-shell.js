@@ -70,18 +70,26 @@
 
 
   const palette = byID('royalPalette');
+  let paletteProfile = '';
   const palettes = new Set(['gold', 'purple', 'light', 'red']);
   function setPalette(value, persist = false) {
     const chosen = palettes.has(value) ? value : 'gold';
     document.documentElement.dataset.royalPalette = chosen;
     palette.value = chosen;
     if (persist) {
-      try { window.localStorage?.setItem('vortex.royalPalette', chosen); } catch (_) { /* Theme still applies when storage is unavailable. */ }
+      try { paletteProfile && window.localStorage?.setItem('vortex.royalPalette.' + paletteProfile, chosen); } catch (_) { /* Theme still applies when storage is unavailable. */ }
     }
   }
   let savedPalette = 'gold';
-  try { savedPalette = window.localStorage?.getItem('vortex.royalPalette') || 'gold'; } catch (_) {}
+  // Old machine-wide presentation settings are not adopted by a new account.
   setPalette(savedPalette);
+  window.addEventListener('vortex-account-changed', event => {
+    paletteProfile = /^[a-f0-9]{64}$/.test(event.detail?.id || '') ? event.detail.id : '';
+    let value = 'gold';
+    try { if(paletteProfile)value=window.localStorage?.getItem('vortex.royalPalette.'+paletteProfile)||'gold'; } catch(_){}
+    policy={alwaysAllow:false,canConfigure:false,revision:-1};
+    setPalette(value);
+  });
   palette.addEventListener('change', () => setPalette(palette.value, true));
 
   function renderPolicy(value, message) {

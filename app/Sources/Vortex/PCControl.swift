@@ -39,12 +39,12 @@ enum PCKind: String, CaseIterable, Identifiable {
 @MainActor final class PCControl: ObservableObject {
     static let shared: PCControl = { PCTools.startWatching(); return PCControl() }()
     @Published var active = false
-    @Published private(set) var alwaysAllow = PCAlwaysAllowGrant.allowed(killed: UserDefaults.standard.bool(forKey: "pc.killed"), grantPresent: PCAlwaysAllowGrant.present())
+    @Published private(set) var alwaysAllow = PCAlwaysAllowGrant.allowed(killed: AccountProfile.defaults.bool(forKey: "pc.killed"), grantPresent: PCAlwaysAllowGrant.present())
     @Published private(set) var permissionError = ""
-    @Published var killed = UserDefaults.standard.bool(forKey: "pc.killed")
+    @Published var killed = AccountProfile.defaults.bool(forKey: "pc.killed")
     /// Master switch (on by default). When on, vortex/red-xai always get the PC tools, no 🔧 needed;
     /// a type that is switched off makes the chat show a "Turn on …" button instead.
-    @Published var enabled = UserDefaults.standard.object(forKey: "pc.enabled") as? Bool ?? true
+    @Published var enabled = AccountProfile.defaults.object(forKey: "pc.enabled") as? Bool ?? true
     nonisolated static let offMarker = "⚠️ PC off: "
     @Published var tick = 0
     private var hideWork: DispatchWorkItem?
@@ -54,16 +54,16 @@ enum PCKind: String, CaseIterable, Identifiable {
         let m = (model.hasPrefix("local:") ? String(model.dropFirst(6)) : model).lowercased()
         return m == "vortex" || m == "red-xai" || m.hasPrefix("vortex-") || m.hasPrefix("red-xai")
     }
-    func isOn(_ k: PCKind) -> Bool { UserDefaults.standard.bool(forKey: k.key) }
+    func isOn(_ k: PCKind) -> Bool { AccountProfile.defaults.bool(forKey: k.key) }
     func set(_ k: PCKind, _ v: Bool) {
-        UserDefaults.standard.set(v, forKey: k.key); tick += 1
+        AccountProfile.defaults.set(v, forKey: k.key); tick += 1
         if !v { PCExecutionState.shared.revoke(stopped: killed) }
         if v && k == .input { _ = Self.accessibility(prompt: true) }
         if v && k == .screenshot && !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
         Self.logAction("setting \(k.rawValue) = \(v ? "ON" : "OFF")")
     }
     func setEnabled(_ v: Bool) {
-        enabled = v; UserDefaults.standard.set(v, forKey: "pc.enabled"); tick += 1
+        enabled = v; AccountProfile.defaults.set(v, forKey: "pc.enabled"); tick += 1
         if !v { setAlwaysAllow(false); PCExecutionState.shared.revoke(stopped: killed); hide() }
         else if alwaysAllow && !killed { flash() }
         Self.logAction("PC control master switch = \(v ? "ON" : "OFF")")
@@ -72,7 +72,7 @@ enum PCKind: String, CaseIterable, Identifiable {
         guard !value || !killed else { return }
         do { try PCAlwaysAllowGrant.set(value); permissionError = "" }
         catch { permissionError = "Could not save PC permission: " + error.localizedDescription; if value { return } }
-        alwaysAllow = value; UserDefaults.standard.set(value, forKey: "pc.alwaysAllow")
+        alwaysAllow = value; AccountProfile.defaults.set(value, forKey: "pc.alwaysAllow")
         if value { enable(PCKind.allCases); flash() }
         else { PCExecutionState.shared.revoke(stopped: killed); hide() }
         tick += 1
@@ -90,10 +90,10 @@ enum PCKind: String, CaseIterable, Identifiable {
     }
     func enable(_ kinds: [PCKind]) { if !enabled { setEnabled(true) }; for k in kinds where !isOn(k) { set(k, true) } }
     func kill() {
-        killed = true; UserDefaults.standard.set(true, forKey: "pc.killed")
+        killed = true; AccountProfile.defaults.set(true, forKey: "pc.killed")
         do { try PCAlwaysAllowGrant.set(false); permissionError = "" }
         catch { permissionError = "Control stopped. Could not remove the saved grant: " + error.localizedDescription }
-        alwaysAllow = false; UserDefaults.standard.set(false, forKey: "pc.alwaysAllow")
+        alwaysAllow = false; AccountProfile.defaults.set(false, forKey: "pc.alwaysAllow")
         PCExecutionState.shared.revoke(stopped: true)
         Confirm.cancelPCApproval()
         ChatStoreRef.store?.stop(); hide(); tick += 1
@@ -105,7 +105,7 @@ enum PCKind: String, CaseIterable, Identifiable {
             permissionError = "Control remains stopped because its saved permission could not be revoked."
             return
         }
-        PCExecutionState.shared.resume(); killed = false; UserDefaults.standard.set(false, forKey: "pc.killed")
+        PCExecutionState.shared.resume(); killed = false; AccountProfile.defaults.set(false, forKey: "pc.killed")
         tick += 1; Self.logAction("kill switch reset; per-action approval mode")
     }
 

@@ -8,41 +8,24 @@ import (
 	"testing"
 )
 
-func TestDesktopAccountSwitchPersistsAcrossRestartsAndKeepsOptionalOwnerMode(t *testing.T) {
+func TestSavedOwnerCredentialNeverBypassesAccountSignIn(t *testing.T) {
 	s := workspaceServer(t)
-	s.baseCredential = func(account string) string {
-		if account == "admin-primary" { return "test-only-owner-credential" }
-		return ""
-	}
-	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/admin/system" || r.Header.Get("Authorization") != "Bearer test-only-owner-credential" {
-			http.Error(w, "invalid test credential", http.StatusUnauthorized)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
+	s.baseCredential = func(string) string { return "test-only-owner-credential" }
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
 	defer admin.Close()
 	t.Setenv("VORTEX_ADMIN_BASE", admin.URL)
-	if before := s.redx("gate.status", nil); before["owner"] != true {
-		t.Fatalf("owner mode must work before a manual account switch: %v", before)
+	if err := s.setAccountSwitchRequired(true); err != nil {
+		t.Fatal(err)
 	}
-	// Exercise the durable local gate without mutating a developer's real
-	// keychain or revoking a real device's authentication credentials.
-	if err := s.setAccountSwitchRequired(true); err != nil { t.Fatal(err) }
-	restarted := &Server{St: s.St, baseCredential: s.baseCredential}
-	g := restarted.redx("gate.status", nil)
-	if g["owner"] != false || g["ownerAvailable"] != true || g["signedIn"] == true {
-		t.Fatalf("owner silently bypassed explicit sign-out: %v", g)
+	gate := s.redx("gate.status", nil)
+	if gate["owner"] == true || gate["ownerAvailable"] == true || gate["signedIn"] == true {
+		t.Fatal("owner credential bypassed login")
 	}
-	mode := restarted.redx("redx.owner.continue", nil)
-	if mode["ok"] != true || restarted.accountSwitchRequired() {
-		t.Fatalf("explicit owner mode was not restored: %v", mode)
+	if s.redx("redx.owner.continue", nil)["ok"] == true {
+		t.Fatal("owner shortcut bypassed login")
 	}
-	if restarted.redx("gate.status", nil)["owner"] != true {
-		t.Fatal("owner mode disappeared instead of remaining user-selectable")
-	}
-	if _, err := os.Stat(s.accountSwitchPath()); !os.IsNotExist(err) {
-		t.Fatal("persisted account switch marker was not cleared after owner selection")
+	if _, err := os.Stat(s.accountSwitchPath()); err != nil {
+		t.Fatal("owner shortcut cleared sign-out marker")
 	}
 }
 

@@ -22,23 +22,6 @@ struct ServerDef: Identifiable, Codable, Hashable {
     var keychainAccount: String { primary ? "admin-primary" : "admin-\(id)" }
 }
 
-extension Keychain {
-    static func get(account: String) -> String? {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                kSecAttrAccount as String: account, kSecReturnData as String: true]
-        var out: AnyObject?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
-        return String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-    static func set(_ value: String, account: String) {
-        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
-        SecItemDelete(base as CFDictionary)
-        guard !value.isEmpty else { return }
-        var add = base; add[kSecValueData as String] = Data(value.utf8)
-        SecItemAdd(add as CFDictionary, nil)
-    }
-}
-
 @MainActor
 final class ServerStore: ObservableObject {
     static let shared = ServerStore()
@@ -53,20 +36,19 @@ final class ServerStore: ObservableObject {
     init() {
         if let d = try? Data(contentsOf: file), let s = try? JSONDecoder().decode([ServerDef].self, from: d), !s.isEmpty { servers = s }
         else {
-            let ud = UserDefaults.standard
+            let ud = AccountProfile.defaults
             servers = [ServerDef(name: "Main server", sshHost: ud.string(forKey: "sshHost") ?? Defaults.sshHost,
                                  keyPath: ud.string(forKey: "sshKey") ?? "~/.ssh/id_ed25519", localPort: Defaults.sshLocalPort, primary: true)]
             save()
         }
-        if Keychain.get(account: "admin-primary") == nil, let k = Keychain.get() { Keychain.set(k, account: "admin-primary") }
         repair()
-        activeID = UserDefaults.standard.string(forKey: "activeServer") ?? servers[0].id
+        activeID = AccountProfile.defaults.string(forKey: "activeServer") ?? servers[0].id
         if !servers.contains(where: { $0.id == activeID }) { activeID = servers[0].id }
         startMonitor()
         // Never stay on a server whose SSH host is unusable; fall back to the primary.
         if let a = active, !Self.validHost(a.sshHost), let p = servers.first(where: { $0.primary }) { activate(p.id) }
         if RedXLink.enabled {
-            UserDefaults.standard.set(RedXLink.chatURL, forKey: "serverURL")
+            AccountProfile.defaults.set(RedXLink.chatURL, forKey: "serverURL")
             Task { @MainActor in RedXLink.shared.start() }
         }
     }
@@ -76,7 +58,10 @@ final class ServerStore: ObservableObject {
         servers[i].linkAddr = v.isEmpty ? nil : v; save(); RedXLink.shared.start(force: true)
     }
     /// SSH tunnels are owner-only: start them only when this Mac has the SSH key.
-    static func hasSSHKey(_ s: ServerDef) -> Bool { FileManager.default.fileExists(atPath: (s.keyPath as NSString).expandingTildeInPath) }
+    static func hasSSHKey(_ s: ServerDef) -> Bool {
+        AccountProfile.isActive && AccountProfile.defaults.bool(forKey: "sshApproved." + s.id) &&
+        FileManager.default.fileExists(atPath: (s.keyPath as NSString).expandingTildeInPath)
+    }
     static func validHost(_ h: String) -> Bool { h.range(of: "^[A-Za-z0-9._-]+@[A-Za-z0-9.:-]+$", options: .regularExpression) != nil }
     static func normalizeHost(_ h: String) -> String {
         var s = h.trimmingCharacters(in: .whitespaces)
@@ -112,7 +97,7 @@ final class ServerStore: ObservableObject {
         monitor = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
-                guard let self, UserDefaults.standard.object(forKey: "autoFailover") as? Bool ?? true, let a = self.active else { continue }
+                guard let self, AccountProfile.defaults.object(forKey: "autoFailover") as? Bool ?? true, let a = self.active else { continue }
                 if await self.ping(a) {
                     if !a.primary, let p = self.servers.first(where: { $0.primary }), await self.ping(p) { self.activate(p.id); await ChatStoreRef.refresh() }
                     continue
@@ -131,17 +116,18 @@ final class ServerStore: ObservableObject {
         let t = TunnelManager(); tunnels[s.id] = t; return t
     }
     func ensureTunnel(_ s: ServerDef) {
+        guard Self.hasSSHKey(s) else { return }
         let t = tunnel(s)
         if !t.running { t.start(host: s.sshHost, local: s.localPort, remote: s.remotePort, keyPath: s.keyPath) }
     }
-    func stopAll() { tunnels.values.forEach { $0.stop() } }
+    func stopAll() { monitor?.cancel(); monitor = nil; tunnels.values.forEach { $0.stop() } }
 
     func activate(_ id: String) {
         guard let s = server(id) else { return }
-        activeID = id; UserDefaults.standard.set(id, forKey: "activeServer")
+        activeID = id; AccountProfile.defaults.set(id, forKey: "activeServer")
         // Chat: RedX Link proxy (default) or the public gateway port through SSH (18091). Admin stays on localPort (18092).
-        UserDefaults.standard.set(RedXLink.enabled ? RedXLink.chatURL : s.chatURL, forKey: "serverURL")
-        UserDefaults.standard.set(s.adminBase, forKey: "adminBaseURL")
+        AccountProfile.defaults.set(RedXLink.enabled ? RedXLink.chatURL : s.chatURL, forKey: "serverURL")
+        AccountProfile.defaults.set(s.adminBase, forKey: "adminBaseURL")
         let k = key(for: s)
         if !k.isEmpty {
             // RedX Link: one link-enabled key serves every server, so failover keeps the chat key.
@@ -181,7 +167,10 @@ final class ServerStore: ObservableObject {
     func add(name: String, host: String, keyPath: String) {
         let h = Self.normalizeHost(host); guard Self.validHost(h) else { return }
         let port = (servers.map(\.localPort).max() ?? 18092) + 2      // each server uses a pair: admin = port, chat = port-1
-        servers.append(ServerDef(name: name.isEmpty ? h : name, sshHost: h, keyPath: keyPath, localPort: port)); save()
+        let server = ServerDef(name: name.isEmpty ? h : name, sshHost: h, keyPath: keyPath, localPort: port)
+        servers.append(server)
+        AccountProfile.defaults.set(true, forKey: "sshApproved." + server.id)
+        save()
     }
     func remove(_ id: String) {
         guard let s = server(id), !s.primary else { return }
@@ -193,6 +182,8 @@ final class ServerStore: ObservableObject {
 
     /// One click: copy install.sh over SSH, run it, then fetch the admin key into the Keychain.
     func install(_ s: ServerDef) {
+        guard AccountProfile.isActive else { return }
+        AccountProfile.defaults.set(true, forKey: "sshApproved." + s.id)
         guard let script = Bundle.main.url(forResource: "install", withExtension: "sh") else { installLog[s.id] = "install.sh missing from app bundle"; return }
         installing.insert(s.id); installLog[s.id] = "Connecting to \(s.sshHost)…\n"
         let kp = (s.keyPath as NSString).expandingTildeInPath
@@ -236,7 +227,7 @@ struct ServersView: View {
     @Local var keyPath = "~/.ssh/id_ed25519"
     @Local var keyEdit: ServerDef?
     @Local var keyText = ""
-    @AppStorage("autoFailover") var autoFailover = true
+    @AppStorage("autoFailover", store: AccountProfile.defaults) var autoFailover = true
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             LinkSettingsBox()

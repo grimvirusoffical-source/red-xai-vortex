@@ -50,7 +50,7 @@ struct AgentProfile: Codable, Identifiable, Equatable, Hashable {
 @MainActor final class AgentStore: ObservableObject {
     static let shared = AgentStore()
     @Published var agents: [AgentProfile] = []
-    @Published var activeID: String = UserDefaults.standard.string(forKey: "activeAgent") ?? ""
+    @Published var activeID: String = AccountProfile.defaults.string(forKey: "activeAgent") ?? ""
     @Published var message = ""
     var file: URL { ChatStore.dir.appendingPathComponent("agents.json") }
 
@@ -72,10 +72,10 @@ struct AgentProfile: Codable, Identifiable, Equatable, Hashable {
     func save() {
         let e = JSONEncoder(); e.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? e.encode(agents).write(to: file, options: .atomic)
-        UserDefaults.standard.set(activeID, forKey: "activeAgent")
+        AccountProfile.defaults.set(activeID, forKey: "activeAgent")
     }
     var active: AgentProfile? { agents.first { $0.id == activeID } }
-    func setActive(_ id: String) { activeID = id; UserDefaults.standard.set(id, forKey: "activeAgent") }
+    func setActive(_ id: String) { activeID = id; AccountProfile.defaults.set(id, forKey: "activeAgent") }
 
     func upsert(_ a: AgentProfile, apiKey: String? = nil) {
         var a = a; a.updated = Date()
@@ -126,7 +126,7 @@ struct AgentsView: View {
     @Local var apiKey = ""
     @Local var editing = false
     @Local var agentKeySaved = false
-    @AppStorage("model") var chatModel = Defaults.model
+    @AppStorage("model", store: AccountProfile.defaults) var chatModel = Defaults.model
     private let grants: [(String, String)] = [
         ("files-read", "Read files"), ("files-write", "Write files"), ("shell", "Run commands"),
         ("apps", "Open apps"), ("input", "Keyboard and mouse"), ("screen", "Read screen"),
@@ -179,7 +179,8 @@ struct AgentsView: View {
     }
 
     var editor: some View {
-        Form {
+        VStack(spacing: 0) {
+        ScrollView { Form {
             Text(draft.id.isEmpty || !store.agents.contains(where: { $0.id == draft.id }) ? "New agent" : "Edit \(draft.name)").font(.headline)
             TextField("Name", text: $draft.name)
             TextField("Description", text: $draft.description)
@@ -245,13 +246,15 @@ struct AgentsView: View {
                     Button("Reset stop") { LocalAgentScheduler.shared.resetStop() }
                 }
             }
+        }.padding() }.scrollIndicators(.visible).frame(maxWidth: .infinity, maxHeight: .infinity)
+        Divider()
             HStack {
                 Button("Cancel") { editing = false; apiKey = "" }
                 Spacer()
                 Button("Save") { saveDraft() }.buttonStyle(.borderedProminent)
                     .disabled(draft.name.trimmingCharacters(in: .whitespaces).isEmpty || draft.model.isEmpty)
             }
-        }.padding()
+        }.padding(10).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     func label(_ p: String) -> String { AgentProfile.providers.first { $0.0 == p }?.1 ?? p }
@@ -295,7 +298,7 @@ struct AgentsView: View {
             remoteSyncFailed(a, detail: "No authenticated Cloud PC worker is online. Install and sign in to the worker before enabling its schedule.")
             return
         }
-        let base = UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL
+        let base = AccountProfile.defaults.string(forKey: "serverURL") ?? Defaults.serverURL
         let models = (try? await API.models(base: base, key: Keychain.get() ?? "")) ?? []
         let chosen = AgentModelRouter.select(task: a.goal ?? "", profile: a, available: models)
         let selectedModel = a.modelMode == "single" ? a.model : chosen.executor
@@ -327,7 +330,7 @@ struct AgentsView: View {
         let a = store.agents.first { $0.provider == "vortex" } ?? store.agents.first
         guard let a else { store.message = "No agent."; return }
         store.setActive(a.id)
-        let base = UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL
+        let base = AccountProfile.defaults.string(forKey: "serverURL") ?? Defaults.serverURL
         let key = Keychain.get() ?? ""
         do {
             let models = try await API.models(base: base, key: key)

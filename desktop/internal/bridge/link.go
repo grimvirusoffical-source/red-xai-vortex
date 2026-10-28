@@ -14,8 +14,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/grimvirusoffical-source/red-xai-vortex/desktop/internal/keyring"
 )
 
 // Secure chat (Red-SecretsXAI): chat goes through the bundled RedX Link helper, which
@@ -69,13 +67,16 @@ func (s *Server) applyLink() {
 	st := s.St.Settings
 	linkMu.Lock()
 	defer linkMu.Unlock()
+	if s.profileClosed.Load() {
+		return
+	}
 	want := !st.PlainChat
 	srv := st.LinkServer
 	if srv == "" {
 		srv = "45.77.105.187:8093"
 	}
 	args := []string{"proxy", "-listen", linkListen, "-servers", srv, "-barcode"}
-	key := keyring.Get("vortex-api-key")
+	key := s.credential("vortex-api-key")
 	sig := linkSignature(args, key)
 	if !want {
 		sig = ""

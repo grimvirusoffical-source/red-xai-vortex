@@ -29,7 +29,7 @@ struct VXNotification: Codable, Identifiable, Equatable {
     }
 
     private func req(_ path: String, _ method: String = "GET", _ body: [String: Any]? = nil) async throws -> Data {
-        let base = UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL
+        let base = AccountProfile.defaults.string(forKey: "serverURL") ?? Defaults.serverURL
         var r = URLRequest(url: API.url(base, path)!, timeoutInterval: 20)
         r.httpMethod = method
         r.setValue("Bearer \(Keychain.get() ?? "")", forHTTPHeaderField: "Authorization")

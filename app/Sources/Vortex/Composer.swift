@@ -18,8 +18,8 @@ enum Composer {
         .init(id: "vortex", name: "Vortex Max", size: "Mixtral 8x7B · default, always loaded", speed: "≈8 tok/s"),
     ]
     static var globalDefault: ComposerSettings {
-        get { (UserDefaults.standard.data(forKey: "composerDefault")).flatMap { try? JSONDecoder().decode(ComposerSettings.self, from: $0) } ?? ComposerSettings() }
-        set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: "composerDefault") }
+        get { (AccountProfile.defaults.data(forKey: "composerDefault")).flatMap { try? JSONDecoder().decode(ComposerSettings.self, from: $0) } ?? ComposerSettings() }
+        set { AccountProfile.defaults.set(try? JSONEncoder().encode(newValue), forKey: "composerDefault") }
     }
     static func lengthParams(_ c: ComposerSettings) -> (Int, String) {
         var maxT = 1024, hint = ""

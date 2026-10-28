@@ -441,3 +441,16 @@ html[data-royal-palette=light] .royal-brand #logo { filter: grayscale(1) sepia(.
   .chat-empty { padding: 12px 0 20px; }
   .chat-empty > p:not(.eyebrow) { margin-bottom: 20px; }
 }
+
+/* Account/settings accessibility: flex children must be allowed to scroll. */
+html,body { min-height:0; }
+main,.panel,.workspace-main,.agent-editor { min-height:0; min-width:0; }
+.panel.on { overflow-y:auto; scrollbar-gutter:stable; }
+[role="dialog"],dialog,.modal,.modal-card,.agent-editor { max-height:90dvh; overflow-y:auto; scrollbar-gutter:stable; }
+textarea { resize:vertical; max-height:45dvh; overflow:auto; }
+* { scrollbar-width:auto; scrollbar-color:#84758e #191720; }
+::-webkit-scrollbar { width:12px; height:12px; }
+::-webkit-scrollbar-thumb { background:#84758e; border:3px solid #191720; border-radius:10px; }
+::-webkit-scrollbar-track { background:#191720; }
+#gate { align-items:flex-start!important; padding:24px 0; }
+#gate>.card { margin:auto; max-height:none; flex-shrink:0; }

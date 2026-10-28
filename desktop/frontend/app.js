@@ -1,5 +1,7 @@
+let profileLease = "";
+let profileIdentity = "";
 const bridge = window.vortex || {
-  async call(m, a){ return fetch('/bridge/'+m,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(a||{})}).then(r=>r.json()) }
+  async call(m, a){ return fetch('/bridge/'+m,{method:'POST',headers:{'Content-Type':'application/json',...(profileLease?{'X-Vortex-Profile':profileLease}:{})},body:JSON.stringify(a||{})}).then(r=>r.json()) }
 };
 const $ = (s)=>document.querySelector(s);
 const $$ = (s)=>[...document.querySelectorAll(s)];
@@ -479,14 +481,21 @@ async function gate(){
     $('#gTermsText').textContent=await fetch('terms.md').then(r=>r.text()).catch(()=>'Terms unavailable.');
     show('gTerms'); return;
   }
-  if(!(g.signedIn||g.owner)){
+  if(!g.signedIn){
+    if(profileIdentity){profileLease='';location.reload();return;}
+    profileLease=""; profileIdentity=""; state.chats=[]; state.agents=[]; state.active=null;
+    $('#chatlog').replaceChildren(); renderAgents(); renderChats();
     $('#fUser').textContent='';
-    $('#gOwnerContinue').hidden=g.ownerAvailable!==true;
+    $('#gOwnerContinue').hidden=true;
     $('#gate').style.display='flex';
     show('gLogin');
     return;
   }
-  $('#fUser').textContent=g.username?('· '+g.username):(g.owner?'· owner mode':'');
+  if(profileIdentity && profileIdentity!==g.profileID){profileLease='';location.reload();return;}
+  const changed=profileIdentity!==g.profileID;
+  profileLease=g.profileLease||'';profileIdentity=g.profileID||'';
+  if(changed){state.chats=[];state.agents=[];state.active=null;$('#chatlog').replaceChildren();window.dispatchEvent(new CustomEvent('vortex-account-changed',{detail:{id:profileIdentity}}));await refresh();}
+  $('#fUser').textContent=g.username?('· '+g.username):'';
   $('#gate').style.display='none';
 }
 $('#gAccept').onclick=async()=>{await bridge.call('gate.accept',{version:TERMS_VERSION}); gate();};
@@ -513,6 +522,7 @@ async function signOutVortex(e){
   accountSignOutBusy=true;
   $('#accountLogOut').disabled=true;
   try{
+    profileLease='';profileIdentity='';state.chats=[];state.agents=[];state.active=null;$('#chatlog').replaceChildren();
     const r=await bridge.call('redx.logout',{});
     if(r?.ok!==true)throw Error(r?.error||'Could not sign out safely.');
     location.reload(); // Clears transient UI/account state, not saved chats.
@@ -532,6 +542,7 @@ $('#gOwnerContinue').onclick=async()=>{
 };
 $('#fTerms').onclick=async e=>{e.preventDefault();const t=await fetch('terms.md').then(r=>r.text());const w=window.open('','_blank');if(w){w.document.body.innerHTML='<pre style="white-space:pre-wrap"></pre>';w.document.querySelector('pre').textContent=t;}else alert(t);};
 gate();
+setInterval(gate,60000);
 
 // ---- Notifications (gateway feed) ----
 const N={seen:new Set(),primed:false};
