@@ -193,15 +193,15 @@ final class ServerStore: ObservableObject {
                 p.arguments = ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-i", kp, s.sshHost, remote]
                 if let stdin { p.standardInput = try? FileHandle(forReadingFrom: stdin) }
                 let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe
-                var all = ""
+                let all = ReplyBuffer()
                 pipe.fileHandleForReading.readabilityHandler = { h in
                     let t = String(data: h.availableData, encoding: .utf8) ?? ""
-                    all += t
+                    all.append(t)
                     if stream && !t.isEmpty { Task { @MainActor in ServerStore.shared.installLog[s.id, default: ""] += t } }
                 }
                 try? p.run(); p.waitUntilExit()
                 pipe.fileHandleForReading.readabilityHandler = nil
-                return (p.terminationStatus, all)
+                return (p.terminationStatus, all.text)
             }
             let (code, _) = ssh("sudo -n true 2>/dev/null || [ $(id -u) = 0 ] || exit 9; sudo bash -s 2>&1 || bash -s", stdin: script, stream: true)
             var msg = code == 0 ? "\nInstall finished.\n" : "\nInstall failed (exit \(code)).\n"
@@ -212,8 +212,9 @@ final class ServerStore: ObservableObject {
                     Keychain.set(key, account: s.keychainAccount); msg += "Admin key saved to Keychain.\n"
                 } else { msg += "Could not read the admin key; paste it in the server's settings.\n" }
             }
+            let finalMessage = msg
             await MainActor.run {
-                ServerStore.shared.installLog[s.id, default: ""] += msg
+                ServerStore.shared.installLog[s.id, default: ""] += finalMessage
                 ServerStore.shared.installing.remove(s.id)
             }
         }

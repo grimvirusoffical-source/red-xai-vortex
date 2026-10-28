@@ -52,7 +52,7 @@ final class ModelBrowserServer {
         params.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
         guard let l = try? NWListener(using: params) else { return }
         l.stateUpdateHandler = { [weak self] st in
-            if case .ready = st { Task { @MainActor in self?.port = l.port?.rawValue ?? 0 } }
+            if case .ready = st { Task { @MainActor [weak self] in self?.port = l.port?.rawValue ?? 0 } }
         }
         l.newConnectionHandler = { c in Task { @MainActor in ModelBrowserServer.shared.handle(c) } }
         l.start(queue: .main); listener = l

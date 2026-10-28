@@ -107,7 +107,7 @@ struct RoyalGemShape: Shape {
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.backgroundColor = NSColor(RoyalTheme.background)
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification, NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification, NSWindow.didResizeNotification] {
-            observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in Task { @MainActor in self?.update() } })
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in Task { @MainActor [weak self] in self?.update() } })
         }
         update()
     }

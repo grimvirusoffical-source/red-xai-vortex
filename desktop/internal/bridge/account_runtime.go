@@ -95,6 +95,7 @@ func (s *Server) activateAccount(subject, name, password string, expires time.Ti
 }
 func (s *Server) clearAccountWorkspace() {
 	s.accounts.mu.Lock()
+	defer s.accounts.mu.Unlock()
 	s.accounts.epoch++
 	old := s.accounts.workspace
 	s.accounts.workspace = nil
@@ -104,7 +105,6 @@ func (s *Server) clearAccountWorkspace() {
 	if old != nil {
 		old.profileClosed.Store(true)
 	}
-	s.accounts.mu.Unlock()
 	if old != nil {
 		old.closeAccountWorkspace()
 	}

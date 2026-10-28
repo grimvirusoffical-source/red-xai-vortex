@@ -111,7 +111,7 @@ struct HostedBaseStatus: Equatable {
             process.executableURL = helper; process.arguments = ["serve", "-dir", hostDirectory(id).path, "-listen", "127.0.0.1:0", "-ready-file", ready.path, "-parent-pid", String(ProcessInfo.processInfo.processIdentifier)]
             process.standardOutput = pipe; process.standardError = pipe
             pipe.fileHandleForReading.readabilityHandler = { handle in if handle.availableData.isEmpty { handle.readabilityHandler = nil } }
-            process.terminationHandler = { [weak self] ended in Task { @MainActor in
+            process.terminationHandler = { [weak self] ended in Task { @MainActor [weak self] in
                 guard self?.processes[id]?.processIdentifier == ended.processIdentifier else { return }
                 self?.processes.removeValue(forKey: id); self?.statuses[id] = HostedBaseStatus(message: "Stopped")
             } }
