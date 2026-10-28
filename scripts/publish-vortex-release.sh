@@ -103,5 +103,5 @@ done
 gh release create "v$VERSION" "$WIN" "$LINUX" "$MACZIP" "$MACDMG" "$MANIFEST" "$SIG" "$SUMS" \
   --repo "$EXPECTED" --target "$COMMIT" --latest \
   --title "Red-XAI Vortex $VERSION — macOS, Windows and Linux" \
-  --notes "Cross-platform account switching and authenticated chat fixes. macOS Developer ID signed, notarized and stapled. All four packages verified against the existing Ed25519-signed manifest."
+  --notes-file "$REPO/docs/RELEASE-2.12.0.md"
 echo "Published official signed release v$VERSION from $COMMIT"
