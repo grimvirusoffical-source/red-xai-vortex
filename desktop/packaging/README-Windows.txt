@@ -1,4 +1,4 @@
-Red-XAI Vortex 2.11.4
+Red-XAI Vortex 2.12.0
 
 Keep the application, frontend folder, redx-link, vortex-base, and complete rsx-runtime folder together.
 

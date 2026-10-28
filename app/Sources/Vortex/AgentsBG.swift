@@ -8,11 +8,14 @@ struct BGAgent: Codable, Identifiable, Equatable {
     var id: String
     var name: String = ""
     var model: String = "vortex-mini"
+    var planner: String? = nil
     var system: String = ""
     var goal: String = ""
     var interval_s: Int = 300
     var on: Bool = false
     var run_on: String = "server"
+    var permissions: [String]? = nil
+    var allow_actions: Bool? = nil
     var status: String = ""
     var last_run: Int = 0
     var runs: Int = 0
@@ -48,10 +51,17 @@ struct BGAgent: Codable, Identifiable, Equatable {
         }
         return d
     }
+    func cloudWorkerOnline() async -> Bool {
+        guard let data = try? await req("/agents/worker/online") else { return false }
+        let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        return payload?["online"] as? Bool == true
+    }
+
     func refresh(notify: Bool = false) async {
         struct L: Codable { var data: [BGAgent] }
         guard let d = try? await req("/agents"), let l = try? JSONDecoder().decode(L.self, from: d) else { return }
         agents = l.data
+        migrateLegacyAgents(l.data)
         for a in l.data {
             if notify, a.unread > (lastUnread[a.id] ?? 0) {
                 let c = UNMutableNotificationContent(); c.title = "\(a.name) has an update"; c.body = "Background run \(a.runs) finished. Open Agents to read it."
@@ -61,18 +71,81 @@ struct BGAgent: Codable, Identifiable, Equatable {
             lastUnread[a.id] = a.unread
         }
     }
+    private func migrateLegacyAgents(_ records: [BGAgent]) {
+        let local = AgentStore.shared
+        for old in records {
+            if local.agents.contains(where: { $0.id == old.id }) { continue }
+            var profile = AgentProfile(id: old.id, name: old.name, model: old.model)
+            profile.systemPrompt = old.system
+            profile.goal = old.goal
+            profile.modelMode = "single"
+            profile.runOn = old.run_on
+            profile.running = old.on
+            profile.scheduleSeconds = old.interval_s
+            profile.toolsOn = false
+            profile.pcControlOn = false
+            profile.permissions = []
+            local.upsert(profile)
+        }
+    }
     func save(_ a: BGAgent) async {
         do {
-            _ = try await req("/agents", "POST", ["id": a.id, "name": a.name, "model": a.model, "system": a.system, "goal": a.goal,
-                                                  "interval_s": a.interval_s, "run_on": a.run_on, "on": a.on])
+            _ = try await req("/agents", "POST", ["id": a.id, "name": a.name, "model": a.model, "planner": a.planner ?? "", "system": a.system, "goal": a.goal,
+                                                  "interval_s": a.interval_s, "run_on": a.run_on, "on": a.on,
+                                                  "permissions": a.permissions ?? [], "allow_actions": a.allow_actions ?? false])
             msg = "Saved \(a.name)."; await refresh()
         } catch { msg = error.localizedDescription }
     }
-    func toggle(_ a: BGAgent, _ on: Bool) async {
-        do { _ = try await req("/agents/\(a.id)/toggle", "POST", ["on": on]); msg = on ? "\(a.name) is running in the background." : "\(a.name) turned off."; await refresh() }
-        catch { msg = error.localizedDescription }
+    @discardableResult func toggle(_ a: BGAgent, _ on: Bool) async -> Bool {
+        do {
+            _ = try await req("/agents/\(a.id)/toggle", "POST", ["on": on])
+            if let i = AgentStore.shared.agents.firstIndex(where: { $0.id == a.id }) {
+                AgentStore.shared.agents[i].running = on
+                AgentStore.shared.save()
+            }
+            msg = on ? "\(a.name) is running in the background." : "\(a.name) turned off."
+            await refresh()
+            return true
+        } catch {
+            msg = error.localizedDescription
+            return false
+        }
     }
-    func delete(_ a: BGAgent) async { _ = try? await req("/agents/\(a.id)", "DELETE"); await refresh() }
+    @discardableResult func stopAllRemote() async -> Bool {
+        do {
+            _ = try await req("/agents/stop-all", "POST", [:])
+            for i in agents.indices { agents[i].on = false; agents[i].status = "off" }
+            for i in AgentStore.shared.agents.indices
+            where ["server", "cloudpc"].contains(AgentStore.shared.agents[i].runOn ?? "") {
+                AgentStore.shared.agents[i].running = false
+            }
+            AgentStore.shared.save()
+            msg = "All connected remote agents were paused by the gateway."
+            await refresh()
+            return true
+        } catch {
+            // Older gateways lack stop-all; preserve their existing
+            // individual toggle endpoint instead of silently skipping Stop.
+            var allStopped = true
+            for agent in agents where agent.on {
+                if !(await toggle(agent, false)) {allStopped = false}
+            }
+            if !allStopped || agents.isEmpty {
+                msg = "Local work stopped, but remote cancellation could not be verified: " + error.localizedDescription
+                return false
+            }
+            return true
+        }
+    }
+
+    func delete(_ a: BGAgent) async {
+        do {
+            _ = try await req("/agents/\(a.id)", "DELETE")
+            AgentStore.shared.delete(a.id)
+            msg = "Deleted \(a.name)."
+            await refresh()
+        } catch { msg = error.localizedDescription }
+    }
     func history(_ id: String) async -> BGAgent? {
         guard let d = try? await req("/agents/\(id)") else { return nil }
         return try? JSONDecoder().decode(BGAgent.self, from: d)
@@ -107,7 +180,7 @@ struct BackgroundAgentsView: View {
             HStack {
                 Text("Background agents").font(.headline)
                 Spacer()
-                Button { edit = BGAgent(id: "", name: "New agent", model: "vortex-mini") } label: { Label("New", systemImage: "plus") }
+                Text("Create and edit agents above in the unified Agents editor.").font(.caption).foregroundStyle(.secondary)
                 Button { Task { await s.refresh() } } label: { Image(systemName: "arrow.clockwise") }
             }
             Text("These run on the Vortex server, or on your Cloud PC if you have approved access. They keep going after you close the app, until you switch them off. Click Chat to talk to an agent; it has its own history.")
@@ -124,7 +197,7 @@ struct BackgroundAgentsView: View {
                     Spacer()
                     Toggle("On", isOn: Binding(get: { a.on }, set: { v in Task { await s.toggle(a, v) } })).toggleStyle(.switch)
                     Button("Chat") { chatWith = a }
-                    Button("Edit") { edit = a }
+                    Button("Edit settings") { if let profile = AgentStore.shared.agents.first(where: { $0.id == a.id }) { AgentStore.shared.setActive(profile.id); AgentStore.shared.message = "Use the Edit button beside this agent in the unified list." } }
                     Button(role: .destructive) { Task { await s.delete(a) } } label: { Image(systemName: "trash") }
                 }.padding(6).background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.3)))
             }

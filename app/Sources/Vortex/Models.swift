@@ -21,6 +21,8 @@ struct Chat: Identifiable, Codable, Equatable {
     var participants: [String]? = nil   // group chat: models taking part, in turn order
     var turnMode: String? = nil         // "all" (each replies in order) | "rotate" (one per turn)
     var nextTurn: Int? = nil
+    var leaderParticipantID: String? = nil
+    var groupInstructions: String? = nil
     var composer: ComposerSettings? = nil  // nil = use the global default
     // Optional fields keep pre-workspace chats and exports decodable without rewriting them.
     var projectID: UUID? = nil

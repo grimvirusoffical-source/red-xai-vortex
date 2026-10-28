@@ -51,6 +51,7 @@ func Start(st *store.Store) (*Server, error) {
 	s.applyLink()
 	s.applyPhone()
 	go s.restoreManagedHosts()
+	go s.agentScheduleLoop()
 	return s, nil
 }
 
@@ -219,7 +220,7 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		id, _ := in["id"].(string)
 		for _, c := range s.St.Chats {
 			if c.ID == id {
-				return map[string]any{"id": c.ID, "title": c.Title, "messages": c.Messages, "kind": c.Kind, "agentID": c.AgentID, "members": c.Members}
+				return map[string]any{"id": c.ID, "title": c.Title, "messages": c.Messages, "kind": c.Kind, "agentID": c.AgentID, "members": c.Members, "leaderID": c.LeaderID, "groupWorkspaceID": c.WorkspaceID}
 			}
 		}
 		return map[string]any{"messages": []any{}}
@@ -236,12 +237,24 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 				}
 			}
 		}
-		return s.partyNew(str(in, "title"), ms)
+		return s.partyNewWithLeader(str(in,"title"),ms,str(in,"leaderID"),str(in,"workspaceName"),str(in,"instructions"))
 	case "chat.delete":
 		s.St.DeleteChat(str(in, "id"))
 		return map[string]any{"ok": true}
 	case "agent.save":
 		return s.agentSave(in)
+	case "agent.toggle":
+		return s.agentToggle(in)
+	case "agent.delete":
+		return s.agentDelete(in)
+	case "agent.kill":
+		return s.agentKillAll(in)
+	case "agent.resume":
+		return s.agentResume(in)
+    case "agent.worker.status":
+        return s.cloudWorkerStatus()
+    case "agent.remote.list":
+        return s.gw("GET","/agents",nil)
 	case "agent.testVortex":
 		return s.testVortex()
 	case "integration":
@@ -303,7 +316,7 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 func chatSummaries(cs []store.Chat) []map[string]any {
 	out := make([]map[string]any, 0, len(cs))
 	for _, c := range cs {
-		out = append(out, map[string]any{"id": c.ID, "title": c.Title, "kind": c.Kind, "agentID": c.AgentID, "members": c.Members})
+		out = append(out, map[string]any{"id": c.ID, "title": c.Title, "kind": c.Kind, "agentID": c.AgentID, "members": c.Members, "leaderID": c.LeaderID, "groupWorkspaceID": c.WorkspaceID})
 	}
 	return out
 }
@@ -379,7 +392,7 @@ func (s *Server) chatSend(in map[string]any) map[string]any {
 		return map[string]any{"reply": note, "replies": []map[string]string{{"name": s.memberFor(c.AgentID).Name, "content": note}}, "run": r["run"]}
 	}
 	if c.Kind == "agent" || c.Kind == "party" {
-		return s.groupSend(c, comp)
+		return s.groupSend(c, comp, in["__localOperator"] == true)
 	}
 	if strings.HasPrefix(model, "vortex") && in["modelExplicit"] != true {
 		model = comp.Tier
@@ -497,28 +510,7 @@ func (s *Server) resolveEndpoint(agentID string) (base, key string) {
 }
 
 func (s *Server) agentSave(in map[string]any) map[string]any {
-	name := str(in, "name")
-	if name == "" {
-		return map[string]any{"ok": false, "message": "Name required"}
-	}
-	id := fmt.Sprintf("agent-%d", time.Now().UnixNano()%1e12)
-	a := store.Agent{
-		ID: id, Name: name, Provider: str(in, "provider"), Model: str(in, "model"),
-		BaseURL: str(in, "baseURL"), ToolsOn: true, PCControlOn: true,
-		SystemPrompt: "You are a Vortex agent. Use tools carefully; ask Allow/Deny for risky PC actions.",
-		Created:      time.Now(), Updated: time.Now(),
-	}
-	if a.Provider == "" {
-		a.Provider = "vortex"
-	}
-	if a.Model == "" {
-		a.Model = "vortex-mini" // new agents default to the fast tier
-	}
-	if k := str(in, "apiKey"); k != "" && a.Provider != "vortex" {
-		_ = keyring.Set("agent-key-"+a.ID, k)
-	}
-	s.St.SaveAgent(a)
-	return map[string]any{"ok": true, "message": "Saved " + a.Name + ". Key in OS credential store (never printed)."}
+	return s.saveUnifiedAgent(in)
 }
 
 func (s *Server) testVortex() map[string]any {

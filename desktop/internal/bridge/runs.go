@@ -23,7 +23,7 @@ import (
 // Reads run on their own; writes and commands wait for Allow/Deny in the app.
 // Every step is written to the append-only activity log.
 
-const maxRunSteps = 10
+const maxRunSteps = 24
 
 type Approval struct {
 	ID      string `json:"id"`
@@ -48,6 +48,10 @@ type Run struct {
 	pcRun         bool
 	pcEpoch       uint64
 	localOperator bool
+	agentAutoAllow bool
+	agentPolicySet bool
+	scheduled      bool
+	plannerModel  string
 	cancel        context.CancelFunc
 }
 
@@ -170,6 +174,27 @@ func runTools(pcOn bool) []tool {
 	return t
 }
 
+// Only explicitly granted categories are available to this agent. Legacy
+// agents without a permissions field retain their previous tools.
+func agentRunTools(a store.Agent) []tool {
+    if !a.ToolsOn { return nil }
+    all := runTools(a.PCControlOn)
+    if a.Permissions == nil { return all }
+    allow:=map[string]bool{}
+    for _,p:=range a.Permissions { allow[p]=true }
+    result:=[]tool{}
+    for _,t:=range all {
+        category:="files-read"
+        switch t.name {
+        case "fetch_url":category="web"
+        case "write_file":category="files-write"
+        case "run_command":category="shell"
+        }
+        if allow[category] {result=append(result,t)}
+    }
+    return result
+}
+
 func clipS(s string, n int) string {
 	if len(s) > n {
 		return s[:n] + "\n…[truncated]"
@@ -224,21 +249,33 @@ func (s *Server) startRun(agentID, task, chatID string) map[string]any {
 	return s.startRunFrom(agentID, task, chatID, false)
 }
 
-func (s *Server) startRunFrom(agentID, task, chatID string, local bool) map[string]any {
+func (s *Server) startRunFrom(agentID, task, chatID string, local bool, scheduled ...bool) map[string]any {
+	isScheduled := len(scheduled) > 0 && scheduled[0]
 	epoch := s.pcCurrentEpoch()
 	task = strings.TrimSpace(task)
 	if task == "" {
 		return map[string]any{"ok": false, "message": "Type a task for the agent."}
 	}
 	me := s.memberFor(agentID)
-	pcOn := false
-	for _, a := range s.St.Agents {
-		if a.ID == agentID {
-			pcOn = a.PCControlOn
-		}
+	var agent store.Agent
+	for _, a := range s.St.AgentsSnapshot() { if a.ID==agentID { agent=a; break } }
+	if agent.ID=="" {return map[string]any{"ok":false,"message":"Choose a saved agent before running tasks."}}
+	if isScheduled && !s.St.AgentIsRunning(agentID) {return map[string]any{"ok":false,"message":"Scheduled agent was paused before the task began."}}
+    if agentRemoteMode(agent)!="local" {
+        return map[string]any{"ok":false,"message":"This agent is configured for remote work. Start its server schedule or connect a Cloud PC worker; it cannot silently run on your local machine."}
+    }
+	if s.agentsStopped() {return map[string]any{"ok":false,"message":"Agent emergency stop is active."}}
+	if requiresDesktopBrowser(task) {
+		return map[string]any{"ok":false,"message":"This desktop has no verified Chrome/Discord browser-action adapter. The agent will not type a message into the wrong app or claim it was sent. Configure a browser integration before running this task."}
 	}
+	available:=[]string{}
+	if agent.Provider=="vortex" {
+		if models,ok:=s.listModels();ok {available=models}
+	}
+	model,planner:=availableAgentModels(agent,task,available)
+	if model!="" {me.Model=model}
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &Run{ID: fmt.Sprintf("r-%d", time.Now().UnixNano()), AgentID: agentID, Agent: me.Name, Task: task, Status: "running", Started: time.Now(), ChatID: chatID, cancel: cancel}
+	r := &Run{ID: fmt.Sprintf("r-%d", time.Now().UnixNano()), AgentID: agentID, Agent: me.Name, Task: task, Status: "running", Started: time.Now(), ChatID: chatID, cancel: cancel, agentAutoAllow:agent.AlwaysAllow, agentPolicySet:true, scheduled:isScheduled, plannerModel:planner}
 	r.localOperator = local
 	if !s.registerPCRunAt(r, epoch) {
 		cancel()
@@ -248,7 +285,7 @@ func (s *Server) startRunFrom(agentID, task, chatID string, local bool) map[stri
 	runs.mu.Lock()
 	copy := *r
 	runs.mu.Unlock()
-	go s.loop(ctx, r, me, runTools(pcOn))
+	go s.loop(ctx, r, me, agentRunTools(agent))
 	return map[string]any{"ok": true, "run": copy}
 }
 
@@ -267,6 +304,17 @@ func (s *Server) loop(ctx context.Context, r *Run, me member, ts []tool) {
 	}
 	msgs := []map[string]string{{"role": "system", "content": sys}, {"role": "user", "content": r.Task}}
 	agentID := r.AgentID
+	if r.plannerModel!="" {
+		plan,err:=s.completeContext(ctx,agentID,r.plannerModel,[]map[string]string{
+			{"role":"system","content":"You are the planning specialist in a multi-model agent team. Give a concise, concrete step-by-step plan. Do not call tools, claim actions were completed, or disclose secrets."},
+			{"role":"user","content":r.Task},
+		},450)
+		if ctx.Err()!=nil {return}
+		if err==nil && strings.TrimSpace(plan)!="" {
+			msgs[0]["content"] += "\n\nSECOND-MODEL PLAN (suggestions only; verify through tools before declaring success):\n"+clipS(plan,2000)
+			s.log(r,"agent.plan",r.plannerModel,"Planning specialist reviewed task.",clipS(plan,2000))
+		}
+	}
 	if strings.HasPrefix(agentID, "model:") {
 		agentID = ""
 	}
@@ -289,6 +337,10 @@ func (s *Server) loop(ctx context.Context, r *Run, me member, ts []tool) {
 		}
 	}
 	for step := 0; step < maxRunSteps; step++ {
+		if r.scheduled && !s.St.AgentIsRunning(r.AgentID) {
+			finish("stopped", "Scheduled agent was paused.")
+			return
+		}
 		if ctx.Err() != nil {
 			finish("stopped", "Stopped by you.")
 			return
@@ -360,6 +412,10 @@ func (s *Server) loop(ctx context.Context, r *Run, me member, ts []tool) {
 			return
 		}
 		toolCtx := context.WithValue(ctx, pcExecutionKey{}, pcExecution{server: s, run: r, auto: autoAllowed})
+		if r.scheduled && !s.St.AgentIsRunning(r.AgentID) {
+			finish("stopped", "Scheduled agent was paused before a tool action.")
+			return
+		}
 		res, err := t.run(toolCtx, args)
 		if err != nil {
 			res = "error: " + err.Error()
@@ -367,7 +423,7 @@ func (s *Server) loop(ctx context.Context, r *Run, me member, ts []tool) {
 		s.log(r, "tool.result", name, clipS(strings.ReplaceAll(res, "\n", " "), 200), res)
 		msgs = append(msgs, map[string]string{"role": "user", "content": "TOOL_RESULT " + name + " (exact):\n" + res})
 	}
-	finish("done", "(Stopped after the step limit.)")
+	finish("error", "(Paused at the 24-step limit; inspect Activity and launch a new run if more work is needed.)")
 }
 
 func (s *Server) appendChat(chatID, name, text string) {

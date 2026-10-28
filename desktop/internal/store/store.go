@@ -19,6 +19,16 @@ type Agent struct {
 	SystemPrompt string    `json:"systemPrompt"`
 	ToolsOn      bool      `json:"toolsOn"`
 	PCControlOn  bool      `json:"pcControlOn"`
+	Goal         string    `json:"goal,omitempty"`
+	ModelMode    string    `json:"modelMode,omitempty"` // single | auto | mix
+	ModelPool    []string  `json:"modelPool,omitempty"`
+	Permissions  []string  `json:"permissions"` // web, files-read, files-write, shell
+	ScheduleS    int       `json:"scheduleSeconds,omitempty"` // 0 manual, 15 nonstop, >=30 periodic
+	Nonstop      bool      `json:"nonstop,omitempty"`
+	RunOn        string    `json:"runOn,omitempty"` // local or server; cloudpc requires worker
+	Running      bool      `json:"running,omitempty"`
+	AlwaysAllow  bool      `json:"alwaysAllow,omitempty"` // additional agent opt-in; machine policy still required
+	LastRun      time.Time `json:"lastRun,omitempty"`
 	Created      time.Time `json:"created"`
 	Updated      time.Time `json:"updated"`
 }
@@ -32,6 +42,9 @@ type Chat struct {
 	Kind     string    `json:"kind,omitempty"`     // "" (model chat) | "agent" | "party"
 	AgentID  string    `json:"agentID,omitempty"`  // agent chats: the agent
 	Members  []string  `json:"members,omitempty"`  // party chats: agent IDs (or "model:<id>") that reply in turn
+	LeaderID string   `json:"leaderID,omitempty"` // one leader chooses assignments and consolidates results
+	WorkspaceID string `json:"groupWorkspaceID,omitempty"` // project-scoped group conversations
+	GroupInstructions string `json:"groupInstructions,omitempty"`
 }
 
 // Composer holds the chat composer controls: strength tier, reply length and Quick replies.
@@ -115,6 +128,44 @@ func (s *Store) save() {
 	writeJSON(s.path("settings.json"), s.Settings)
 }
 
+// AgentsSnapshot isolates background schedulers from concurrent UI changes.
+func (s *Store) AgentsSnapshot() []Agent {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    out:=append([]Agent(nil),s.Agents...)
+    for i:=range out {
+        out[i].Permissions=append([]string(nil),out[i].Permissions...)
+        out[i].ModelPool=append([]string(nil),out[i].ModelPool...)
+    }
+    return out
+}
+
+// ClaimAgentDue atomically records a run's next scheduling timestamp only
+// while the currently saved version is still due. This prevents a racing
+// edit/Stop from scheduling an outdated goal or resetting its permissions.
+func (s *Store) AgentIsRunning(id string) bool {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    for _,a:=range s.Agents {
+        if a.ID==id {return a.Running}
+    }
+    return false
+}
+
+func (s *Store) ClaimAgentDue(id string,now time.Time,due func(Agent) bool)(Agent,bool){
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    for i,a:=range s.Agents {
+        if a.ID==id && due(a) {
+            a.LastRun=now
+            s.Agents[i]=a
+            writeJSON(s.path("agents.json"),s.Agents)
+            return a,true
+        }
+    }
+    return Agent{},false
+}
+
 func (s *Store) SaveAgent(a Agent) {
 	s.mu.Lock()
 	found := false
@@ -130,6 +181,20 @@ func (s *Store) SaveAgent(a Agent) {
 	}
 	s.mu.Unlock()
 	s.save()
+}
+
+func (s *Store) DeleteAgent(id string) bool {
+	s.mu.Lock()
+	out := make([]Agent, 0, len(s.Agents))
+	found := false
+	for _, a := range s.Agents {
+		if a.ID == id { found = true; continue }
+		out = append(out, a)
+	}
+	if found { s.Agents = out }
+	s.mu.Unlock()
+	if found { s.save() }
+	return found
 }
 
 func (s *Store) SaveChat(c Chat) {

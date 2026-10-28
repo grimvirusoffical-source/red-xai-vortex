@@ -36,7 +36,7 @@ function renderAgents(){
   const sel=$('#agentPick'); const cur=sel.value;
   sel.innerHTML = state.agents.map(a=>`<option value="${esc(a.id)}">${esc(a.name)} · ${esc(a.model)}</option>`).join('') || '<option value="vortex-default">Vortex</option>';
   if(cur) sel.value=cur;
-  $('#agentList').innerHTML = state.agents.map(a=>`<div class="row" style="margin:6px 0"><strong>${esc(a.name)}</strong> <span class="pill">${esc(a.provider)}</span> <span class="pill">${esc(a.model)}</span></div>`).join('') || '<em style="color:var(--muted)">No agents yet</em>';
+  window.AgentUI?.render(state.agents);
 }
 function renderModels(){
   const sel=$('#modelPick'); const cur=sel.value;
@@ -58,17 +58,34 @@ function renderChats(){
   $$('#agentChats [data-agent]').forEach(b=>b.onclick=async()=>{ const r=await bridge.call('agent.chat',{agent:b.dataset.agent}); state.active=r.id; await refresh(); loadChat(); });
   window.VortexWorkspace?.refreshSidebar();
 }
+function teamSelection(){
+  const members=$('#partyOpts input:checked').map(i=>i.value);
+  const current=$('#partyLeader').value;
+  const choices=$('#partyOpts input:checked').map(i=>({id:i.value,label:i.parentElement.textContent.trim()}));
+  $('#partyLeader').replaceChildren();
+  for(const item of choices){
+    const o=document.createElement('option');o.value=item.id;o.textContent=item.label;$('#partyLeader').append(o);
+  }
+  if(members.includes(current))$('#partyLeader').value=current;
+  return members;
+}
 $('#newparty').onclick=()=>{
   const opts=[...state.agents.map(a=>({id:a.id,label:'🤖 '+a.name+' · '+a.model})), ...state.models.map(m=>({id:'model:'+m,label:'🧠 '+m}))];
   $('#partyOpts').innerHTML=opts.map(o=>`<label style="display:block"><input type="checkbox" value="${esc(o.id)}"/> ${esc(o.label)}</label>`).join('');
-  $('#partyMsg').textContent=''; $('#partyPick').style.display='';
+  $('#partyOpts').onchange=teamSelection;
+  $('#partyMsg').textContent=''; $('#partyPick').style.display='';teamSelection();
 };
 $('#partyCancel').onclick=()=>$('#partyPick').style.display='none';
 $('#partyGo').onclick=async()=>{
-  const members=$$('#partyOpts input:checked').map(i=>i.value);
-  const r=await bridge.call('party.new',{members,title:$('#partyTitle').value.trim()});
+  const members=teamSelection();
+  if(members.length<2){$('#partyMsg').textContent='Add at least two agents or models.';return;}
+  const leaderID=$('#partyLeader').value;
+  if(!members.includes(leaderID)){$('#partyMsg').textContent='Choose one leader from the members.';return;}
+  const r=await bridge.call('party.new',{members,leaderID,title:$('#partyTitle').value.trim(),
+    workspaceName:$('#partyWorkspaceName').value.trim(),instructions:$('#partyInstructions').value});
   if(!r.ok){ $('#partyMsg').textContent=r.message||'failed'; return; }
-  $('#partyPick').style.display='none'; $('#partyTitle').value=''; state.active=r.id; await refresh(); loadChat();
+  $('#partyPick').style.display='none'; $('#partyTitle').value=''; $('#partyWorkspaceName').value='';$('#partyInstructions').value='';
+  state.active=r.id; await refresh(); loadChat();
 };
 function addMsg(role,content,name){ const d=document.createElement('div'); d.className='msg '+role;
   if(name){ const w=document.createElement('span'); w.className='who'; w.textContent=name; d.appendChild(w); }
@@ -127,10 +144,7 @@ $('#send').onclick=async()=>{
   }catch(e){addMsg('assistant','The message could not be completed: '+e.message);}
   finally{$('#send').disabled=false;$('#send').textContent='Send ↗';window.VortexWorkspace?.sync();}
 };
-$('#aSave').onclick=async()=>{
-  const r=await bridge.call('agent.save',{name:$('#aName').value, provider:$('#aProv').value, model:$('#aModel').value, baseURL:$('#aBase').value, apiKey:$('#aKey').value});
-  $('#aKey').value=''; $('#aMsg').textContent=r.message||'Saved'; $('#aMsg').className=r.ok?'ok':'bad'; refresh();
-};
+// Unified agent editor is managed by agent-ui.js; other chat controls remain unchanged.
 $('#aTest').onclick=async()=>{
   const r=await bridge.call('agent.testVortex',{});
   $('#aMsg').textContent=r.message||''; $('#aMsg').className=r.ok?'ok':'bad';

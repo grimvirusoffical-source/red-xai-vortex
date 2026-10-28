@@ -18,6 +18,17 @@ struct AgentProfile: Codable, Identifiable, Equatable, Hashable {
     var pcControlOn: Bool = true
     var skillIDs: [String] = []
     var pluginIDs: [String] = []
+    // Optional for backward compatibility with every existing agents.json.
+    var goal: String? = nil
+    var modelMode: String? = nil       // single, auto, mix
+    var modelPool: [String]? = nil
+    var permissions: [String]? = nil  // nil = legacy defaults
+    var scheduleSeconds: Int? = nil   // 0 = manual, 15 = nonstop, otherwise interval
+    var nonstop: Bool? = nil
+    var running: Bool? = nil
+    var runOn: String? = nil          // local, server, cloudpc
+    var alwaysAllow: Bool? = nil
+    var lastRun: Date? = nil
     var created = Date()
     var updated = Date()
 
@@ -114,7 +125,13 @@ struct AgentsView: View {
     @Local var draft = AgentProfile(id: "", name: "", model: Defaults.model)
     @Local var apiKey = ""
     @Local var editing = false
+    @Local var agentKeySaved = false
     @AppStorage("model") var chatModel = Defaults.model
+    private let grants: [(String, String)] = [
+        ("files-read", "Read files"), ("files-write", "Write files"), ("shell", "Run commands"),
+        ("apps", "Open apps"), ("input", "Keyboard and mouse"), ("screen", "Read screen"),
+        ("browser", "Browser"), ("clipboard", "Clipboard"), ("plugins", "Skills and plugins")
+    ]
 
     var body: some View {
         HSplitView {
@@ -139,6 +156,7 @@ struct AgentsView: View {
                         Spacer()
                         Button("Use") { store.setActive(a.id); if a.provider == "vortex" { chatModel = a.model }; store.message = "Using \(a.name)." }
                         Button("Edit") { draft = a; apiKey = ""; editing = true }
+                        Button("Run") { LocalAgentScheduler.shared.launch(a) }.disabled(a.runOn == "server" || a.runOn == "cloudpc")
                         if a.id != "vortex-default" {
                             Button(role: .destructive) { store.delete(a.id) } label: { Image(systemName: "trash") }
                         }
@@ -157,7 +175,7 @@ struct AgentsView: View {
                 }.padding().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
-        .onAppear { store.load() }
+        .onAppear { store.load(); _ = LocalAgentScheduler.shared; Task { await BGAgentStore.shared.refresh() } }
     }
 
     var editor: some View {
@@ -168,7 +186,12 @@ struct AgentsView: View {
             Picker("Provider", selection: $draft.provider) {
                 ForEach(AgentProfile.providers, id: \.0) { Text($0.1).tag($0.0) }
             }
-            TextField("Model id", text: $draft.model)
+            Picker("Model intelligence", selection: Binding(get: { draft.modelMode ?? "single" }, set: { draft.modelMode = $0 })) {
+                Text("Smart specialist selection").tag("auto")
+                Text("Multiple models: planner + executor").tag("mix")
+                Text("One model").tag("single")
+            }.disabled(draft.provider != "vortex")
+            TextField("Model id (single or external provider)", text: $draft.model)
             if draft.provider == "openai_compat" || draft.provider == "ollama" || draft.provider == "anthropic" || draft.provider == "google" {
                 TextField("Base URL", text: $draft.baseURL)
                     .help(draft.provider == "openai_compat" ? "Any OpenAI-compatible /v1 base URL" : "Override default endpoint")
@@ -177,9 +200,51 @@ struct AgentsView: View {
                 SecureField(store.keyPresent(for: draft) ? "API key (leave blank to keep saved)" : "API key", text: $apiKey)
                 Text("Stored in the OS keychain. Never shown again.").font(.caption2).foregroundStyle(.secondary)
             }
+            Text("Instructions and tools").font(.headline)
             TextEditor(text: $draft.systemPrompt).frame(minHeight: 80)
-            Toggle("Chat tools (web, files, skills, plugins)", isOn: $draft.toolsOn)
-            Toggle("PC control (Allow/Deny prompts)", isOn: $draft.pcControlOn)
+            TextField("Standing task or goal", text: Binding(get: { draft.goal ?? "" }, set: { draft.goal = $0 }), axis: .vertical).lineLimit(2...5)
+            Toggle("Skills, MCP and plugins", isOn: $draft.toolsOn)
+            Toggle("PC control (requires this Mac's approval)", isOn: $draft.pcControlOn)
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Allowed actions (an agent cannot grant itself more)").font(.caption.bold())
+                ForEach(grants.indices, id: \.self) { index in
+                    let item = grants[index]
+                    Toggle(item.1, isOn: Binding(
+                        get: { (draft.permissions ?? []).contains(item.0) },
+                        set: { enabled in
+                            var set = Set(draft.permissions ?? [])
+                            if enabled { set.insert(item.0) } else { set.remove(item.0) }
+                            draft.permissions = set.sorted()
+                        }))
+                }
+            }
+            Toggle("Allow this agent to skip individual PC approvals (only when machine Always allow is also enabled)", isOn:
+                Binding(get: { draft.alwaysAllow ?? false }, set: { draft.alwaysAllow = $0 }))
+            Text("Stop control can immediately cancel active PC actions and revoke unattended permission.").font(.caption).foregroundStyle(.secondary)
+            Section("Background execution") {
+                Picker("Run on", selection: Binding(get: { draft.runOn ?? "local" }, set: { draft.runOn = $0 })) {
+                    Text("On this Mac, while Vortex is running").tag("local")
+                    Text("Vortex server — persistent model-only tasks").tag("server")
+                    Text("Cloud PC — worker connection required").tag("cloudpc")
+                }
+                Picker("Run every", selection: Binding(get: { draft.scheduleSeconds ?? 0 }, set: { draft.scheduleSeconds = $0 })) {
+                    Text("Manually").tag(0)
+                    Text("Every 30 seconds").tag(30)
+                    Text("Every minute").tag(60)
+                    Text("Every five minutes").tag(300)
+                    Text("Every fifteen minutes").tag(900)
+                    Text("Every hour").tag(3600)
+                    Text("Daily").tag(86400)
+                }
+                Toggle("Nonstop: restart after each run", isOn: Binding(get: { draft.nonstop ?? false }, set: { draft.nonstop = $0; if $0 { draft.scheduleSeconds = 15 } }))
+                Toggle("Enabled", isOn: Binding(get: { draft.running ?? false }, set: { draft.running = $0 }))
+                Text("Cloud PC tool execution requires a separately connected worker. Server runs only model reasoning; they cannot control your Mac or Cloud PC.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("STOP ALL AGENTS", role: .destructive) { LocalAgentScheduler.shared.stopAll() }
+                    Button("Reset stop") { LocalAgentScheduler.shared.resetStop() }
+                }
+            }
             HStack {
                 Button("Cancel") { editing = false; apiKey = "" }
                 Spacer()
@@ -192,7 +257,7 @@ struct AgentsView: View {
     func label(_ p: String) -> String { AgentProfile.providers.first { $0.0 == p }?.1 ?? p }
     func newDraft() {
         let id = "agent-" + String((0..<8).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
-        draft = AgentProfile(id: id, name: "New agent", provider: "vortex", model: "vortex-mini")
+        draft = AgentProfile(id: id, name: "New agent", provider: "vortex", model: "vortex", modelMode: "auto", permissions: ["files-read", "browser", "plugins"], runOn: "local")
         apiKey = ""; editing = true
     }
     func saveDraft() {
@@ -200,15 +265,63 @@ struct AgentsView: View {
         if a.id.isEmpty {
             a.id = "agent-" + String((0..<8).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
         }
+        guard a.running != true || ((a.nonstop == true || (a.scheduleSeconds ?? 0) >= 15) && !(a.goal ?? "").trimmingCharacters(in: .whitespaces).isEmpty) else {
+            store.message = "A scheduled agent needs a task and frequency."
+            return
+        }
+        guard !(a.alwaysAllow == true && !a.pcControlOn) else {
+            store.message = "Enable PC control before selecting unattended permissions."
+            return
+        }
         let key: String? = (a.provider != "vortex" && !apiKey.isEmpty) ? apiKey : nil
         if a.provider != "vortex", key == nil, !store.keyPresent(for: a), !store.agents.contains(where: { $0.id == a.id }) {
             store.message = "Paste an API key for this provider."; return
         }
         store.upsert(a, apiKey: key)
+        if a.runOn == "server" || a.runOn == "cloudpc" { Task { await saveRemoteAgent(a) } }
         apiKey = ""; editing = false
         if a.provider == "openai_compat" && a.baseURL.isEmpty {
             store.message = "Saved \(a.name). Set a Base URL before chatting."
         }
+    }
+    func saveRemoteAgent(_ a: AgentProfile) async {
+        guard a.provider == "vortex" else {
+            store.message = "Remote agents currently use Vortex gateway models. External providers remain local."
+            return
+        }
+        let location = a.runOn ?? "server"
+        let running = a.running ?? false
+        if location == "cloudpc", running, !(await BGAgentStore.shared.cloudWorkerOnline()) {
+            remoteSyncFailed(a, detail: "No authenticated Cloud PC worker is online. Install and sign in to the worker before enabling its schedule.")
+            return
+        }
+        let base = UserDefaults.standard.string(forKey: "serverURL") ?? Defaults.serverURL
+        let models = (try? await API.models(base: base, key: Keychain.get() ?? "")) ?? []
+        let chosen = AgentModelRouter.select(task: a.goal ?? "", profile: a, available: models)
+        let selectedModel = a.modelMode == "single" ? a.model : chosen.executor
+        var b = BGAgent(id: a.id, name: a.name,
+                        model: location == "server" && a.modelMode == "auto" ? "vortex" : selectedModel,
+                        system: a.systemPrompt, goal: a.goal ?? "",
+                        interval_s: a.nonstop == true ? 30 : max(30, a.scheduleSeconds ?? 300),
+                        on: running, run_on: location)
+        if location == "cloudpc" {
+            b.planner = chosen.planner
+            let supported: Set<String> = ["web", "files-read", "files-write", "shell", "browser"]
+            b.permissions = (a.permissions ?? []).filter { supported.contains($0) }
+            b.allow_actions = a.alwaysAllow ?? false
+        }
+        await BGAgentStore.shared.save(b)
+        if !BGAgentStore.shared.msg.hasPrefix("Saved") {
+            remoteSyncFailed(a, detail: BGAgentStore.shared.msg)
+        }
+    }
+
+    func remoteSyncFailed(_ a: AgentProfile, detail: String) {
+        if let i = store.agents.firstIndex(where: { $0.id == a.id }) {
+            store.agents[i].running = false
+            store.save()
+        }
+        store.message = "Agent saved locally, but its remote schedule was not activated: " + detail
     }
     func testVortex() async {
         let a = store.agents.first { $0.provider == "vortex" } ?? store.agents.first

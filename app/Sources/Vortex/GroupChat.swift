@@ -73,7 +73,11 @@ enum GroupTurns {
 extension ChatStore {
     func generateGroup(chatIndex i: Int, text: String, systemPrompt: String, contextTokens: Int, params: ChatParams) {
         let chatID = chats[i].id, runID = beginGeneration()
-        let (who, next) = GroupTurns.responders(text, chat: chats[i])
+        let (ordinary, next) = GroupTurns.responders(text, chat: chats[i])
+        let leader = chats[i].leaderParticipantID
+        let team = chats[i].participants ?? []
+        let coordinated = leader != nil && team.contains(leader!) && team.count >= 2
+        let who = coordinated ? [leader!] + team.filter { $0 != leader! } + [leader!] : ordinary
         chats[i].nextTurn = next
         chats[i].updated = Date(); streaming = true
         let budget = max(512, contextTokens - params.maxTokens) * 4 - systemPrompt.count - 400
@@ -96,23 +100,35 @@ extension ChatStore {
                 let context = await MainActor.run { WorkspaceStore.shared.context(for: snapshot, basePrompt: agentSys ?? systemPrompt, query: text, maxChars: max(0, (contextTokens - params.maxTokens) * 2)) }
                 var contextChat = snapshot
                 if let index = contextChat.messages.lastIndex(where: { $0.role == "user" }), !context.images.isEmpty { contextChat.messages[index].attachments = (contextChat.messages[index].attachments ?? []) + context.images }
-                let hist = GroupTurns.history(for: m, chat: contextChat, system: context.system, others: others, budgetChars: max(512, budget - context.system.count))
+                var hist = GroupTurns.history(for: m, chat: contextChat, system: context.system, others: others, budgetChars: max(512, budget - context.system.count))
+                if coordinated {
+                    let guidance = n == 0 ? "You are the team leader. Delegate clear, authorized tasks. A plan is not evidence of work." : n == who.count - 1 ? "You are the team leader. Review workers' actual evidence and distinguish completed, blocked and pending tasks." : "You are a worker directed by the leader. Execute only the permitted subtask and report verified outcomes."
+                    hist[0].content += "\n\nTEAM RULES: " + guidance + "\n" + (snapshot.groupInstructions ?? "")
+                }
                 let buf = ReplyBuffer()
                 var reply: String
                 do {
                     var p = params; p.model = m
-                    if let ap = agentP { p = ap; p.maxTokens = params.maxTokens }
+                    if let ap = agentP {
+                        p = ap; p.maxTokens = params.maxTokens
+                        if let selection = await MainActor.run(body: { () -> String? in
+                            guard let a = AgentStore.shared.agents.first(where: { "agent:" + $0.id == m }),
+                                  a.provider == "vortex" else { return nil }
+                            return AgentModelRouter.select(task: text, profile: a, available: self?.availableModels ?? []).executor
+                        }) { p.model = selection }
+                    }
                     if m.hasPrefix("local:") { let id = String(m.dropFirst(6)); p.baseURL = try await LocalRuntime.shared.ensure(id); p.apiKey = ""; p.model = id }
-                    let solo = (snapshot.participants?.count ?? 0) == 1 && m.hasPrefix("agent:")
+                    let worker = m.hasPrefix("agent:") && (!coordinated || (n > 0 && n < who.count - 1))
                     let who = ActivityAgent(id: m.hasPrefix("agent:") ? String(m.dropFirst(6)) : m, name: GroupTurns.agentNames[m] ?? m)
-                    let tools = solo ? await MainActor.run { () -> [ToolSpec] in
+                    let tools = await MainActor.run { () -> [ToolSpec] in
                         let a = AgentStore.shared.agents.first { "agent:" + $0.id == m }
-                        return (a?.toolsOn ?? true) ? ToolRegistry.tools(for: p.model) : []
-                    } : []
+                        return worker ? ToolRegistry.tools(for: p.model, agent: a) : []
+                    }
                     if !tools.isEmpty {
                         // Agent chat: the agent can act (tools, PC control) step by step; every step is logged.
                         let (t, _) = try await ActivityLog.$agent.withValue(who) {
-                            try await Agent.run(p, history: hist, tools: tools) { st in Task { @MainActor in self?.setStatus("\(who.name): \(st)", runID: runID) } }
+                            let always = await MainActor.run { AgentStore.shared.agents.first(where: { "agent:" + $0.id == m })?.alwaysAllow }
+                            return try await Agent.run(p, history: hist, tools: tools, agentAlwaysAllow: always) { st in Task { @MainActor in self?.setStatus("\(who.name): \(st)", runID: runID) } }
                         }
                         buf.append(t)
                     } else {
@@ -149,9 +165,22 @@ extension ChatStore {
         chats.append(c); selection = c.id; save()
     }
     func newParty() { var c = Chat(); c.title = "Party chat"; chats.append(c); selection = c.id; save() }
-    func setGroup(_ ps: [String], mode: String) {
+    func setGroup(_ ps: [String], mode: String, leader: String? = nil, workspaceName: String = "", instructions: String = "") {
         guard let i = idx(selection) else { return }
-        chats[i].participants = ps.isEmpty ? nil : ps; chats[i].turnMode = mode; chats[i].nextTurn = 0; save()
+        chats[i].participants = ps.isEmpty ? nil : ps
+        chats[i].turnMode = mode
+        chats[i].leaderParticipantID = ps.contains(leader ?? "") ? leader : nil
+        chats[i].groupInstructions = instructions
+        chats[i].nextTurn = 0
+        if !workspaceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let id = WorkspaceStore.shared.newProject(workspaceName)
+            chats[i].projectID = id
+            if let j = WorkspaceStore.shared.state.projects.firstIndex(where: { $0.id == id }) {
+                WorkspaceStore.shared.state.projects[j].instructions = instructions
+                WorkspaceStore.shared.save()
+            }
+        }
+        save()
     }
 }
 
@@ -160,12 +189,15 @@ struct GroupSetupView: View {
     @Environment(\.dismiss) var dismiss
     @Local var picked: [String] = []
     @Local var mode = "all"
+    @Local var leader = ""
+    @Local var teamWorkspace = ""
+    @Local var teamInstructions = ""
     @Local var loaded = false
     var all: [String] { AgentStore.shared.agents.map { "agent:" + $0.id } + Array(Set(store.availableModels + LocalRuntime.shared.models.map { "local:\($0)" })).sorted() }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Party chat").font(.title2.bold())
-            Text("Pick the agents (🤖) and models that take part in this chat. Each reply is labelled with its model. Type @name (any part of a model id) to ask only that model, or @all for everyone.")
+            Text("Choose agents/models and one leader. The leader assigns tasks, each worker reports real results, and the leader reviews the outcome. Optionally isolate the chat in its own project workspace.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Picker("Turn order", selection: $mode) {
                 Text("Everyone replies, in order").tag("all")
@@ -191,15 +223,29 @@ struct GroupSetupView: View {
                     }
                 }.frame(minWidth: 280)
             }.frame(height: 280)
+            Picker("Team leader", selection: $leader) {
+                Text("Choose leader").tag("")
+                ForEach(picked, id: \.self) { p in Text(GroupTurns.label(p)).tag(p) }
+            }
+            TextField("Dedicated workspace (optional)", text: $teamWorkspace)
+            TextField("Team instructions", text: $teamInstructions, axis: .vertical).lineLimit(2...4)
             HStack {
                 if store.current?.participants != nil { Button("Turn off party chat", role: .destructive) { store.setGroup([], mode: mode); dismiss() } }
                 Spacer()
                 Button("Cancel") { dismiss() }
-                Button("Save") { store.setGroup(picked, mode: mode); dismiss() }.keyboardShortcut(.defaultAction).disabled(picked.count == 1)
+                Button("Save") { store.setGroup(picked, mode: mode, leader: leader, workspaceName: teamWorkspace, instructions: teamInstructions); dismiss() }.keyboardShortcut(.defaultAction).disabled(picked.count < 2 || !picked.contains(leader))
             }
             if picked.count == 1 { Text("Pick at least two agents or models (or none to turn group chat off).").font(.caption).foregroundStyle(.orange) }
         }
         .padding(20).frame(width: 640)
-        .onAppear { if !loaded { picked = store.current?.participants ?? []; mode = store.current?.turnMode ?? "all"; loaded = true } }
+        .onAppear {
+            if !loaded {
+                picked = store.current?.participants ?? []
+                mode = store.current?.turnMode ?? "all"
+                leader = store.current?.leaderParticipantID ?? picked.first ?? ""
+                teamInstructions = store.current?.groupInstructions ?? ""
+                loaded = true
+            }
+        }
     }
 }

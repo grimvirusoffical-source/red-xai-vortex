@@ -28,11 +28,15 @@ type bgAgent struct {
 	KeyID     string      `json:"key_id"`
 	Name      string      `json:"name"`
 	Model     string      `json:"model"`
+    Planner string      `json:"planner,omitempty"`
 	System    string      `json:"system"`
 	Goal      string      `json:"goal"`
 	IntervalS int         `json:"interval_s"`
 	On        bool        `json:"on"`
 	RunOn     string      `json:"run_on"` // "server" | "cloudpc"
+    Permissions []string `json:"permissions,omitempty"`
+    AlwaysAllow bool `json:"allow_actions,omitempty"`
+    Pending *agentWorkerJob `json:"pending,omitempty"`
 	Status    string      `json:"status"`
 	LastRun   int64       `json:"last_run"`
 	Runs      int         `json:"runs"`
@@ -117,6 +121,19 @@ func agAppend(a *bgAgent, t ...agentTurn) {
 	}
 }
 
+// Long-lived background jobs must still honor the key's current chat and
+// model grants after that key is revoked, disabled, or expires.
+func agAuthorized(a *bgAgent) bool {
+    mu.Lock()
+    defer mu.Unlock()
+    for _, k := range keys {
+        if k.ID != a.KeyID { continue }
+        if k.Revoked != 0 || k.Disabled || (k.Expires > 0 && time.Now().Unix() > k.Expires) { return false }
+        return hasScope(k, "chat") && modelOK(k, a.Model) && (a.Planner=="" || modelOK(k,a.Planner))
+    }
+    return false
+}
+
 func agStep(id string) {
 	agMu.Lock()
 	a := agents[id]
@@ -124,6 +141,22 @@ func agStep(id string) {
 		agMu.Unlock()
 		return
 	}
+    if !agAuthorized(a) {
+        a.On = false
+        a.Status = "blocked"
+        a.LastError = "Agent stopped: its API key no longer allows this model or chat scope."
+        agSaveLocked()
+        agMu.Unlock()
+        return
+    }
+    // A Cloud PC job needs an actual task worker. The gateway is a model
+    // server, not a substitute for the computer in that remote desktop.
+    if a.RunOn == "cloudpc" {
+        a.Status = "waiting_worker"
+        agSaveLocked()
+        agMu.Unlock()
+        return
+    }
 	agBusy[id] = true
 	a.Status = "running"
 	model := a.Model
@@ -208,8 +241,27 @@ func handleAgents(w http.ResponseWriter, r *http.Request, k *Key) {
 		json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in)
 	}
 	str := func(f string) (string, bool) { v, ok := in[f].(string); return v, ok }
+    // Worker endpoints perform their own locking, key ownership and lease checks.
+    if id=="worker" { handleAgentWorker(w,r,k,act);return }
 	agMu.Lock()
 	defer agMu.Unlock()
+    // Atomic emergency stop across every server/Cloud PC agent owned by this
+    // key. This is faster and more reliable than one request per agent.
+    if id=="stop-all" {
+        if r.Method!=http.MethodPost {fail(405,"POST required");return}
+        stopped:=0
+        for agentID,a:=range agents {
+            if a.KeyID!=k.ID {continue}
+            if a.On || a.Pending!=nil {
+                stopped++
+                a.On=false;a.Status="off";a.Pending=nil
+                agBusy[agentID]=false
+            }
+        }
+        agSaveLocked()
+        enc.Encode(map[string]any{"ok":true,"stopped":stopped})
+        return
+    }
 	if id == "" && r.Method == "GET" {
 		l := []bgAgent{}
 		for _, a := range agents {
@@ -228,20 +280,23 @@ func handleAgents(w http.ResponseWriter, r *http.Request, k *Key) {
 		if nid == "" {
 			nid = "ag_" + randB62(10)
 		}
-		a := agents[nid]
-		if a != nil && a.KeyID != k.ID {
+		previous := agents[nid]
+		if previous != nil && previous.KeyID != k.ID {
 			fail(403, "not your agent")
 			return
 		}
-		if a == nil {
-			a = &bgAgent{ID: nid, KeyID: k.ID, Model: "vortex", IntervalS: 300, RunOn: "server", Status: "idle"}
-		}
+        // Work on a copy: an invalid update must never mutate the live agent.
+        var a *bgAgent
+        if previous==nil {
+            a=&bgAgent{ID:nid,KeyID:k.ID,Model:"vortex",IntervalS:300,RunOn:"server",Status:"idle"}
+        } else { cp:=*previous; a=&cp }
 		if v, ok := str("name"); ok {
 			a.Name = v
 		}
 		if v, ok := str("model"); ok && v != "" {
 			a.Model = v
 		}
+        if v, ok := str("planner"); ok {a.Planner=v}
 		if v, ok := str("system"); ok {
 			a.System = v
 		}
@@ -261,9 +316,41 @@ func handleAgents(w http.ResponseWriter, r *http.Request, k *Key) {
 		if v, ok := in["on"].(bool); ok {
 			a.On = v
 		}
-		if a.Name == "" {
-			a.Name = "Agent"
-		}
+        if v, ok := in["allow_actions"].(bool); ok { a.AlwaysAllow = v }
+        if list, supplied := in["permissions"]; supplied {
+            raw, ok := list.([]any)
+            if !ok || len(raw)>8 {fail(400,"invalid permission list");return}
+            a.Permissions=[]string{}
+            for _, v:=range raw {
+                item,ok:=v.(string)
+                if !ok || (item!="web" && item!="files-read" && item!="files-write" && item!="shell" && item!="browser"){
+                    fail(400,"unknown remote permission");return
+                }
+                a.Permissions=append(a.Permissions,item)
+            }
+        }
+        if !hasScope(k,"chat") || !modelOK(k,a.Model) ||
+            (a.Planner!="" && !modelOK(k,a.Planner)) {
+            fail(403,"API key lacks chat scope or permission for this model or planner");return
+        }
+        if a.IntervalS<30 || a.IntervalS>86400 {
+            fail(400,"run interval must be between 30 seconds and 24 hours");return
+        }
+        if a.RunOn!="server" && a.RunOn!="cloudpc" {
+            fail(400,"run_on must be server or cloudpc");return
+        }
+        if a.RunOn=="cloudpc" {
+            if !canCloudPC(k) {fail(403,"Cloud PC permission is required");return}
+            if a.On && !workerOnline(k.ID,time.Now()) {
+                fail(409,"No authenticated Cloud PC worker is online for this key");return
+            }
+        } else if a.AlwaysAllow || len(a.Permissions)>0 {
+            fail(400,"server-only model agents cannot execute computer tools");return
+        }
+        if a.On && strings.TrimSpace(a.Goal)=="" {
+            fail(400,"a running agent needs a standing goal");return
+        }
+		if a.Name == "" {a.Name = "Agent"}
 		agents[nid] = a
 		agSaveLocked()
 		enc.Encode(a)
@@ -280,16 +367,26 @@ func handleAgents(w http.ResponseWriter, r *http.Request, k *Key) {
 		agSaveLocked()
 		enc.Encode(a)
 	case act == "" && r.Method == "DELETE":
+        delete(agBusy,id)
 		delete(agents, id)
 		agSaveLocked()
 		enc.Encode(map[string]any{"deleted": id})
 	case act == "toggle" && r.Method == "POST":
-		on, _ := in["on"].(bool)
+		on, ok := in["on"].(bool)
+        if !ok {fail(400,"on must be a boolean");return}
+        if on && (!hasScope(k,"chat") || !modelOK(k,a.Model)){
+            fail(403,"key no longer permits agent model or chat scope");return
+        }
+        if on && a.RunOn=="cloudpc" && !workerOnline(k.ID,time.Now()){
+            fail(409,"Cloud PC worker is offline");return
+        }
 		a.On = on
 		if on {
 			a.LastRun = 0
 			a.Status = "queued"
 		} else {
+            a.Pending=nil
+            agBusy[id]=false
 			a.Status = "off"
 		}
 		agSaveLocked()
