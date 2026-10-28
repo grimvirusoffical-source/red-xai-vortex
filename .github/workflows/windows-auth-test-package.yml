@@ -47,7 +47,7 @@ jobs:
       - name: Build corrected executable and replace owned code
         shell: bash
         run: |
-          VORTEX_VERSION=2.11.4 bash scripts/build-desktop-with-helper.sh windows amd64 "$PWD/dist/new-binaries"
+          VORTEX_VERSION=2.12.0 bash scripts/build-desktop-with-helper.sh windows amd64 "$PWD/dist/new-binaries"
           cp dist/new-binaries/vortex.exe dist/test-root/vortex.exe
           cp dist/new-binaries/vortex-base.exe dist/test-root/vortex-base.exe
           cp desktop/frontend/* dist/test-root/frontend/
@@ -59,7 +59,7 @@ jobs:
         shell: pwsh
         run: |
           @'
-          Vortex 2.11.4 — WINDOWS QUICK/PASSWORD LOGIN TEST BUILD
+          Vortex 2.12.0 — WINDOWS QUICK/PASSWORD LOGIN TEST BUILD
 
           THIS IS A TEST ZIP, NOT A STABLE SIGNED RELEASE.
           This Vortex EXE is not Authenticode signed. Do not disable
@@ -113,13 +113,13 @@ jobs:
         shell: pwsh
         run: |
           Remove-Item -Force dist/test-root/startup-stdout.log,dist/test-root/startup-stderr.log -ErrorAction SilentlyContinue
-          Compress-Archive -Path dist/test-root/* -DestinationPath dist/Vortex-2.11.4-windows-Auth-OR-Quick-TEST-UNSIGNED.zip -CompressionLevel Optimal
-          if (-not (Test-Path dist/Vortex-2.11.4-windows-Auth-OR-Quick-TEST-UNSIGNED.zip)) { throw 'Package failed' }
-          Get-FileHash dist/Vortex-2.11.4-windows-Auth-OR-Quick-TEST-UNSIGNED.zip -Algorithm SHA256 | Format-List
+          Compress-Archive -Path dist/test-root/* -DestinationPath dist/Vortex-2.12.0-windows-Auth-OR-Quick-TEST-UNSIGNED.zip -CompressionLevel Optimal
+          if (-not (Test-Path dist/Vortex-2.12.0-windows-Auth-OR-Quick-TEST-UNSIGNED.zip)) { throw 'Package failed' }
+          Get-FileHash dist/Vortex-2.12.0-windows-Auth-OR-Quick-TEST-UNSIGNED.zip -Algorithm SHA256 | Format-List
 
       - uses: actions/upload-artifact@v4
         with:
           name: Vortex-Windows-Auth-OR-Quick-TEST-NOT-STABLE
-          path: dist/Vortex-2.11.4-windows-Auth-OR-Quick-TEST-UNSIGNED.zip
+          path: dist/Vortex-2.12.0-windows-Auth-OR-Quick-TEST-UNSIGNED.zip
           retention-days: 7
           if-no-files-found: error
