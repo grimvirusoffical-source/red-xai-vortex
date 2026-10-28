@@ -1,24 +1,55 @@
+import Foundation
 import XCTest
 @testable import Vortex
 
 private final class MCPHTTPFixture {
     let process = Process()
     let port: Int
+
     init() throws {
-        let fixture = Bundle.module.resourceURL!.appendingPathComponent("Fixtures/mcp-fixture.py")
+        // SwiftPM bundles differ between command-line and XCTest hosts. Resolve
+        // copied and processed layouts, with the checked-out test source as a
+        // final fallback. Never continue with a nonexistent fixture path.
+        let candidates: [URL?] = [
+            Bundle.module.url(forResource: "mcp-fixture", withExtension: "py", subdirectory: "Fixtures"),
+            Bundle.module.url(forResource: "mcp-fixture", withExtension: "py"),
+            Bundle.module.resourceURL?.appendingPathComponent("Fixtures/mcp-fixture.py"),
+            URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/mcp-fixture.py")
+        ]
+        guard let fixture = candidates.compactMap({ $0 }).first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
+            throw MCPConfig.error("MCP test fixture resource is missing from the bundle and source checkout.")
+        }
         let output = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["python3", "-u", fixture.path]
+        let errors = Pipe()
+        if FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+            process.arguments = ["-u", fixture.path]
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = ["python3", "-u", fixture.path]
+        }
+        process.standardInput = FileHandle.nullDevice
         process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
+        process.standardError = errors
         try process.run()
+        let child = process
+        let startupTimeout = DispatchWorkItem {
+            if child.isRunning { child.terminate() }
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: startupTimeout)
+        defer { startupTimeout.cancel() }
         var line = Data()
         while let byte = try output.fileHandleForReading.read(upToCount: 1), !byte.isEmpty {
             if byte.first == 10 { break }
             line.append(byte)
+            if line.count > 128 { break }
         }
-        guard let number = Int(String(decoding: line, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)) else {
-            process.terminate(); throw MCPConfig.error("Test fixture did not start.")
+        guard let number = Int(String(decoding: line, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)),
+              (1...65535).contains(number), process.isRunning else {
+            if process.isRunning { process.terminate() }
+            process.waitUntilExit()
+            let diagnostic = (try? errors.fileHandleForReading.readToEnd()) ?? Data()
+            throw MCPConfig.error("MCP test fixture failed to start (exit \(process.terminationStatus)): " + String(decoding: diagnostic.prefix(2000), as: UTF8.self))
         }
         port = number
     }
