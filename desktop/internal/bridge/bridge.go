@@ -19,6 +19,10 @@ import (
 )
 
 type Server struct {
+	mcpMu           sync.Mutex
+	mcpConfigMu     sync.Mutex
+	mcpConnections  map[string]*mcpConnection
+	mcpGeneration   uint64
 	accounts        accountRuntime
 	accountBroker   bool
 	profileID       string
@@ -150,6 +154,12 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 	if s.profileClosed.Load() {
 		return map[string]any{"ok": false, "error": "Account session ended"}
 	}
+	if strings.HasPrefix(m, "mcp.") {
+		if m != "mcp.list" && in["__localOperator"] != true {
+			return map[string]any{"ok": false, "error": "Configure MCP from the local signed-in desktop"}
+		}
+		return s.mcpAction(m, in)
+	}
 	switch m {
 	case "update.check":
 		return s.manualUpdateCheck()
@@ -181,7 +191,9 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 			st.NoAutoUpdate = !au
 		}
 		if k, _ := in["apiKey"].(string); k != "" {
-			_ = s.saveCredential("vortex-api-key", strings.TrimSpace(k))
+			if e := s.saveCredential("vortex-api-key", strings.TrimSpace(k)); e != nil {
+				return map[string]any{"ok": false, "message": "OS credential store unavailable; the API key and settings were not saved."}
+			}
 		}
 		if v, ok := in["secureChat"].(bool); ok {
 			st.PlainChat = !v

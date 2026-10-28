@@ -35,6 +35,17 @@ func profileIdentifier(subject string) (string, error) {
 	sum := sha256.Sum256([]byte(vortexAuthOrigin + "\x00" + subject))
 	return hex.EncodeToString(sum[:]), nil
 }
+
+// The account service currently returns /me as a flat object; older
+// compatibility proxies wrap that same verified object in "account".
+func verifiedAccountView(response map[string]any) (map[string]any, bool) {
+	account, ok := response["account"].(map[string]any)
+	if !ok {
+		account = response
+	}
+	_, err := profileIdentifier(accountSubject(account))
+	return account, err == nil
+}
 func accountSubject(account map[string]any) string {
 	for _, field := range []string{"sub", "id", "key"} {
 		if value, ok := account[field].(string); ok && value != "" {
@@ -115,6 +126,7 @@ func (s *Server) closeAccountWorkspace() {
 		if s.profileDone != nil {
 			close(s.profileDone)
 		}
+		s.stopMCPConnections()
 		_, _ = s.stopPCControl()
 		runs.mu.Lock()
 		for _, r := range runs.runs {

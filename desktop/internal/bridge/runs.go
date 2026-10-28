@@ -314,7 +314,13 @@ func (s *Server) startRunFrom(agentID, task, chatID string, local bool, schedule
 	runs.mu.Lock()
 	copy := *r
 	runs.mu.Unlock()
-	go s.loop(ctx, r, me, agentRunTools(agent))
+	go func() {
+		tools := agentRunTools(agent)
+		tools = append(tools, s.mcpAgentTools(agent)...)
+		if ctx.Err() == nil && !s.profileClosed.Load() {
+			s.loop(ctx, r, me, tools)
+		}
+	}()
 	return map[string]any{"ok": true, "run": copy}
 }
 

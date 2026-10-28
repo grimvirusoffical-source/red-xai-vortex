@@ -12,7 +12,7 @@ import (
 )
 
 var validAgentPermissions = map[string]bool{
-	"web": true, "files-read": true, "files-write": true, "shell": true,
+	"web": true, "files-read": true, "files-write": true, "shell": true, "plugins": true,
 }
 
 const agentContinuousDelay = 15 * time.Second

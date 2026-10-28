@@ -124,6 +124,7 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
     <button data-tab="activity" id="actTabBtn"><span class="royal-nav-icon" aria-hidden="true">⌁</span>Activity</button>
     <button data-tab="integrations"><span class="royal-nav-icon" aria-hidden="true">⌘</span>Integrations</button>
     <button data-tab="media"><span class="royal-nav-icon" aria-hidden="true">▧</span>Media</button>
+    <button data-tab="mcp"><span class="royal-nav-icon" aria-hidden="true">⌘</span>MCP servers</button>
     <button data-tab="plugins"><span class="royal-nav-icon" aria-hidden="true">⊞</span>Plugins</button>
     <button data-tab="notifications" id="nTabBtn"><span class="royal-nav-icon" aria-hidden="true">♧</span>Notifications</button>
     <button data-tab="settings"><span class="royal-nav-icon" aria-hidden="true">⚙</span>Settings</button>
@@ -273,6 +274,7 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
             <label><input type="checkbox" name="agentPermission" value="files-read" checked/> List/read local files</label>
             <label><input type="checkbox" name="agentPermission" value="files-write"/> Write local files (requires approval)</label>
             <label><input type="checkbox" name="agentPermission" value="shell"/> Execute commands (requires approval)</label>
+            <label><input type="checkbox" name="agentPermission" value="plugins"/> Connected MCP tools (remote actions may require approval)</label>
           </div>
           <label><input id="aPC" type="checkbox"/> Enable PC tools for this agent</label>
           <label><input id="aAlways" type="checkbox"/> Allow writes without per-action prompts — requires this computer's separate Always allow permission, and Stop can revoke it immediately</label>
@@ -381,6 +383,29 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
     <p><button id="nRefresh">Refresh</button> <button id="nAll">Clear all</button></p>
     <div id="nList"><p class="muted">No notifications yet. Cloud PC requests, agent replies, finished media and merges, and updates show up here.</p></div>
   </section>
+  <section class="panel" id="tab-mcp" style="grid-column:1/-1">
+<div class="card"><h2>MCP servers</h2><p>Connect local commands or remote Streamable HTTP servers. Each account has its own connections and credentials.</p>
+<div class="row"><button id="mcp-new">New server</button><button id="mcp-refresh">Refresh</button><button id="mcp-firecrawl">Firecrawl HTTPS</button><button id="mcp-firecrawl-local">Firecrawl local</button></div><div id="mcp-list"></div></div>
+<div class="card"><h3>Connection settings</h3>
+<label>Name (required)<input id="mcp-name" required maxlength="100"></label>
+<label>Transport (required)<select id="mcp-type"><option value="http">Streamable HTTP</option><option value="stdio">Local command (stdio)</option></select></label>
+<div id="mcp-remote"><label>MCP server URL (required)<input id="mcp-url" type="url" placeholder="https://example.com/mcp"></label></div>
+<div id="mcp-local" hidden><label>Command (required)<input id="mcp-command" placeholder="npx"></label><label>Arguments (optional; one per line)<textarea id="mcp-args" rows="3"></textarea></label><label>Working directory (optional)<input id="mcp-cwd"></label></div>
+<h4>Authentication (optional)</h4><label>Method<select id="mcp-auth"><option value="none">None</option><option value="bearer">Bearer API key / access token</option><option value="header">Custom API-key header</option><option value="basic">HTTP Basic</option><option value="environment">Environment variable (local only)</option></select></label>
+<label>Header / variable name (only for the selected method)<input id="mcp-keyname" placeholder="X-API-Key or FIRECRAWL_API_KEY"></label>
+<label>Username (HTTP Basic only)<input id="mcp-username" autocomplete="off"></label>
+<label>API key / password (optional)<input id="mcp-key" type="password" autocomplete="new-password"></label><label><input id="mcp-clear" type="checkbox"> Remove saved API key</label>
+<p class="muted">Keys and custom credential values use this account’s OS credential store. Blank key keeps the saved key. No secret appears in the server URL or exported settings. Bearer tokens can be pasted here; browser OAuth enrollment is not provided by this form.</p>
+<details><summary>Advanced settings — all optional</summary>
+<label>Custom HTTP headers (JSON; blank preserves saved, {} clears)<textarea id="mcp-headers" rows="4" placeholder='{"X-Integration":"Vortex"}'></textarea></label>
+<label>Environment variables (JSON; blank preserves saved, {} clears)<textarea id="mcp-environment" rows="4" placeholder='{}'></textarea></label>
+<div class="row"><label>Connection timeout (seconds, default 60)<input id="mcp-connect-timeout" type="number" min="1" max="3600"></label><label>Tool timeout (seconds, default 300)<input id="mcp-call-timeout" type="number" min="1" max="3600"></label></div>
+<label>Protocol<select id="mcp-protocol"><option>2025-11-25</option><option>2025-06-18</option><option>2025-03-26</option><option>2024-11-05</option></select></label>
+<label><input id="mcp-auto" type="checkbox" checked> Connect automatically when an authorized agent needs the tools</label>
+<label><input id="mcp-inherit" type="checkbox"> Inherit all environment variables (may expose other credentials to the server)</label>
+</details><label><input id="mcp-enabled" type="checkbox" checked> Enabled</label>
+<div class="row"><button id="mcp-save" class="primary">Save server</button></div><p id="mcp-message" role="status" aria-live="polite"></p></div>
+</section>
   <section class="panel" id="tab-settings" style="grid-column:1/-1">
     <div class="card">
       <h3>Connection</h3>
@@ -417,5 +442,6 @@ input,select,textarea{font-size:16px}.panel{padding:10px}}
 <script src="workspace.js"></script>
 <script src="workspace-tools.js"></script>
 <script src="royal-shell.js"></script>
+<script src="mcp-ui.js"></script>
 </body>
 </html>

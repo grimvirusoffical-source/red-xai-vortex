@@ -64,7 +64,7 @@ func (s *Server) isOwner() bool {
 	}
 	req, _ := http.NewRequest("GET", base+"/admin/system", nil)
 	req.Header.Set("Authorization", "Bearer "+k)
-	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
 	if err != nil {
 		return false
 	}
@@ -100,7 +100,7 @@ func (s *Server) redx(m string, in map[string]any) map[string]any {
 		if token := keyring.Get("redx-session"); token != "" {
 			status, response := redxDo("GET", "me", map[string]string{"X-RedX-Session": token}, nil)
 			if status == 200 {
-				if account, ok := response["account"].(map[string]any); ok {
+				if account, ok := verifiedAccountView(response); ok {
 					if err := s.activateAccount(accountSubject(account), asString(account["username"]), token, time.Now().Add(5*time.Minute), epoch); err == nil {
 						return s.accountGateResult(terms)
 					}
@@ -187,7 +187,7 @@ func (s *Server) redxFinishAt(status int, response map[string]any, epoch uint64)
 		}
 		if token, _ := response["token"].(string); token != "" {
 			st, me := redxDo("GET", "me", map[string]string{"X-RedX-Session": token}, nil)
-			account, ok := me["account"].(map[string]any)
+			account, ok := verifiedAccountView(me)
 			if st != 200 || !ok {
 				return map[string]any{"ok": false, "error": "The account session could not be verified."}
 			}

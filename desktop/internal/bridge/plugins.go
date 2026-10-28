@@ -48,7 +48,7 @@ func (s *Server) pluginReq(method, suffix string, body any, auth bool) map[strin
 		}
 		req.Header.Set("X-RedX-Session", tok)
 	}
-	res, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	res, err := (&http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
 	if err != nil {
 		return map[string]any{"ok": false, "message": "Plugin store unreachable: " + err.Error()}
 	}
@@ -156,7 +156,7 @@ func (s *Server) pluginInstall(id string) map[string]any {
 	if !pluginIDRe.MatchString(id) {
 		return map[string]any{"ok": false, "message": "bad plugin id"}
 	}
-	res, err := (&http.Client{Timeout: 30 * time.Second}).Get(s.storeBase() + "/" + id)
+	res, err := (&http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Get(s.storeBase() + "/" + id)
 	if err != nil {
 		return map[string]any{"ok": false, "message": err.Error()}
 	}

@@ -45,13 +45,13 @@ struct ConnectionSettings: View {
                 HStack {
                     SecureField(keySaved ? "API key saved in Keychain (enter to replace)" : "API key", text: $key)
                     Button("Save Key") {
-                        Keychain.set(key)
+                        guard Keychain.store(key, account: Keychain.account) else { test = "OS Keychain unavailable; the key was not saved."; return }
                         key = ""
                         keySaved = Keychain.get() != nil
                         if RedXLink.enabled { RedXLink.shared.start(force: true) }
                     }.disabled(key.isEmpty)
                     Button("Remove") {
-                        Keychain.set("")
+                        guard Keychain.store("", account: Keychain.account) else { test = "Could not remove the key from OS Keychain."; return }
                         keySaved = false
                         if RedXLink.enabled { RedXLink.shared.start(force: true) }
                     }.disabled(!keySaved)

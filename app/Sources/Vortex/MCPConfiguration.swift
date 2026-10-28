@@ -68,6 +68,7 @@ struct MCPServerDef: Codable, Identifiable, Hashable {
     func validate() throws {
         guard id.range(of: "^[a-z0-9-]{1,32}$", options: .regularExpression) != nil,
               !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw MCPConfigError("Name and a valid ID are required.") }
+        guard name.utf8.count <= 100, url.utf8.count <= 4096, command.utf8.count <= 4096, headers.count <= 64, env.count <= 128, args.count <= 128 else { throw MCPConfigError("Too many or oversized connection settings.") }
         guard ["stdio", "http"].contains(type) else { throw MCPConfigError("Choose stdio or Streamable HTTP.") }
         guard initializeTimeout.isFinite, requestTimeout.isFinite,
               (1...600).contains(initializeTimeout), (1...3600).contains(requestTimeout),
@@ -86,7 +87,7 @@ struct MCPServerDef: Codable, Identifiable, Hashable {
             guard ["none", "environment"].contains(authMode) else { throw MCPConfigError("Local servers receive API keys through their environment.") }
         }
         for (key, value) in headers {
-            guard Self.headerName(key), !value.contains("\r"), !value.contains("\n") else { throw MCPConfigError("Invalid or protected HTTP header.") }
+            guard Self.headerName(key), !value.contains("\r"), !value.contains("\n"), !value.contains("\0"), value.utf8.count <= 8192 else { throw MCPConfigError("Invalid or protected HTTP header.") }
         }
         guard Set(headers.keys.map { $0.lowercased() }).count == headers.count else { throw MCPConfigError("Duplicate HTTP header names are not allowed.") }
         for (key, value) in env {

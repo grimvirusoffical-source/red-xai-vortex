@@ -40,15 +40,19 @@ function harness({phone = false, fullscreen = true, local = true, savedPalette =
     if (method === 'pcControl.stop') status = {...status, alwaysAllow: false, revision: status.revision + 1, stopped: 2};
     return {...status};
   }};
-  const storage = new Map([['vortex.royalPalette', savedPalette]]);
-  const window = {matchMedia: () => matcher, setInterval(callback) { timers.push(callback); },
+  const profile = 'a'.repeat(64);
+  const paletteKey = 'vortex.royalPalette.' + profile;
+  const storage = new Map([[paletteKey, savedPalette]]);
+  const windowEvents = {};
+  const window = {addEventListener(name, callback) { windowEvents[name] = callback; }, matchMedia: () => matcher, setInterval(callback) { timers.push(callback); },
     localStorage: {
       getItem(key) { if (storageBlocked) throw new Error('Storage unavailable'); return storage.get(key); },
       setItem(key, value) { if (storageBlocked) throw new Error('Storage unavailable'); storage.set(key, value); },
     },
   };
   vm.runInNewContext(source, {window, document, bridge, console}, {filename: 'royal-shell.js'});
-  return {node, document, events, calls, bridge, matcher, timers, storage};
+  windowEvents['vortex-account-changed']?.({detail: {id: profile}});
+  return {node, document, events, calls, bridge, matcher, timers, storage, paletteKey, windowEvents};
 }
 
 test('local control follows confirmed server policy and sends its current revision', async () => {
@@ -141,8 +145,8 @@ test('palette choice restores locally and persists across new sessions', async (
   assert.equal(h.node('royalPalette').value, 'purple');
   h.node('royalPalette').value = 'light';
   await h.node('royalPalette').emit('change');
-  assert.equal(h.storage.get('vortex.royalPalette'), 'light');
-  const next = harness({savedPalette: h.storage.get('vortex.royalPalette')});
+  assert.equal(h.storage.get(h.paletteKey), 'light');
+  const next = harness({savedPalette: h.storage.get(h.paletteKey)});
   assert.equal(next.document.documentElement.dataset.royalPalette, 'light');
   assert.equal(h.node('royalControlStop').disabled, false);
 });
@@ -157,4 +161,15 @@ test('invalid or unavailable palette storage falls back safely without blocking 
   await settle();
   assert.equal(unavailable.document.documentElement.dataset.royalPalette, 'red');
   assert.equal(unavailable.node('royalControlStop').disabled, false);
+});
+
+test('palette is reset for another verified account and invalid identities cannot persist it',async()=>{
+ const h=harness({savedPalette:'purple'});await settle();
+ const next='b'.repeat(64);h.windowEvents['vortex-account-changed']({detail:{id:next}});
+ assert.equal(h.document.documentElement.dataset.royalPalette,'gold');
+ h.node('royalPalette').value='red';await h.node('royalPalette').emit('change');
+ assert.equal(h.storage.get('vortex.royalPalette.'+next),'red');assert.equal(h.storage.get(h.paletteKey),'purple');
+ h.windowEvents['vortex-account-changed']({detail:{id:'../invalid'}});
+ h.node('royalPalette').value='light';await h.node('royalPalette').emit('change');
+ assert.equal(h.storage.has('vortex.royalPalette.../invalid'),false);
 });

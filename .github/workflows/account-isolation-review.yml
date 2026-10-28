@@ -9,38 +9,7 @@ concurrency:
   group: account-isolation-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  source:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    outputs:
-      commit: ${{ steps.source.outputs.commit }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.23.2'
-          cache: false
-      - name: Materialize reviewed source repair on feature branch only
-        id: source
-        env:
-          REPAIR_BRANCH: fix/account-isolation-mcp-20261028
-        run: |
-          set -euo pipefail
-          test "$GITHUB_REF_NAME" = "$REPAIR_BRANCH"
-          if test -f .maintenance/account-isolation/apply.py; then
-            python3 .maintenance/account-isolation/apply.py
-            git add app desktop
-            git rm -r .maintenance/account-isolation
-            git -c user.name='Vortex repair validation' -c user.email='actions@users.noreply.github.com' commit -m 'Isolate verified account workspaces and credentials; add MCP authentication settings and scrolling'
-            git push origin "HEAD:refs/heads/$REPAIR_BRANCH"
-          fi
-          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
   desktop:
-    needs: source
     strategy:
       fail-fast: false
       matrix:
@@ -50,7 +19,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.source.outputs.commit }}
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
@@ -59,44 +27,70 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Go account and desktop regression tests
+      - name: Account isolation, credentials and MCP transports
         working-directory: desktop
         run: go test ./... -count=1 -timeout=8m
       - name: Frontend regression tests
         shell: bash
         run: node --test desktop/frontend/*.test.cjs
-      - name: Export source and dependencies for offline review
-        if: always() && runner.os == 'Linux'
+      - name: Package current desktop and verifier
         shell: bash
+        env:
+          VORTEX_VERSION: '2.12.1'
         run: |
-          mkdir -p review
-          (cd desktop && go mod vendor)
-          tar --exclude=.git --exclude=review --exclude=.build -cf review/vortex-review.tar app desktop gateway scripts
-          git rev-parse HEAD > review/COMMIT.txt
+          if [[ "$RUNNER_OS" == Windows ]]; then target=windows; else target=linux; fi
+          bash scripts/build-desktop-with-helper.sh "$target" amd64 verification-native/desktop
       - uses: actions/upload-artifact@v4
-        if: always() && runner.os == 'Linux'
+        if: success()
         with:
-          name: vortex-isolation-reviewed-source
-          path: review/
-          retention-days: 3
+          name: vortex-isolation-${{ runner.os }}-desktop
+          path: verification-native/
+          retention-days: 7
+          if-no-files-found: error
   macos:
-    needs: source
     runs-on: macos-14
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.source.outputs.commit }}
           persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
       - name: Swift native build and regression tests
         shell: bash
         run: |
           set -o pipefail
-          mkdir -p review
-          swift test --package-path app -j 2 2>&1 | tee review/swift-tests.log
+          mkdir -p verification-native
+          swift test --package-path app -j 2 2>&1 | tee verification-native/swift-tests.log
+      - name: Compile universal native application
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift build --package-path app -c release --arch arm64 --arch x86_64 -j 2
+          bin="$(swift build --package-path app -c release --arch arm64 --arch x86_64 -j 2 --show-bin-path)"
+          cp "$bin/Vortex" verification-native/Vortex
+          lipo -verify_arch arm64 x86_64 verification-native/Vortex
+          git rev-parse HEAD > verification-native/COMMIT.txt
+      - name: Compile matching Mac helpers
+        shell: bash
+        env:
+          VORTEX_VERSION: '2.12.1'
+        run: |
+          set -euo pipefail
+          for arch in arm64 amd64; do
+            out="$PWD/verification-native/darwin-$arch"
+            mkdir -p "$out"
+            (cd bases && CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -buildvcs=false -trimpath -ldflags='-s -w' -o "$out/vortex-base" .)
+            bash scripts/build-desktop-with-helper.sh darwin "$arch" "$out/desktop"
+            cp "$out/desktop/vortex-darwin-$arch" "$out/vortex-phone"
+            cp "$out/desktop/redx-verify" "$out/redx-verify"
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: vortex-isolation-macos-test-results
-          path: review/
-          retention-days: 3
+          name: vortex-isolation-macos-native
+          path: verification-native/
+          retention-days: 7
+          if-no-files-found: error

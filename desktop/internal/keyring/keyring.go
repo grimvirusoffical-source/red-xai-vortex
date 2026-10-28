@@ -4,14 +4,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	oskeyring "github.com/zalando/go-keyring"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sync"
 )
 
-// Cross-platform secret store. Prefers OS keychain via dbus/secret-service on Linux,
-// Credential Manager on Windows (via file fallback with 0600 when libs unavailable).
+// Account-scoped values use the OS credential store. Legacy unscoped login storage
+// is retained for compatibility, but is never used as a fallback for a profile.
 // Never logs or prints values.
 
 var (
@@ -101,12 +102,36 @@ func GetScoped(profile, account string) string {
 			return value
 		}
 	}
-	return Get(name)
+	mu.Lock()
+	defer mu.Unlock()
+	if value, ok := mem[name]; ok {
+		return value
+	}
+	value, err := oskeyring.Get("com.redxai.vortex.accounts", name)
+	if err != nil {
+		return ""
+	}
+	mem[name] = value
+	return value
 }
 func SetScoped(profile, account, value string) error {
 	name, err := scopedAccount(profile, account)
 	if err != nil {
 		return err
 	}
-	return Set(name, value)
+	mu.Lock()
+	defer mu.Unlock()
+	if value == "" {
+		mem[name] = ""
+		err = oskeyring.Delete("com.redxai.vortex.accounts", name)
+		if errors.Is(err, oskeyring.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if err = oskeyring.Set("com.redxai.vortex.accounts", name, value); err != nil {
+		return errors.New("OS credential store unavailable; no plaintext fallback was written")
+	}
+	mem[name] = value
+	return nil
 }

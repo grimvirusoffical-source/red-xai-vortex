@@ -56,7 +56,8 @@ import Foundation
                   let tok = Keychain.get(account: "redx-session"), !tok.isEmpty else { signedIn = false; return }
             let (status, response) = await call("me", session: tok)
             guard epoch == authenticationEpoch else { return }
-            guard status == 200, let account = response["account"] as? [String: Any],
+            let account = (response["account"] as? [String: Any]) ?? response
+            guard status == 200,
                   let subject = (account["sub"] as? String) ?? (account["id"] as? String) ?? (account["key"] as? String), !subject.isEmpty else {
                 signedIn = false
                 msg = "Sign-in could not be verified. Your existing data is preserved; no account or owner session was assumed."

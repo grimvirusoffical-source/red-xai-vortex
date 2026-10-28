@@ -150,3 +150,17 @@ func TestMediaCacheIsScopedToWorkspace(t *testing.T) {
 		t.Fatal("B overwrote A media cache")
 	}
 }
+
+func TestVerifiedAccountViewAcceptsTheAccountServiceEnvelopeAndRejectsUsernames(t *testing.T) {
+	for _, v := range []map[string]any{{"id": "server-id", "username": "sample"}, {"account": map[string]any{"id": "server-id", "username": "sample"}}} {
+		a, ok := verifiedAccountView(v)
+		if !ok || accountSubject(a) != "server-id" {
+			t.Fatal("verified account shape rejected", v)
+		}
+	}
+	for _, v := range []map[string]any{{"username": "owner"}, {"account": map[string]any{"email": "owner@example.invalid"}}, {"id": "bad\nidentifier"}} {
+		if _, ok := verifiedAccountView(v); ok {
+			t.Fatal("unverified identity accepted")
+		}
+	}
+}

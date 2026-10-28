@@ -13,9 +13,31 @@ final class MCPClient: @unchecked Sendable {
     private var waiting: [Int: CheckedContinuation<[String: Any], Error>] = [:]
     private let lock = NSLock()
     private var session: String?
+    private var negotiatedVersion: String
+    private var stopped = false
+    private let httpSession: URLSession
     var stderrTail = ""
 
-    init(_ d: MCPServerDef) { def = d }
+    init(_ d: MCPServerDef, httpSession: URLSession? = nil) {
+        def = d; negotiatedVersion = d.protocolVersion
+        self.httpSession = httpSession ?? URLSession(configuration: .ephemeral, delegate: AccountHTTP(), delegateQueue: nil)
+    }
+    private func transportState() throws -> (String, String?) {
+        lock.lock(); defer { lock.unlock() }
+        guard !stopped else { throw MCPConfigError("MCP connection is closed.") }
+        return (negotiatedVersion, session)
+    }
+    private func setVersion(_ value: String) throws {
+        guard ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"].contains(value) else { throw MCPConfigError("Server selected an unsupported MCP protocol version.") }
+        lock.lock(); negotiatedVersion = value; lock.unlock()
+    }
+    private func acceptSession(_ value: String?, initializing: Bool) throws {
+        guard let value else { return }
+        guard !value.isEmpty, value.utf8.count <= 1024, value.utf8.allSatisfy({ $0 >= 0x21 && $0 <= 0x7e }) else { throw MCPConfigError("Invalid MCP session identifier.") }
+        lock.lock(); defer { lock.unlock() }
+        guard initializing || session == value else { throw MCPConfigError("MCP session changed unexpectedly. Reconnect the server.") }
+        session = value
+    }
 
     func start() async throws -> [MCPTool] {
         try def.validate()
@@ -37,18 +59,26 @@ final class MCPClient: @unchecked Sendable {
             p.terminationHandler = { [weak self] _ in self?.failAll("MCP server exited. Check the command and credentials; stderr is not displayed because it may contain secrets.") }
             try p.run(); proc = p
         }
-        _ = try await request("initialize", ["protocolVersion": def.protocolVersion, "capabilities": [:] as [String: Any],
+        let initialized = try await request("initialize", ["protocolVersion": def.protocolVersion, "capabilities": [:] as [String: Any],
                                               "clientInfo": ["name": "Red-XAI Vortex", "version": "2.2"]], timeout: def.initializeTimeout)
+        guard let version = initialized["protocolVersion"] as? String else { throw MCPConfigError("MCP initialization did not return a protocol version.") }
+        try setVersion(version)
         try await notify("notifications/initialized")
-        let r = try await request("tools/list", [:], timeout: def.requestTimeout)
-        return (r["tools"] as? [[String: Any]] ?? []).map {
+        var all: [[String: Any]] = [], seen = Set<String>(), cursor = ""
+        repeat {
+            let r = try await request("tools/list", cursor.isEmpty ? [:] : ["cursor": cursor], timeout: def.requestTimeout)
+            all += r["tools"] as? [[String: Any]] ?? []
+            cursor = r["nextCursor"] as? String ?? ""
+            guard all.count <= 4096, seen.count < 256, cursor.isEmpty || seen.insert(cursor).inserted else { throw MCPConfigError("Invalid or excessive MCP tool pagination.") }
+        } while !cursor.isEmpty
+        return all.map {
             let ann = $0["annotations"] as? [String: Any] ?? [:]
             return MCPTool(name: $0["name"] as? String ?? "", description: $0["description"] as? String ?? "",
                            schema: $0["inputSchema"] as? [String: Any] ?? ["type": "object", "properties": [:] as [String: Any]],
-                           destructive: (ann["destructiveHint"] as? Bool) == true)
+                           destructive: (ann["readOnlyHint"] as? Bool) != true || (ann["destructiveHint"] as? Bool) == true)
         }
     }
-    func stop() { outPipe.fileHandleForReading.readabilityHandler = nil; errPipe.fileHandleForReading.readabilityHandler = nil; if proc?.isRunning == true { proc?.terminate() }; proc = nil; failAll("stopped") }
+    func stop() { lock.lock(); stopped = true; lock.unlock(); httpSession.invalidateAndCancel(); outPipe.fileHandleForReading.readabilityHandler = nil; errPipe.fileHandleForReading.readabilityHandler = nil; if proc?.isRunning == true { proc?.terminate() }; proc = nil; failAll("stopped") }
 
     func call(_ tool: String, _ args: [String: Any]) async throws -> String {
         let r = try await request("tools/call", ["name": tool, "arguments": args], timeout: def.requestTimeout)
@@ -78,7 +108,7 @@ final class MCPClient: @unchecked Sendable {
     private func deliver(_ o: [String: Any]) {
         guard let id = o["id"] as? Int else { return }    // ignore server notifications/requests
         lock.lock(); let c = waiting.removeValue(forKey: id); lock.unlock()
-        if let e = o["error"] as? [String: Any] { c?.resume(throwing: NSError(domain: "MCP", code: e["code"] as? Int ?? -1, userInfo: [NSLocalizedDescriptionKey: e["message"] as? String ?? "MCP error"])) }
+        if let e = o["error"] as? [String: Any] { c?.resume(throwing: NSError(domain: "MCP", code: e["code"] as? Int ?? -1, userInfo: [NSLocalizedDescriptionKey: "MCP server rejected the request. Check authentication, permissions and arguments."])) }
         else { c?.resume(returning: o["result"] as? [String: Any] ?? [:]) }
     }
     private func failAll(_ m: String) {
@@ -98,7 +128,7 @@ final class MCPClient: @unchecked Sendable {
         let msg: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method, "params": params]
         if def.type == "http" {
             let o = try await http(msg, timeout: timeout)
-            if let e = o["error"] as? [String: Any] { throw NSError(domain: "MCP", code: -1, userInfo: [NSLocalizedDescriptionKey: e["message"] as? String ?? "MCP error"]) }
+            if let e = o["error"] as? [String: Any] { throw NSError(domain: "MCP", code: -1, userInfo: [NSLocalizedDescriptionKey: "MCP server rejected the request. Check authentication, permissions and arguments."]) }
             return o["result"] as? [String: Any] ?? [:]
         }
         return try await withThrowingTaskGroup(of: [String: Any].self) { g in
@@ -119,23 +149,29 @@ final class MCPClient: @unchecked Sendable {
     }
     private func http(_ msg: [String: Any], timeout: Double) async throws -> [String: Any] {
         try def.validate()
+        let (version, sessionID) = try transportState()
         guard let u = URL(string: def.url) else { throw URLError(.badURL) }
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = timeout
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
-        r.setValue(def.protocolVersion, forHTTPHeaderField: "MCP-Protocol-Version")
-        if let s = session { r.setValue(s, forHTTPHeaderField: "Mcp-Session-Id") }
+        r.setValue(version, forHTTPHeaderField: "MCP-Protocol-Version")
+        if let s = sessionID { r.setValue(s, forHTTPHeaderField: "Mcp-Session-Id") }
         for (k, v) in try def.effectiveHeaders() { r.setValue(v, forHTTPHeaderField: k) }
         r.httpBody = try JSONSerialization.data(withJSONObject: msg)
-        let (d, resp) = try await AccountHTTP.session.data(for: r)
+        let (bytes, resp) = try await httpSession.bytes(for: r)
         let h = resp as? HTTPURLResponse
-        if let s = h?.value(forHTTPHeaderField: "Mcp-Session-Id") { session = s }
+        try acceptSession(h?.value(forHTTPHeaderField: "Mcp-Session-Id"), initializing: msg["method"] as? String == "initialize")
         if let c = h?.statusCode, c >= 300 { throw NSError(domain: "MCP", code: c, userInfo: [NSLocalizedDescriptionKey: "MCP HTTP \(c). Check the selected authentication method, endpoint and granted scopes. Credentials and response bodies are not logged."]) }
-        guard d.count <= def.maxResponseBytes else { throw MCPConfigError("MCP response exceeds the configured byte limit.") }
         if msg["id"] == nil { return [:] }
-        if (h?.value(forHTTPHeaderField: "Content-Type") ?? "").contains("text/event-stream") {
-            return try MCPResponse.parseSSE(d, requestID: msg["id"])
+        let streaming = (h?.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased().contains("text/event-stream")
+        var d = Data()
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            d.append(byte)
+            guard d.count <= def.maxResponseBytes else { throw MCPConfigError("MCP response exceeds the configured byte limit.") }
+            if streaming && byte == 0x0a, let object = try? MCPResponse.parseSSE(d, requestID: msg["id"]) { return object }
         }
+        if streaming { return try MCPResponse.parseSSE(d, requestID: msg["id"]) }
 
         guard let object = try JSONSerialization.jsonObject(with: d) as? [String: Any],
               MCPResponse.sameID(object["id"], msg["id"]) else { throw MCPConfigError("MCP returned a mismatched response ID.") }

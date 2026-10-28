@@ -54,6 +54,7 @@ test('Windows and Linux expose persistent account switching without hiding the o
  assert.match(js,/\$\('#fSignOut'\)\.onclick=signOutVortex/);
  assert.match(js,/bridge\.call\('redx\.logout'/);
  assert.match(js,/bridge\.call\('redx\.owner\.continue'/);
- assert.match(js,/g\.ownerAvailable!==true/);
+ assert.match(js,/\$\('#gOwnerContinue'\)\.hidden=true/);
+ assert.doesNotMatch(js,/signedIn\s*\|\|\s*g\.owner/);
  assert.match(js,/location\.reload\(\)/);
 });

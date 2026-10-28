@@ -182,11 +182,11 @@ enum API {
         r.httpBody = try JSONSerialization.data(withJSONObject: body)
         // Retry while the server swaps models (5xx during load/unload).
         var attempt = 0
-        var bytes: URLSession.AsyncBytes
+        var acceptedBytes: URLSession.AsyncBytes?
         while true {
             let (b, resp) = try await URLSession.shared.bytes(for: r)
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-            if code == 200 { bytes = b; break }
+            if code == 200 { acceptedBytes = b; break }
             var raw = Data()
             for try await x in b { raw.append(x); if raw.count > 4096 { break } }
             if code >= 500 && attempt < 2 {
@@ -201,6 +201,7 @@ enum API {
             }
             throw gatewayError(code, raw)
         }
+        guard let bytes = acceptedBytes else { throw URLError(.badServerResponse) }
         var tps: Double?
         for try await line in bytes.lines {
             try Task.checkCancellation()

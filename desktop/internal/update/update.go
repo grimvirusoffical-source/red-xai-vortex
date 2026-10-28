@@ -20,7 +20,7 @@ import (
 )
 
 // Version is set at build time: -ldflags "-X .../update.Version=2.2".
-var Version = "2.2"
+var Version = "2.12.1"
 
 // API can be overridden with VORTEX_UPDATE_API (used for testing).
 func api() string {
