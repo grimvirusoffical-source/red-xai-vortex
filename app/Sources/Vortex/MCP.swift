@@ -255,54 +255,133 @@ final class MCPClient: @unchecked Sendable {
 }
 
 struct MCPView: View {
-    @StateObject var ms = MCPStore.shared
-    @Local var editing: MCPServerDef?
+    @StateObject private var store = MCPStore.shared
+    @Local private var editing: MCPServerDef?
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("MCP Servers").font(.largeTitle.bold()); Spacer()
-                    Button("Add Server") { editing = MCPServerDef(id: "server-\(ms.servers.count + 1)", name: "") }
-                    Button("Import from Claude Desktop") { ms.importConfig(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Claude/claude_desktop_config.json")) }
-                    Button("Import JSON…") {
-                        let panel = NSOpenPanel(); panel.allowedContentTypes = [.json]
-                        panel.begin { if $0 == .OK, let url = panel.url { Task { @MainActor in MCPStore.shared.importConfig(url) } } }
-                    }
+                header
+                Text("Connect local stdio tools or remote Streamable HTTP servers. Authentication and advanced settings are optional. API keys, header values and environment values are stored in Keychain. Destructive tools retain the existing approval rules.")
+                    .font(.callout).foregroundStyle(.secondary)
+                if !store.message.isEmpty {
+                    Text(store.message).font(.callout).textSelection(.enabled)
                 }
-                Text("Connect local stdio tools or remote Streamable HTTP servers. Authentication and advanced settings are optional. API keys, header values and environment values are stored in Keychain. Destructive tools retain the existing approval rules.").font(.callout).foregroundStyle(.secondary)
-                if !ms.message.isEmpty { Text(ms.message).font(.callout).textSelection(.enabled) }
-                ForEach(ms.servers) { definition in
-                    GroupBox {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(definition.name).bold(); Text(definition.type).font(.caption)
-                                if definition.authMode != "none" { Text(definition.authMode).font(.caption).foregroundStyle(.secondary) }
-                                Spacer()
-                                Toggle("Enabled", isOn: Binding(get: { definition.enabled }, set: { enabled in
-                                    var updated = definition; updated.enabled = enabled
-                                    if ms.upsert(updated) { Task { if enabled { await ms.connect(updated.id) } } }
-                                }))
-                                Button("Test / Reconnect") { Task { await ms.connect(definition.id) } }.disabled(!definition.enabled)
-                                Button("Edit") { editing = definition }
-                                Button(role: .destructive) { ms.delete(definition.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
-                            }
-                            Text(definition.type == "http" ? definition.url : definition.command).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
-                            if let status = ms.status[definition.id] { Text(status).font(.caption).foregroundStyle(status.hasPrefix("Error") ? .red : .green).textSelection(.enabled) }
-                            if let tools = ms.tools[definition.id], !tools.isEmpty { Text(tools.map { $0.name + ($0.destructive ? " ⚠︎" : "") }.joined(separator: " · ")).font(.caption2.monospaced()).foregroundStyle(.secondary) }
-                        }.padding(4)
-                    }
-                }
-                if ms.servers.isEmpty { Text("No servers yet.").foregroundStyle(.secondary) }
-            }.padding(20)
+                serverList
+            }
+            .padding(20)
         }
-        .task { await ms.connectEnabled() }
-        .sheet(item: $editing) { definition in
-            MCPEditor(def: definition, existing: ms.servers.contains(where: { $0.id == definition.id }), save: { updated in
-                guard ms.upsert(updated) else { return ms.message }
-                editing = nil
-                if updated.enabled { Task { await ms.connect(updated.id) } }
-                return nil
-            }, cancel: { editing = nil })
+        .task { await store.connectEnabled() }
+        .sheet(item: $editing) { (definition: MCPServerDef) in
+            MCPEditor(def: definition, existing: store.servers.contains { $0.id == definition.id }, save: saveEdited, cancel: { editing = nil })
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            Text("MCP Servers").font(.largeTitle.bold())
+            Spacer()
+            Button("Add Server") {
+                editing = MCPServerDef(id: "server-\(store.servers.count + 1)", name: "")
+            }
+            Button("Import from Claude Desktop") {
+                let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Claude/claude_desktop_config.json")
+                store.importConfig(url)
+            }
+            Button("Import JSON…", action: importJSON)
+        }
+    }
+
+    private var serverList: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(store.servers) { (definition: MCPServerDef) in
+                MCPServerCard(
+                    definition: definition,
+                    status: store.status[definition.id],
+                    tools: store.tools[definition.id] ?? [],
+                    setEnabled: { (enabled: Bool) in setEnabled(definition, enabled) },
+                    reconnect: { Task { await store.connect(definition.id) } },
+                    edit: { editing = definition },
+                    remove: { store.delete(definition.id) }
+                )
+            }
+            if store.servers.isEmpty {
+                Text("No servers yet.").foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func setEnabled(_ definition: MCPServerDef, _ enabled: Bool) {
+        var updated = definition
+        updated.enabled = enabled
+        guard store.upsert(updated), enabled else { return }
+        Task { await store.connect(updated.id) }
+    }
+
+    private func saveEdited(_ definition: MCPServerDef) -> String? {
+        guard store.upsert(definition) else { return store.message }
+        editing = nil
+        if definition.enabled { Task { await store.connect(definition.id) } }
+        return nil
+    }
+
+    private func importJSON() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.begin { result in
+            guard result == .OK, let url = panel.url else { return }
+            Task { @MainActor in MCPStore.shared.importConfig(url) }
+        }
+    }
+}
+
+private struct MCPServerCard: View {
+    let definition: MCPServerDef
+    let status: String?
+    let tools: [MCPTool]
+    let setEnabled: (Bool) -> Void
+    let reconnect: () -> Void
+    let edit: () -> Void
+    let remove: () -> Void
+
+    private var enabled: Binding<Bool> {
+        Binding<Bool>(get: { definition.enabled }, set: setEnabled)
+    }
+    private var toolSummary: String {
+        tools.map { $0.name + ($0.destructive ? " ⚠︎" : "") }.joined(separator: " · ")
+    }
+    var body: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 6) {
+                controls
+                Text(definition.type == "http" ? definition.url : definition.command)
+                    .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                if let status {
+                    Text(status).font(.caption)
+                        .foregroundStyle(status.hasPrefix("Error") ? Color.red : Color.green)
+                        .textSelection(.enabled)
+                }
+                if !tools.isEmpty {
+                    Text(toolSummary).font(.caption2.monospaced()).foregroundStyle(.secondary)
+                }
+            }
+            .padding(4)
+        }
+    }
+    private var controls: some View {
+        HStack {
+            Text(definition.name).bold()
+            Text(definition.type).font(.caption)
+            if definition.authMode != "none" {
+                Text(definition.authMode).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Toggle("Enabled", isOn: enabled)
+            Button("Test / Reconnect", action: reconnect).disabled(!definition.enabled)
+            Button("Edit", action: edit)
+            Button(role: .destructive, action: remove) {
+                Image(systemName: "trash")
+            }.buttonStyle(.borderless)
         }
     }
 }
