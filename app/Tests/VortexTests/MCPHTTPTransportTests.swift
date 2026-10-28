@@ -7,9 +7,8 @@ private final class MCPHTTPFixture {
     let port: Int
 
     init() throws {
-        // SwiftPM bundles differ between command-line and XCTest hosts. Resolve
-        // copied and processed layouts, with the checked-out test source as a
-        // final fallback. Never continue with a nonexistent fixture path.
+        // Read the resource in the XCTest host. The child receives its source,
+        // not a bundle path whose resolution can differ under test runners.
         let candidates: [URL?] = [
             Bundle.module.url(forResource: "mcp-fixture", withExtension: "py", subdirectory: "Fixtures"),
             Bundle.module.url(forResource: "mcp-fixture", withExtension: "py"),
@@ -19,14 +18,18 @@ private final class MCPHTTPFixture {
         guard let fixture = candidates.compactMap({ $0 }).first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
             throw MCPConfig.error("MCP test fixture resource is missing from the bundle and source checkout.")
         }
+        let script = try String(contentsOf: fixture, encoding: .utf8)
+        guard script.contains("ThreadingHTTPServer"), script.utf8.count < 65536 else {
+            throw MCPConfig.error("MCP test fixture resource is invalid.")
+        }
         let output = Pipe()
         let errors = Pipe()
         if FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-            process.arguments = ["-u", fixture.path]
+            process.arguments = ["-u", "-c", script]
         } else {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = ["python3", "-u", fixture.path]
+            process.arguments = ["python3", "-u", "-c", script]
         }
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = output
