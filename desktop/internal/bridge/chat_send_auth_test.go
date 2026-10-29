@@ -25,7 +25,7 @@ func TestChatForbiddenDoesNotFabricateAssistantReply(t *testing.T) {
 	st.Settings.BaseURL = gateway.URL + "/v1"
 	st.Settings.PlainChat = true // bypass an unavailable RedX Link, not gateway security
 	st.SaveChat(store.Chat{ID: "forbidden-chat", Title: "New chat", Updated: time.Now()})
-	s := &Server{St: st}
+	s := &Server{St: st, baseCredential: func(string) string { return "redx_ai_test_fixture_key" }}
 	out := s.chatSend(map[string]any{
 		"id": "forbidden-chat", "text": "Please reply", "model": "vortex-mini", "modelExplicit": true,
 	})
