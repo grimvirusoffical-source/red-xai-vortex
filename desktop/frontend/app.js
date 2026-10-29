@@ -27,8 +27,10 @@ async function refresh(){
   try{
     const s = await bridge.call('status');
     $('#status').textContent = s.ok ? 'ready' : (s.error||'error');
-    $('#conn').textContent = s.connected ? 'connected' : 'offline';
+    const keyMissing = s.apiKeySaved === false;
+    $('#conn').textContent = s.connected ? 'connected' : (keyMissing ? 'API key required' : 'offline');
     $('#conn').className = 'pill '+(s.connected?'ok':'bad');
+    $('#conn').title = keyMissing ? 'Red-XAI account sign-in is active, but this profile still needs a Vortex model API key.' : '';
     if(s.baseURL) $('#baseURL').value = s.baseURL;
     if('autoUpdate' in s) $('#autoUpdate').checked = s.autoUpdate;
     if('secureChat' in s) $('#secureChat').checked = s.secureChat;

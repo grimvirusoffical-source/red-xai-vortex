@@ -36,7 +36,7 @@ jobs:
       - name: Complete native Windows build
         shell: bash
         run: |
-          VORTEX_VERSION=2.12.0 bash scripts/build-desktop-with-helper.sh windows amd64 "$PWD/dist/windows"
+          VORTEX_VERSION=2.12.2 bash scripts/build-desktop-with-helper.sh windows amd64 "$PWD/dist/windows"
           cp -R desktop/frontend dist/windows/frontend
           test -s dist/windows/vortex.exe
           test -s dist/windows/vortex-base.exe
@@ -150,7 +150,7 @@ jobs:
       - name: Validate official release publisher script
         run: bash -n scripts/publish-vortex-release.sh
       - name: Build Linux package executables
-        run: VORTEX_VERSION=2.12.0 bash scripts/build-desktop-with-helper.sh linux amd64 "$PWD/dist/linux"
+        run: VORTEX_VERSION=2.12.2 bash scripts/build-desktop-with-helper.sh linux amd64 "$PWD/dist/linux"
       - name: Stage complete Linux manual test archive from last verified runtime
         if: github.ref == 'refs/heads/main'
         env:

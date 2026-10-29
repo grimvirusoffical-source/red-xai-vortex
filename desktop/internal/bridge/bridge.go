@@ -158,9 +158,13 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 	case "workspace.action":
 		return s.workspaceAction(in)
 	case "status":
-		models, connected := s.listModels()
+		keySaved := strings.TrimSpace(s.secretGet("vortex-api-key")) != ""
+		models, connected := []string{"vortex"}, false
+		if keySaved {
+			models, connected = s.listModels()
+		}
 		return map[string]any{
-			"ok": true, "connected": connected, "baseURL": s.St.Settings.BaseURL, "autoUpdate": !s.St.Settings.NoAutoUpdate,
+			"ok": true, "connected": connected, "apiKeySaved": keySaved, "baseURL": s.St.Settings.BaseURL, "autoUpdate": !s.St.Settings.NoAutoUpdate,
 			"secureChat": !s.St.Settings.PlainChat, "phoneChat": s.St.Settings.PhoneChat, "link": s.linkStatus(),
 			"agents": s.St.Agents, "models": models, "chats": chatSummaries(s.St.Chats),
 		}
@@ -186,8 +190,14 @@ func (s *Server) dispatch(m string, in map[string]any) map[string]any {
 		s.St.SetSettings(st)
 		s.applyLink()
 		s.applyPhone()
-		return map[string]any{"ok": true, "message": "Saved. Key stored in OS credential store."}
+		if strings.TrimSpace(s.secretGet("vortex-api-key")) == "" {
+			return map[string]any{"ok": true, "message": "Settings saved. Add a Vortex model API key to enable model access."}
+		}
+		return map[string]any{"ok": true, "message": "Saved. Vortex model key stored in OS credential store."}
 	case "settings.probe":
+		if strings.TrimSpace(s.secretGet("vortex-api-key")) == "" {
+			return map[string]any{"ok": false, "message": missingVortexKeyMessage()}
+		}
 		models, ok := s.listModels()
 		if !ok {
 			return map[string]any{"ok": false, "message": "Could not reach gateway /v1/models"}
@@ -427,6 +437,10 @@ func (s *Server) chatSend(in map[string]any) map[string]any {
 	for _, m := range c.Messages {
 		msgs = append(msgs, map[string]string{"role": m.Role, "content": m.Content})
 	}
+	if key == "" && s.agentUsesVortex(agentID) {
+		s.St.SaveChat(*c)
+		return map[string]any{"error": missingVortexKeyMessage()}
+	}
 	body := map[string]any{"model": model, "messages": msgs, "temperature": 0.4, "max_tokens": maxTok}
 	raw, _ := json.Marshal(body)
 	cli := &http.Client{Timeout: 600 * time.Second}
@@ -529,8 +543,27 @@ func (s *Server) agentSave(in map[string]any) map[string]any {
 	return s.saveUnifiedAgent(in)
 }
 
+func missingVortexKeyMessage() string {
+	return "Red-XAI account sign-in is active, but this profile has no Vortex model API key. Open Settings → Connection and add a redx_ai_ or redx_xai_ key."
+}
+
+func (s *Server) agentUsesVortex(agentID string) bool {
+	if agentID == "" {
+		return true
+	}
+	for _, a := range s.St.Agents {
+		if a.ID == agentID {
+			return a.Provider == "" || a.Provider == "vortex"
+		}
+	}
+	return true
+}
+
 func (s *Server) testVortex() map[string]any {
-	key := s.secretGet("vortex-api-key")
+	key := strings.TrimSpace(s.secretGet("vortex-api-key"))
+	if key == "" {
+		return map[string]any{"ok": false, "message": missingVortexKeyMessage()}
+	}
 	body := map[string]any{
 		"model": "vortex",
 		"messages": []map[string]string{

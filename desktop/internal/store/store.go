@@ -59,6 +59,8 @@ type Msg struct {
 	Name    string `json:"name,omitempty"` // speaker name in agent/party chats
 }
 
+const DefaultBaseURL = "https://ai.red-xai.com/v1"
+
 type Settings struct {
 	BaseURL      string   `json:"baseURL"`
 	ActiveID     string   `json:"activeAgent"`
@@ -94,7 +96,7 @@ func Open() *Store {
 // isolated fixtures without changing the user's home or existing configuration.
 func OpenAt(d string) *Store {
 	_ = os.MkdirAll(d, 0700)
-	s := &Store{Dir: d, Settings: Settings{BaseURL: "https://45.77.105.187/v1", ActiveID: "vortex-default"}}
+	s := &Store{Dir: d, Settings: Settings{BaseURL: DefaultBaseURL, ActiveID: "vortex-default"}}
 	s.load()
 	s.loadPCPolicy()
 	s.loadWorkspace()
@@ -115,8 +117,11 @@ func (s *Store) load() {
 	_ = readJSON(s.path("agents.json"), &s.Agents)
 	_ = readJSON(s.path("chats.json"), &s.Chats)
 	_ = readJSON(s.path("settings.json"), &s.Settings)
-	if b := s.Settings.BaseURL; b == "" || strings.Contains(b, ":8091") || strings.Contains(b, ":18091") || strings.HasPrefix(b, "http://45.77.105.187") {
-		s.Settings.BaseURL = "https://45.77.105.187/v1"
+	b := strings.TrimSpace(s.Settings.BaseURL)
+	if b == "" || strings.Contains(b, ":8091") || strings.Contains(b, ":18091") ||
+		strings.HasPrefix(b, "http://45.77.105.187") || strings.HasPrefix(b, "https://45.77.105.187") {
+		s.Settings.BaseURL = DefaultBaseURL
+		writeJSON(s.path("settings.json"), s.Settings)
 	}
 }
 
