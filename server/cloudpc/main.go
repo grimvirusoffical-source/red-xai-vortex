@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"html/template"
@@ -196,17 +197,20 @@ func getSess(r *http.Request) (string, *sess) {
 		delete(sessions, c.Value)
 		return "", nil
 	}
-	if time.Since(s.checked) > 5*time.Minute {
-		rxs := s.rxs
-		mu.Unlock()
-		_, ok := meOf(rxs)
-		mu.Lock()
-		if !ok {
-			delete(sessions, c.Value)
-			return "", nil
-		}
-		s.checked = time.Now()
+	// A local Cloud PC cookie must not outlive revocation at Accounts. Also
+	// reject a changed subject or username instead of retaining stale rights.
+	rxs, expected := s.rxs, s.user
+	mu.Unlock()
+	who, ok := meOf(rxs)
+	mu.Lock()
+	if sessions[c.Value] != s {
+		return "", nil
 	}
+	if !ok || who != expected || time.Now().After(s.exp) {
+		delete(sessions, c.Value)
+		return "", nil
+	}
+	s.checked = time.Now()
 	return c.Value, s
 }
 
@@ -282,14 +286,31 @@ func render(w http.ResponseWriter, s *sess, msg string) {
 func sameOrigin(r *http.Request) bool {
 	o := r.Header.Get("Origin")
 	if o == "" || o == "null" {
-		return o == ""
+		return false
 	}
 	u, err := url.Parse(o)
-	return err == nil && u.Host == r.Host
+	scheme := "http"
+	if secure(r) {
+		scheme = "https"
+	}
+	return err == nil && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == "" &&
+		strings.EqualFold(u.Host, r.Host) && u.Scheme == scheme
 }
 
 func cloud(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimPrefix(r.URL.Path, pfx)
+	switch p {
+	case "/request", "/approve", "/deny", "/start", "/stop":
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+	}
+	if r.Method == http.MethodPost && !sameOrigin(r) {
+		http.Error(w, "bad origin", http.StatusForbidden)
+		return
+	}
 	tok, s := getSess(r)
 	if s != nil && !termsOK(w, r) {
 		return
@@ -299,11 +320,20 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 			toSignin(w, r)
 			return
 		}
-		if s.port == "" {
-			http.Redirect(w, r, pfx+"/", 303)
+		if !isApproved(usernameOf(s)) {
+			http.Error(w, "Cloud PC access is not approved.", http.StatusForbidden)
+			return
+		}
+		if (r.Header.Get("Origin") != "" || strings.EqualFold(r.Header.Get("Upgrade"), "websocket")) && !sameOrigin(r) {
+			http.Error(w, "bad origin", http.StatusForbidden)
 			return
 		}
 		mu.Lock()
+		if s.port == "" {
+			mu.Unlock()
+			http.Redirect(w, r, pfx+"/", 303)
+			return
+		}
 		if time.Since(s.touched) > time.Minute {
 			s.touched = time.Now()
 			go run("cloudpc", "/usr/local/sbin/cloudpc-ctl", "touch", s.id)
@@ -313,6 +343,23 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 		t, _ := url.Parse("http://127.0.0.1:" + port)
 		rp := httputil.NewSingleHostReverseProxy(t)
 		rp.FlushInterval = -1
+		// An established desktop socket must also lose access when its website
+		// session or Cloud PC approval is revoked, without waiting for reconnect.
+		sessionRequest := &http.Request{Header: make(http.Header)}
+		sessionRequest.AddCookie(&http.Cookie{Name: "cpc", Value: tok})
+		rp.ModifyResponse = func(response *http.Response) error {
+			if response.StatusCode == http.StatusSwitchingProtocols {
+				go func() {
+					ticker := time.NewTicker(30 * time.Second)
+					defer ticker.Stop()
+					watchDesktopAuthorization(r.Context(), ticker.C, func() bool {
+						_, current := getSess(sessionRequest)
+						return current == s && isApproved(usernameOf(current))
+					}, response.Body)
+				}()
+			}
+			return nil
+		}
 		rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("desktop proxy: %v", err)
 			http.Error(w, "desktop unreachable", 502)
@@ -322,12 +369,11 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 			r.URL.Path = "/"
 		}
 		r.Header.Del("Cookie")
+		r.Header.Del("Authorization")
+		r.Header.Del("X-RedX-Session")
+		r.Header.Del("X-RedX-Flow")
 		r.Host = "127.0.0.1:" + port
 		rp.ServeHTTP(w, r)
-		return
-	}
-	if r.Method == "POST" && !sameOrigin(r) {
-		http.Error(w, "bad origin", 403)
 		return
 	}
 	if s == nil {
@@ -434,6 +480,23 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 		render(w, s, "Desktop shut down.")
 	default:
 		http.NotFound(w, r)
+	}
+}
+
+func watchDesktopAuthorization(ctx context.Context, ticks <-chan time.Time, allowed func() bool, connection io.Closer) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, ok := <-ticks:
+			if !ok {
+				return
+			}
+			if !allowed() {
+				_ = connection.Close()
+				return
+			}
+		}
 	}
 }
 
