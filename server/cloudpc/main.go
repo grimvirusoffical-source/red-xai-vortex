@@ -24,6 +24,7 @@ const pfx = "/vortex/cloudpc"
 type sess struct {
 	rxs     string
 	user    string
+	account accountIdentity
 	checked time.Time
 	id      string
 	port    string
@@ -46,36 +47,21 @@ func env(k, d string) string {
 	return d
 }
 
-// Cloud PC access: owners (CPC_OWNERS, comma-separated usernames; default jf) are auto-approved.
-// Everyone else must Request access; an owner Approves from the panel.
+// Cloud PC access binds to canonical account IDs. An exact private owner-ID
+// allowlist additionally requires the authority's owner role and completed MFA.
 
 type aclFile struct {
-	Approved []string          `json:"approved"`
-	Pending  map[string]string `json:"pending"` // username -> requested_at RFC3339
+	Schema    int               `json:"schema"`
+	Approved  []string          `json:"approved"`
+	Pending   map[string]string `json:"pending"` // immutable account ID -> requested_at
+	Audit     []aclAudit        `json:"audit"`
+	AuditHead string            `json:"audit_head,omitempty"`
 }
 
 func aclPath() string { return env("CPC_ACL", "/var/lib/cloudpc/acl.json") }
 
-func owners() []string {
-	v := env("CPC_OWNERS", "jf,maindirectory")
-	var out []string
-	for _, p := range strings.Split(v, ",") {
-		p = strings.ToLower(strings.TrimSpace(p))
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-func isOwner(username string) bool {
-	u := strings.ToLower(strings.TrimSpace(username))
-	for _, o := range owners() {
-		if u == o {
-			return true
-		}
-	}
-	return false
+func isOwner(s *sess) bool {
+	return s != nil && s.account.Owner && time.Now().UnixMilli() < s.account.ExpiresMs
 }
 
 func usernameOf(s *sess) string {
@@ -86,17 +72,19 @@ func usernameOf(s *sess) string {
 	return s.user
 }
 
-func isApproved(username string) bool {
-	if isOwner(username) {
+func isApproved(s *sess) bool {
+	if s == nil || !validAccountID(s.account.ID) || time.Now().UnixMilli() >= s.account.ExpiresMs {
+		return false
+	}
+	if isOwner(s) {
 		return true
 	}
 	a, err := loadACL()
 	if err != nil {
 		return false
 	}
-	u := strings.ToLower(username)
 	for _, x := range a.Approved {
-		if strings.ToLower(x) == u {
+		if x == s.account.ID {
 			return true
 		}
 	}
@@ -126,7 +114,10 @@ func acctCall(route, flow, session string, body any) (int, map[string]any) {
 		rd = bytes.NewReader(bb)
 		method = "POST"
 	}
-	req, _ := http.NewRequest(method, acct+route, rd)
+	req, err := http.NewRequest(method, acct+route, rd)
+	if err != nil {
+		return 503, map[string]any{}
+	}
 	req.Header.Set("accept", "application/json")
 	req.Header.Set("content-type", "application/json")
 	if flow != "" {
@@ -142,22 +133,29 @@ func acctCall(route, flow, session string, body any) (int, map[string]any) {
 	}
 	defer res.Body.Close()
 	m := map[string]any{}
-	json.NewDecoder(io.LimitReader(res.Body, 1<<16)).Decode(&m)
+	data, err := io.ReadAll(io.LimitReader(res.Body, (1<<16)+1))
+	if err != nil || len(data) > 1<<16 || strings.TrimSpace(strings.SplitN(res.Header.Get("Content-Type"), ";", 2)[0]) != "application/json" {
+		return 503, map[string]any{}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&m); err != nil || m == nil {
+		return 503, map[string]any{}
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return 503, map[string]any{}
+	}
 	return res.StatusCode, m
 }
 
 func str(m map[string]any, k string) string { v, _ := m[k].(string); return v }
 
-func meOf(rxs string) (string, bool) {
+func meOf(rxs string) (accountIdentity, bool) {
 	st, m := acctCall("me", "", rxs, nil)
 	if st != 200 {
-		return "", false
+		return accountIdentity{}, false
 	}
-	a, _ := m["account"].(map[string]any)
-	if a == nil || str(a, "id") == "" {
-		return "", false
-	}
-	return str(a, "id") + "\x00" + str(a, "username"), true
+	return canonicalAccount(m, time.Now())
 }
 
 func getSess(r *http.Request) (string, *sess) {
@@ -174,14 +172,14 @@ func getSess(r *http.Request) (string, *sess) {
 	}
 	// A local Cloud PC cookie must not outlive revocation at Accounts. Also
 	// reject a changed subject or username instead of retaining stale rights.
-	rxs, expected := s.rxs, s.user
+	rxs, expected := s.rxs, s.account
 	mu.Unlock()
 	who, ok := meOf(rxs)
 	mu.Lock()
 	if sessions[c.Value] != s {
 		return "", nil
 	}
-	if !ok || who != expected || time.Now().After(s.exp) {
+	if !ok || who.ID != expected.ID || who.Username != expected.Username || who.Owner != expected.Owner || time.Now().After(s.exp) {
 		delete(sessions, c.Value)
 		return "", nil
 	}
@@ -215,17 +213,17 @@ var page = template.Must(template.New("p").Parse(`<!doctype html><html lang="en"
 <section class="card" style="margin-top:1.5rem"><h2>Pending requests</h2>
 {{if .PendingList}}{{range .PendingList}}
 <form method="post" action="` + pfx + `/approve" style="display:inline-flex;gap:.5rem;align-items:center;margin:.4rem 0">
-<input type="hidden" name="user" value="{{.}}"><span>{{.}}</span>
+<input type="hidden" name="account_id" value="{{.}}"><span>{{.}}</span>
 <button class="btn">Approve</button></form>
 <form method="post" action="` + pfx + `/deny" style="display:inline-flex;gap:.5rem;align-items:center;margin:.4rem 0">
-<input type="hidden" name="user" value="{{.}}">
+<input type="hidden" name="account_id" value="{{.}}">
 <button class="btn ghost">Deny</button></form>
 {{end}}{{else}}<p class="sub small">No pending requests.</p>{{end}}
 </section>
 <section class="card" style="margin-top:1rem"><h2>Approved users</h2>
 {{if .ApprovedList}}{{range .ApprovedList}}
 <form method="post" action="` + pfx + `/deny" style="display:flex;gap:.5rem;align-items:center;margin:.4rem 0">
-<input type="hidden" name="user" value="{{.}}"><span>{{.}}</span>
+<input type="hidden" name="account_id" value="{{.}}"><span>{{.}}</span>
 <button class="btn ghost">Revoke</button></form>
 {{end}}{{else}}<p class="sub small">No approved non-owner users.</p>{{end}}
 </section>
@@ -240,23 +238,19 @@ func render(w http.ResponseWriter, s *sess, msg string) {
 	var pendingList, approvedList []string
 	if s != nil {
 		u = usernameOf(s)
-		owner = isOwner(u)
-		approved = isApproved(u)
+		owner = isOwner(s)
+		approved = isApproved(s)
 		a, err := loadACL()
 		if err != nil {
 			http.Error(w, "Cloud PC permissions are temporarily unavailable.", http.StatusServiceUnavailable)
 			return
 		}
-		_, pending = a.Pending[strings.ToLower(u)]
+		_, pending = a.Pending[s.account.ID]
 		if owner {
 			for k := range a.Pending {
 				pendingList = append(pendingList, k)
 			}
-			for _, x := range a.Approved {
-				if !isOwner(x) {
-					approvedList = append(approvedList, x)
-				}
-			}
+			approvedList = append(approvedList, a.Approved...)
 		}
 	}
 	page.Execute(w, map[string]any{"Msg": msg, "User": u, "Owner": owner, "Approved": approved, "Pending": pending, "PendingList": pendingList, "ApprovedList": approvedList})
@@ -302,7 +296,7 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 			toSignin(w, r)
 			return
 		}
-		if !isApproved(usernameOf(s)) {
+		if !isApproved(s) {
 			http.Error(w, "Cloud PC access is not approved.", http.StatusForbidden)
 			return
 		}
@@ -336,7 +330,7 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 					defer ticker.Stop()
 					watchDesktopAuthorization(r.Context(), ticker.C, func() bool {
 						_, current := getSess(sessionRequest)
-						return current == s && isApproved(usernameOf(current))
+						return current == s && isApproved(current)
 					}, response.Body)
 				}()
 			}
@@ -371,26 +365,50 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 		}
 		render(w, s, "")
 	case "/request":
-		u := usernameOf(s)
-		if isApproved(u) {
+		u := s.account.ID
+		if isApproved(s) {
 			render(w, s, "You already have access.")
 			return
 		}
-		if err := mutateACL(func(a *aclFile) {
-			a.Pending[strings.ToLower(u)] = time.Now().UTC().Format(time.RFC3339)
-		}); err != nil {
+		capacityFull := false
+		changed, err := mutateACLWhen(func(a *aclFile) bool {
+			if _, exists := a.Pending[u]; exists {
+				return false
+			}
+			for _, id := range a.Approved {
+				if id == u {
+					return false
+				}
+			}
+			a.Pending[u] = time.Now().UTC().Format(time.RFC3339)
+			a.record("request", u, u)
+			if data, err := json.MarshalIndent(a, "", "  "); err != nil || len(data) > maxACLBytes-aclRequestReserve {
+				capacityFull = true
+				return false
+			}
+			return true
+		})
+		if err != nil {
 			http.Error(w, "Could not save Cloud PC permissions. No request was acknowledged.", http.StatusServiceUnavailable)
+			return
+		}
+		if capacityFull {
+			http.Error(w, "Cloud PC request capacity is temporarily unavailable. No request was saved.", http.StatusServiceUnavailable)
+			return
+		}
+		if !changed {
+			render(w, s, "Your access is already approved or requested.")
 			return
 		}
 		ownerAlert(u)
 		render(w, s, "Access requested. The owner has been notified.")
 	case "/approve":
-		if !isOwner(usernameOf(s)) {
+		if !isOwner(s) {
 			http.Error(w, "forbidden", 403)
 			return
 		}
-		u := strings.ToLower(strings.TrimSpace(r.FormValue("user")))
-		if u == "" {
+		u := r.FormValue("account_id")
+		if !validAccountID(u) {
 			render(w, s, "Missing user.")
 			return
 		}
@@ -398,7 +416,7 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 			delete(a.Pending, u)
 			found := false
 			for _, x := range a.Approved {
-				if strings.ToLower(x) == u {
+				if x == u {
 					found = true
 					break
 				}
@@ -406,19 +424,22 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 			if !found {
 				a.Approved = append(a.Approved, u)
 			}
+			a.record("approve", s.account.ID, u)
 		}); err != nil {
 			http.Error(w, "Could not save Cloud PC permissions. Approval was not acknowledged.", http.StatusServiceUnavailable)
 			return
 		}
-		notifyLocal("user:"+u, "cloudpc_decision", "Cloud PC access approved", "You can now open your Cloud PC desktop.", pfx+"/")
+		// The legacy notification gateway routes user:<username> by mutable key
+		// names. Do not send a private decision until an ID-bound recipient
+		// contract is verified; the saved decision remains visible in Cloud PC.
 		render(w, s, "Approved "+u+".")
 	case "/deny":
-		if !isOwner(usernameOf(s)) {
+		if !isOwner(s) {
 			http.Error(w, "forbidden", 403)
 			return
 		}
-		u := strings.ToLower(strings.TrimSpace(r.FormValue("user")))
-		if u == "" {
+		u := r.FormValue("account_id")
+		if !validAccountID(u) {
 			render(w, s, "Missing user.")
 			return
 		}
@@ -426,23 +447,23 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 			delete(a.Pending, u)
 			kept := a.Approved[:0]
 			for _, x := range a.Approved {
-				if strings.ToLower(x) != u {
+				if x != u {
 					kept = append(kept, x)
 				}
 			}
 			a.Approved = kept
+			a.record("deny", s.account.ID, u)
 		}); err != nil {
 			http.Error(w, "Could not save Cloud PC permissions. Revocation was not acknowledged.", http.StatusServiceUnavailable)
 			return
 		}
-		notifyLocal("user:"+u, "cloudpc_decision", "Cloud PC access denied", "An owner declined or revoked your Cloud PC access.", "")
 		render(w, s, "Denied/revoked "+u+".")
 	case "/start":
 		if s == nil {
 			http.Redirect(w, r, pfx+"/", 303)
 			return
 		}
-		if !isApproved(usernameOf(s)) {
+		if !isApproved(s) {
 			render(w, s, "Cloud PC access is not approved yet. Request access first.")
 			return
 		}
@@ -508,6 +529,18 @@ func sec(h http.Handler) http.Handler {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "prepare-acl-migration" {
+		if err := prepareACLMigration(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		log.Print("Prepared a separate review ACL; original permissions are unchanged. Verify mapping provenance before promotion.")
+		return
+	}
+	ownerIDs, err := parseOwnerAccountIDs(os.Getenv("CPC_OWNER_ACCOUNT_IDS"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	cpcOwnerIDs = ownerIDs
 	policy, err := parseTrustedProxies(os.Getenv("CPC_TRUSTED_PROXY_CIDRS"))
 	if err != nil {
 		log.Fatal(err)
@@ -681,11 +714,11 @@ func signin(w http.ResponseWriter, r *http.Request) {
 			method = "call"
 		}
 		st, m := acctCall("login/2fa", p.flow, "", map[string]any{"method": method, "code": strings.TrimSpace(r.FormValue("code"))})
-		if st == 200 && str(m, "token") != "" {
+		if token := completedToken(m); st == 200 && token != "" {
 			mu.Lock()
 			delete(pending, c.Value)
 			mu.Unlock()
-			finish(w, r, str(m, "token"), p.next)
+			finish(w, r, token, p.next)
 			return
 		}
 		fail(ip)
@@ -723,8 +756,8 @@ func signin(w http.ResponseWriter, r *http.Request) {
 	case "2fa_setup":
 		show(map[string]any{"Msg": "Finish setting up two-step sign-in on red-xai.com first, then come back.", "Next": next})
 	default:
-		if str(m, "token") != "" {
-			finish(w, r, str(m, "token"), next)
+		if token := completedToken(m); token != "" {
+			finish(w, r, token, next)
 			return
 		}
 		show(map[string]any{"Msg": "Sign-in failed.", "Next": next})
@@ -744,7 +777,7 @@ func finish(w http.ResponseWriter, r *http.Request, rxs, next string) {
 		signPage.Execute(w, map[string]any{"Msg": "Sign-in failed.", "Next": next})
 		return
 	}
-	h := sum256([]byte("cloudpc-redx:" + strings.SplitN(who, "\x00", 2)[0]))
+	h := sum256([]byte("cloudpc-redx:" + who.ID))
 	b, err := randBytes(32)
 	if err != nil {
 		http.Error(w, "error", 500)
@@ -752,7 +785,11 @@ func finish(w http.ResponseWriter, r *http.Request, rxs, next string) {
 	}
 	t := hex.EncodeToString(b)
 	mu.Lock()
-	sessions[t] = &sess{rxs: rxs, user: who, checked: time.Now(), id: hex.EncodeToString(h[:8]), exp: time.Now().Add(12 * time.Hour)}
+	expires := time.Now().Add(12 * time.Hour)
+	if canonicalExpiry := time.UnixMilli(who.ExpiresMs); canonicalExpiry.Before(expires) {
+		expires = canonicalExpiry
+	}
+	sessions[t] = &sess{rxs: rxs, user: who.ID + "\x00" + who.Username, account: who, checked: time.Now(), id: hex.EncodeToString(h[:8]), exp: expires}
 	mu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: "cpc", Value: t, Path: "/vortex", HttpOnly: true, Secure: secure(r), SameSite: http.SameSiteLaxMode, MaxAge: 43200})
 	http.Redirect(w, r, next, 303)

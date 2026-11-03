@@ -17,7 +17,8 @@ writer lock, so they do not observe partially constructed permissions. The ACL
 parent directory must be pre-provisioned on durable private storage, owned by
 the service, and writable by no unrelated process. Run exactly one gateway
 writer: the mutex does not coordinate separate processes or hosts. Existing
-ACL names and fields are preserved; no user assignments are guessed.
+username ACLs require the explicit reviewed migration below; no user
+assignments are guessed or changed automatically.
 
 Local Windows fixtures check mutation outcomes, concurrent changes and final
 replacement state but do not establish Unix atomicity or directory durability. Linux
@@ -33,14 +34,99 @@ exercise success and failure paths, and prove that revoking an approved account
 closes its active desktop connection. Do not restore an old ACL over newer
 permission changes during a code rollback.
 
-The independent identity blockers remain: legacy owner/approval checks are
-username based, canonical website-session exchange is absent, deployment of
-the explicit proxy boundary below is unverified, and the storage/control helper
-implementations and sudo policy have not been verified. Immutable account
+The remaining deployment/integration blockers include a verified canonical
+website-session exchange, an independently reviewed ID-grant migration,
+the original account contract and expiry/MFA evidence, deployment of
+the explicit proxy boundary below, and verification of storage/control helpers
+and sudo policy. Immutable account
 ownership, owner-role plus MFA proof, an audited grant migration and OS-level
 tenant isolation must be established before promoting this service as the
 website's tenant-isolated Cloud PC integration. This persistence fix alone
 does not satisfy those requirements.
+
+## Immutable grant and owner boundaries
+
+The source candidate no longer grants access from `CPC_OWNERS`, default owner
+usernames, mutable usernames, email addresses or a caller-supplied account ID.
+Permissions schema 2 stores exact, case-sensitive canonical account IDs in
+`approved` and `pending`. Usernames are display data. A normal completed
+password session can request access and use only its own approved canonical
+subject. The desktop storage identifier continues to be the first eight bytes
+of SHA-256 of `cloudpc-redx:` plus the original canonical ID, preserving its
+existing OS/helper namespace.
+
+`CPC_OWNER_ACCOUNT_IDS` is an explicit private allowlist of independently
+verified canonical IDs, with no defaults. Owner access additionally requires
+the authority's `owner` role, a completed MFA method in session `amr`, and a
+future `expiresMs`. Every request rechecks the existing account authority;
+subject/username changes, loss of owner proof, expired/incomplete sessions,
+revocation and unknown account responses invalidate the local session. A
+password-only normal session is accepted without being elevated. MFA evidence
+does not establish recent step-up authentication.
+
+The currently reviewed response shape is `{account:{id,username,roles},
+expiresMs,amr}` with active/verified flags enforced when present and no pending
+steps. The separate modern Accounts source (`internal/server/server.go` and
+`internal/accounts/models.go`) returns a flat `Me` without session expiry/AMR;
+its `owner`/`twoFactorState` fields are not substitutes for that proof. That
+contract fails closed here. No new website session exchange, authority swap,
+identity lookup or authentication bypass is introduced by this candidate.
+
+Request/approval/revocation audit entries include the acting and target account
+IDs and timestamp. Repeating an already-pending request performs no write,
+appends no audit event and sends no further alert. At 256 entries, the audit
+tail rolls into an immutable, digest-addressed private `audit-segments` file
+linked to the previous segment hash. The segment and directory are flushed
+before the atomically replaced ACL references the new head. History is never
+pruned; the short tail and constant-size head prevent request history from
+exhausting the ACL file and blocking an owner's revocation. New requests reserve
+128 KiB for administrative changes; a capacity denial returns 503 without a
+write or alert. Audit rolls earlier if necessary to keep an administrative
+envelope within its size limit. Permission changes
+and the new audit reference share the same acknowledgement. Existing audit
+chains are verified before extension; an uncertain failure can leave a
+preserved, unreferenced segment. Backups/restores must include every referenced
+segment with the ACL, and disk capacity still requires monitoring. Corruption
+fails closed and must be reconciled before new writes.
+
+Per-user decision notifications are paused: the existing gateway
+routes `user:<username>` by mutable key name and lacks a verified canonical-ID
+recipient contract. The stored decision remains visible in Cloud PC. No
+private grant decision is sent to a guessed username recipient.
+
+## Reviewed username migration preparation
+
+A missing ACL starts empty schema 2. An existing schema-less username ACL
+fails closed and remains byte-for-byte intact. Even a username that resembles
+an account ID is never reinterpreted as one. Before promotion, take a consistent
+protected backup and independently verify every old name against the real
+canonical account authority. Prepare a private 0600 mapping file such as:
+
+```json
+{"operator_account_id":"VERIFIED-OPERATOR-ID","mappings":{"old-name":"VERIFIED-ACCOUNT-ID"}}
+```
+
+Mapping keys are explicit lowercase legacy names; values preserve exact ID
+case. Every approved and pending name must be covered, with no extra entries.
+Distinct names cannot silently merge into one canonical ID. The mapping is an
+operator assertion; the tool verifies coverage/collisions, not its provenance.
+
+Run the candidate daemon in the separate offline preparation mode:
+
+```sh
+cloudpc-web prepare-acl-migration --source /private/acl-consistent-backup.json \
+  --mapping /private/reviewed-account-ids.json --output /private/acl-id-review.json
+```
+
+It creates only a new exclusive 0600 review artifact, flushes it and its parent
+directory, and refuses the input, mapping or configured live ACL as output.
+It never starts listeners, calls Accounts, changes desktop files, rewrites
+the source ACL or promotes the result. New migration audit entries carry the
+operator/target IDs and source/mapping SHA-256 digests. A failed artifact must
+not be promoted. Review the mapping and artifact, test two real identities and
+the owner against an isolated copy, preserve changes since the snapshot, and
+promote only within a coordinated migration/rollback procedure. Never restore
+a stale grant snapshot over newer permission or audit changes.
 
 ## Explicit HTTPS proxy boundary
 

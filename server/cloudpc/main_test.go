@@ -26,7 +26,7 @@ func cloudFixture(t *testing.T, authority http.HandlerFunc) *sess {
 	mu.Lock()
 	oldSessions := sessions
 	sessions = map[string]*sess{}
-	current := &sess{rxs: "fixture-upstream-session", user: "account-a\x00alice", id: "desktop-a", exp: time.Now().Add(time.Hour), touched: time.Now()}
+	current := &sess{rxs: "fixture-upstream-session", user: "account-a\x00alice", account: accountIdentity{ID: "account-a", Username: "alice", ExpiresMs: time.Now().Add(time.Hour).UnixMilli()}, id: "desktop-a", exp: time.Now().Add(time.Hour), touched: time.Now()}
 	sessions["fixture-cookie"] = current
 	mu.Unlock()
 	t.Cleanup(func() {
@@ -36,13 +36,25 @@ func cloudFixture(t *testing.T, authority http.HandlerFunc) *sess {
 		mu.Unlock()
 	})
 	t.Setenv("CPC_ACL", filepath.Join(t.TempDir(), "acl.json"))
-	t.Setenv("CPC_OWNERS", "fixture-owner")
+	previousOwners := cpcOwnerIDs
+	cpcOwnerIDs = map[string]bool{}
+	t.Cleanup(func() { cpcOwnerIDs = previousOwners })
 	return current
 }
 
 func accountResponse(w http.ResponseWriter, id, username string) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"account": map[string]any{"id": id, "username": username}})
+	_ = json.NewEncoder(w).Encode(map[string]any{"account": map[string]any{"id": id, "username": username, "roles": []string{"user"}}, "expiresMs": time.Now().Add(time.Hour).UnixMilli(), "amr": []string{"pwd"}})
+}
+
+func cloudOwnerFixture(t *testing.T) *sess {
+	current := cloudFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"account": map[string]any{"id": "account-a", "username": "alice", "roles": []string{"owner"}}, "expiresMs": time.Now().Add(time.Hour).UnixMilli(), "amr": []string{"pwd", "totp"}})
+	})
+	cpcOwnerIDs["account-a"] = true
+	current.account.Owner = true
+	return current
 }
 
 func cloudRequest(method, route string) *http.Request {
@@ -193,7 +205,7 @@ func TestDesktopRequiresApprovalAndValidSocketOrigin(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("unapproved desktop: status=%d", w.Code)
 	}
-	if err := saveACL(aclFile{Approved: []string{"alice"}, Pending: map[string]string{}}); err != nil {
+	if err := saveACL(aclFile{Schema: aclSchema, Approved: []string{"account-a"}, Pending: map[string]string{}}); err != nil {
 		t.Fatal(err)
 	}
 	for _, origin := range []string{"", "null", "http://other.example"} {
@@ -211,7 +223,7 @@ func TestDesktopRequiresApprovalAndValidSocketOrigin(t *testing.T) {
 
 func TestDesktopProxyUsesOnlyCurrentUsersBackendAndStripsCredentials(t *testing.T) {
 	current := cloudFixture(t, func(w http.ResponseWriter, r *http.Request) { accountResponse(w, "account-a", "alice") })
-	if err := saveACL(aclFile{Approved: []string{"alice"}, Pending: map[string]string{}}); err != nil {
+	if err := saveACL(aclFile{Schema: aclSchema, Approved: []string{"account-a"}, Pending: map[string]string{}}); err != nil {
 		t.Fatal(err)
 	}
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

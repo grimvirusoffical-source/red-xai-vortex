@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestConcurrentACLChangesRetainEveryRequestAndApproval(t *testing.T) {
@@ -55,7 +56,7 @@ func TestACLRejectsCorruptionWithoutOverwritingOriginal(t *testing.T) {
 				t.Fatal("corrupt permissions admitted a mutation")
 			}
 			actual, err := os.ReadFile(path)
-			if err != nil || string(actual) != content || isApproved("alice") {
+			if err != nil || string(actual) != content || isApproved(&sess{account: accountIdentity{ID: "account-a", Username: "alice", ExpiresMs: time.Now().Add(time.Hour).UnixMilli()}}) {
 				t.Fatal("corrupt permissions changed or granted access")
 			}
 		})
@@ -65,9 +66,10 @@ func TestACLRejectsCorruptionWithoutOverwritingOriginal(t *testing.T) {
 func TestFailedPermissionMutationsNeverReturnSuccess(t *testing.T) {
 	for _, route := range []string{"/request", "/approve", "/deny"} {
 		t.Run(route, func(t *testing.T) {
-			cloudFixture(t, func(w http.ResponseWriter, r *http.Request) { accountResponse(w, "account-a", "alice") })
-			if route != "/request" {
-				t.Setenv("CPC_OWNERS", "alice")
+			if route == "/request" {
+				cloudFixture(t, func(w http.ResponseWriter, r *http.Request) { accountResponse(w, "account-a", "alice") })
+			} else {
+				cloudOwnerFixture(t)
 			}
 			if err := os.WriteFile(aclPath(), []byte("{broken"), 0600); err != nil {
 				t.Fatal(err)
@@ -76,7 +78,7 @@ func TestFailedPermissionMutationsNeverReturnSuccess(t *testing.T) {
 			r.Header.Set("Origin", "https://cloud.example")
 			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			r.Body = http.NoBody
-			r.Form = map[string][]string{"user": {"bob"}}
+			r.Form = map[string][]string{"account_id": {"account-b"}}
 			w := httptest.NewRecorder()
 			cloud(w, r)
 			if w.Code != http.StatusServiceUnavailable || strings.Contains(w.Body.String(), "Approved bob") || strings.Contains(w.Body.String(), "Denied/revoked bob") {
@@ -109,7 +111,7 @@ func TestACLAtomicReplacementAndTemporaryFiles(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "acl.json")
 	t.Setenv("CPC_ACL", path)
-	if err := saveACL(aclFile{Approved: []string{"alice"}}); err != nil {
+	if err := saveACL(aclFile{Schema: aclSchema, Approved: []string{"account-a"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := mutateACL(func(a *aclFile) { a.Approved = nil; a.Pending["bob"] = "fixture-time" }); err != nil {
@@ -131,7 +133,7 @@ func TestACLUnwritablePathReturnsError(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("CPC_ACL", filepath.Join(parent, "acl.json"))
-	if err := saveACL(aclFile{Approved: []string{"alice"}}); err == nil {
+	if err := saveACL(aclFile{Schema: aclSchema, Approved: []string{"account-a"}}); err == nil {
 		t.Fatal("invalid parent acknowledged as a successful write")
 	}
 	actual, _ := os.ReadFile(parent)
@@ -143,13 +145,14 @@ func TestACLUnwritablePathReturnsError(t *testing.T) {
 func TestDirectoryFlushFailureDoesNotAcknowledgeOrNotify(t *testing.T) {
 	for _, route := range []string{"/request", "/approve", "/deny"} {
 		t.Run(route, func(t *testing.T) {
-			cloudFixture(t, func(w http.ResponseWriter, r *http.Request) { accountResponse(w, "account-a", "alice") })
-			if route != "/request" {
-				t.Setenv("CPC_OWNERS", "alice")
+			if route == "/request" {
+				cloudFixture(t, func(w http.ResponseWriter, r *http.Request) { accountResponse(w, "account-a", "alice") })
+			} else {
+				cloudOwnerFixture(t)
 			}
-			initial := aclFile{Pending: map[string]string{"bob": "fixture-time"}}
+			initial := aclFile{Schema: aclSchema, Pending: map[string]string{"account-b": "fixture-time"}}
 			if route == "/deny" {
-				initial.Approved = []string{"bob"}
+				initial.Approved = []string{"account-b"}
 			}
 			if err := saveACL(initial); err != nil {
 				t.Fatal(err)
@@ -164,7 +167,7 @@ func TestDirectoryFlushFailureDoesNotAcknowledgeOrNotify(t *testing.T) {
 			t.Cleanup(func() { syncACLParent = previousSync })
 			r := cloudRequest(http.MethodPost, route)
 			r.Header.Set("Origin", "https://cloud.example")
-			r.Form = map[string][]string{"user": {"bob"}}
+			r.Form = map[string][]string{"account_id": {"account-b"}}
 			w := httptest.NewRecorder()
 			cloud(w, r)
 			if w.Code != http.StatusServiceUnavailable || notifications.Load() != 0 {
@@ -175,10 +178,10 @@ func TestDirectoryFlushFailureDoesNotAcknowledgeOrNotify(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if route == "/request" && a.Pending["alice"] == "" {
+			if route == "/request" && a.Pending["account-a"] == "" {
 				t.Fatal("fixture did not reach replacement before the flush failure")
 			}
-			if route == "/approve" && (len(a.Approved) != 1 || a.Approved[0] != "bob") {
+			if route == "/approve" && (len(a.Approved) != 1 || a.Approved[0] != "account-b") {
 				t.Fatal("fixture did not reach approval replacement")
 			}
 			if route == "/deny" && len(a.Approved) != 0 {

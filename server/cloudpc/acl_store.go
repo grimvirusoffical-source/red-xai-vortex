@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // One Cloud PC gateway owns this file. All in-process read/modify/write
@@ -19,6 +21,65 @@ var aclMu sync.Mutex
 var syncACLParent = syncACLDirectory
 
 const maxACLBytes = 1 << 20
+const aclRequestReserve = 128 << 10
+
+const aclSchema = 2
+
+type aclAudit struct {
+	At            string `json:"at"`
+	Event         string `json:"event"`
+	Actor         string `json:"actor_account_id"`
+	Target        string `json:"target_account_id"`
+	SourceSHA256  string `json:"source_sha256,omitempty"`
+	MappingSHA256 string `json:"mapping_sha256,omitempty"`
+}
+
+func (a *aclFile) record(event, actor, target string) {
+	a.Audit = append(a.Audit, aclAudit{At: time.Now().UTC().Format(time.RFC3339Nano), Event: event, Actor: actor, Target: target})
+}
+
+func validateACL(a aclFile) error {
+	if a.Schema != aclSchema {
+		return errors.New("Cloud PC username permissions require a reviewed account-ID migration")
+	}
+	if a.AuditHead != "" && !validAuditDigest(a.AuditHead) {
+		return errors.New("invalid Cloud PC audit head")
+	}
+	seen := map[string]bool{}
+	for _, id := range a.Approved {
+		if !validAccountID(id) || seen[id] {
+			return errors.New("invalid Cloud PC account grant")
+		}
+		seen[id] = true
+	}
+	for id, stamp := range a.Pending {
+		if !validAccountID(id) || len(stamp) == 0 || len(stamp) > 128 {
+			return errors.New("invalid Cloud PC account request")
+		}
+	}
+	if len(a.Audit) > 5000 {
+		return errors.New("Cloud PC audit retention limit requires protected archival")
+	}
+	for _, event := range a.Audit {
+		if _, err := time.Parse(time.RFC3339Nano, event.At); err != nil || !validAccountID(event.Actor) || !validAccountID(event.Target) {
+			return errors.New("invalid Cloud PC permission audit")
+		}
+		if event.Event != "request" && event.Event != "approve" && event.Event != "deny" && event.Event != "migration" {
+			return errors.New("invalid Cloud PC permission audit event")
+		}
+		if event.Event == "migration" {
+			for _, hash := range []string{event.SourceSHA256, event.MappingSHA256} {
+				decoded, err := hex.DecodeString(hash)
+				if err != nil || len(decoded) != 32 {
+					return errors.New("invalid Cloud PC migration audit")
+				}
+			}
+		} else if event.SourceSHA256 != "" || event.MappingSHA256 != "" {
+			return errors.New("unexpected Cloud PC audit metadata")
+		}
+	}
+	return nil
+}
 
 func loadACL() (aclFile, error) {
 	aclMu.Lock()
@@ -27,7 +88,7 @@ func loadACL() (aclFile, error) {
 }
 
 func readACL(path string) (aclFile, error) {
-	a := aclFile{Pending: map[string]string{}}
+	a := aclFile{Schema: aclSchema, Pending: map[string]string{}}
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return a, nil
@@ -57,6 +118,14 @@ func readACL(path string) (aclFile, error) {
 		return a, errors.New("trailing Cloud PC permission data")
 	}
 	a = *decoded
+	if err := validateACL(a); err != nil {
+		return aclFile{}, err
+	}
+	if a.AuditHead != "" {
+		if _, err := readAuditSegment(filepath.Dir(path), a.AuditHead); err != nil {
+			return aclFile{}, err
+		}
+	}
 	if a.Pending == nil {
 		a.Pending = map[string]string{}
 	}
@@ -70,18 +139,36 @@ func saveACL(a aclFile) error {
 }
 
 func mutateACL(change func(*aclFile)) error {
+	_, err := mutateACLWhen(func(a *aclFile) bool { change(a); return true })
+	return err
+}
+
+func mutateACLWhen(change func(*aclFile) bool) (bool, error) {
 	aclMu.Lock()
 	defer aclMu.Unlock()
 	path := aclPath()
 	a, err := readACL(path)
 	if err != nil {
-		return err
+		return false, err
 	}
-	change(&a)
-	return writeACL(path, a)
+	if !change(&a) {
+		return false, nil
+	}
+	return true, writeACL(path, a)
 }
 
 func writeACL(path string, a aclFile) error {
+	if err := validateACL(a); err != nil {
+		return err
+	}
+	if _, err := verifyAuditHistory(filepath.Dir(path), a.AuditHead); err != nil {
+		return err
+	}
+	var err error
+	a, err = rolloverACLAudit(path, a)
+	if err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(a, "", "  ")
 	if err != nil {
 		return err
