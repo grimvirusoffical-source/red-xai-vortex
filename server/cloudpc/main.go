@@ -159,7 +159,7 @@ func meOf(rxs string) (accountIdentity, bool) {
 }
 
 func getSess(r *http.Request) (string, *sess) {
-	c, err := r.Cookie("cpc")
+	c, err := uniqueCookie(r, "cpc")
 	if err != nil {
 		return "", nil
 	}
@@ -686,7 +686,7 @@ func signin(w http.ResponseWriter, r *http.Request) {
 	}
 	step := r.FormValue("step")
 	if step == "2fa" || step == "call" {
-		c, err := r.Cookie("cpcf")
+		c, err := uniqueCookie(r, "cpcf")
 		mu.Lock()
 		var p *pend
 		if err == nil {

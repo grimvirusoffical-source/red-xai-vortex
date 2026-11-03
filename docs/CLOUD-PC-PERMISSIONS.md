@@ -64,6 +64,12 @@ revocation and unknown account responses invalidate the local session. A
 password-only normal session is accepted without being elevated. MFA evidence
 does not establish recent step-up authentication.
 
+Duplicate selected `cpc` session or `cpcf` challenge cookies fail closed before
+calling Accounts. This includes duplicates across Cookie header lines or an
+invalid duplicate that the standard cookie parser would discard. Such requests
+do not delete another valid session or pending challenge; a single valid cookie
+continues to work afterward.
+
 The currently reviewed response shape is `{account:{id,username,roles},
 expiresMs,amr}` with active/verified flags enforced when present and no pending
 steps. The separate modern Accounts source (`internal/server/server.go` and
