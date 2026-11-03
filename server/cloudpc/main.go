@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -58,24 +57,6 @@ type aclFile struct {
 
 func aclPath() string { return env("CPC_ACL", "/var/lib/cloudpc/acl.json") }
 
-func loadACL() aclFile {
-	a := aclFile{Pending: map[string]string{}}
-	b, err := os.ReadFile(aclPath())
-	if err == nil {
-		json.Unmarshal(b, &a)
-		if a.Pending == nil {
-			a.Pending = map[string]string{}
-		}
-	}
-	return a
-}
-
-func saveACL(a aclFile) error {
-	os.MkdirAll(filepath.Dir(aclPath()), 0750)
-	b, _ := json.MarshalIndent(a, "", "  ")
-	return os.WriteFile(aclPath(), b, 0640)
-}
-
 func owners() []string {
 	v := env("CPC_OWNERS", "jf,maindirectory")
 	var out []string
@@ -110,7 +91,10 @@ func isApproved(username string) bool {
 	if isOwner(username) {
 		return true
 	}
-	a := loadACL()
+	a, err := loadACL()
+	if err != nil {
+		return false
+	}
 	u := strings.ToLower(username)
 	for _, x := range a.Approved {
 		if strings.ToLower(x) == u {
@@ -267,7 +251,11 @@ func render(w http.ResponseWriter, s *sess, msg string) {
 		u = usernameOf(s)
 		owner = isOwner(u)
 		approved = isApproved(u)
-		a := loadACL()
+		a, err := loadACL()
+		if err != nil {
+			http.Error(w, "Cloud PC permissions are temporarily unavailable.", http.StatusServiceUnavailable)
+			return
+		}
 		_, pending = a.Pending[strings.ToLower(u)]
 		if owner {
 			for k := range a.Pending {
@@ -394,9 +382,12 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 			render(w, s, "You already have access.")
 			return
 		}
-		a := loadACL()
-		a.Pending[strings.ToLower(u)] = time.Now().UTC().Format(time.RFC3339)
-		_ = saveACL(a)
+		if err := mutateACL(func(a *aclFile) {
+			a.Pending[strings.ToLower(u)] = time.Now().UTC().Format(time.RFC3339)
+		}); err != nil {
+			http.Error(w, "Could not save Cloud PC permissions. No request was acknowledged.", http.StatusServiceUnavailable)
+			return
+		}
 		ownerAlert(u)
 		render(w, s, "Access requested. The owner has been notified.")
 	case "/approve":
@@ -409,19 +400,22 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 			render(w, s, "Missing user.")
 			return
 		}
-		a := loadACL()
-		delete(a.Pending, u)
-		found := false
-		for _, x := range a.Approved {
-			if strings.ToLower(x) == u {
-				found = true
-				break
+		if err := mutateACL(func(a *aclFile) {
+			delete(a.Pending, u)
+			found := false
+			for _, x := range a.Approved {
+				if strings.ToLower(x) == u {
+					found = true
+					break
+				}
 			}
+			if !found {
+				a.Approved = append(a.Approved, u)
+			}
+		}); err != nil {
+			http.Error(w, "Could not save Cloud PC permissions. Approval was not acknowledged.", http.StatusServiceUnavailable)
+			return
 		}
-		if !found {
-			a.Approved = append(a.Approved, u)
-		}
-		_ = saveACL(a)
 		notifyLocal("user:"+u, "cloudpc_decision", "Cloud PC access approved", "You can now open your Cloud PC desktop.", pfx+"/")
 		render(w, s, "Approved "+u+".")
 	case "/deny":
@@ -434,16 +428,19 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 			render(w, s, "Missing user.")
 			return
 		}
-		a := loadACL()
-		delete(a.Pending, u)
-		kept := a.Approved[:0]
-		for _, x := range a.Approved {
-			if strings.ToLower(x) != u {
-				kept = append(kept, x)
+		if err := mutateACL(func(a *aclFile) {
+			delete(a.Pending, u)
+			kept := a.Approved[:0]
+			for _, x := range a.Approved {
+				if strings.ToLower(x) != u {
+					kept = append(kept, x)
+				}
 			}
+			a.Approved = kept
+		}); err != nil {
+			http.Error(w, "Could not save Cloud PC permissions. Revocation was not acknowledged.", http.StatusServiceUnavailable)
+			return
 		}
-		a.Approved = kept
-		_ = saveACL(a)
 		notifyLocal("user:"+u, "cloudpc_decision", "Cloud PC access denied", "An owner declined or revoked your Cloud PC access.", "")
 		render(w, s, "Denied/revoked "+u+".")
 	case "/start":
