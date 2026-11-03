@@ -73,7 +73,7 @@ func TestFailedPermissionMutationsNeverReturnSuccess(t *testing.T) {
 				t.Fatal(err)
 			}
 			r := cloudRequest(http.MethodPost, route)
-			r.Header.Set("Origin", "http://cloud.example")
+			r.Header.Set("Origin", "https://cloud.example")
 			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			r.Body = http.NoBody
 			r.Form = map[string][]string{"user": {"bob"}}
@@ -163,7 +163,7 @@ func TestDirectoryFlushFailureDoesNotAcknowledgeOrNotify(t *testing.T) {
 			syncACLParent = func(string) error { return errors.New("fixture directory flush failed") }
 			t.Cleanup(func() { syncACLParent = previousSync })
 			r := cloudRequest(http.MethodPost, route)
-			r.Header.Set("Origin", "http://cloud.example")
+			r.Header.Set("Origin", "https://cloud.example")
 			r.Form = map[string][]string{"user": {"bob"}}
 			w := httptest.NewRecorder()
 			cloud(w, r)

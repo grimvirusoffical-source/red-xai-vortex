@@ -46,7 +46,7 @@ func accountResponse(w http.ResponseWriter, id, username string) {
 }
 
 func cloudRequest(method, route string) *http.Request {
-	r := httptest.NewRequest(method, "http://cloud.example"+pfx+route, nil)
+	r := httptest.NewRequest(method, "https://cloud.example"+pfx+route, nil)
 	r.AddCookie(&http.Cookie{Name: "cpc", Value: "fixture-cookie"})
 	r.AddCookie(&http.Cookie{Name: "vx_terms", Value: termsVersion})
 	return r
@@ -149,14 +149,14 @@ func TestCloudMutationsRequirePostAndSameOrigin(t *testing.T) {
 	for _, route := range []string{"/request", "/approve", "/deny", "/start", "/stop"} {
 		for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete} {
 			r := cloudRequest(method, route)
-			r.Header.Set("Origin", "http://cloud.example")
+			r.Header.Set("Origin", "https://cloud.example")
 			w := httptest.NewRecorder()
 			cloud(w, r)
 			if w.Code != http.StatusMethodNotAllowed || w.Header().Get("Allow") != http.MethodPost {
 				t.Errorf("%s %s: status=%d Allow=%q", method, route, w.Code, w.Header().Get("Allow"))
 			}
 		}
-		for _, origin := range []string{"", "null", "http://other.example", "https://cloud.example", "http://user@cloud.example", "http://cloud.example/", "http://cloud.example?x=1", "http://cloud.example#fragment"} {
+		for _, origin := range []string{"", "null", "https://other.example", "http://cloud.example", "https://user@cloud.example", "https://cloud.example/", "https://cloud.example?x=1", "https://cloud.example#fragment"} {
 			r := cloudRequest(http.MethodPost, route)
 			r.Header.Set("Origin", origin)
 			w := httptest.NewRecorder()
@@ -175,7 +175,7 @@ func TestNonOwnerCannotChangeApproval(t *testing.T) {
 	cloudFixture(t, func(w http.ResponseWriter, r *http.Request) { accountResponse(w, "account-a", "alice") })
 	for _, route := range []string{"/approve", "/deny"} {
 		r := cloudRequest(http.MethodPost, route)
-		r.Header.Set("Origin", "http://cloud.example")
+		r.Header.Set("Origin", "https://cloud.example")
 		w := httptest.NewRecorder()
 		cloud(w, r)
 		if w.Code != http.StatusForbidden {

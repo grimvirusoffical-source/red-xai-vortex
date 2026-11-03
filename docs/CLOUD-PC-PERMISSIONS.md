@@ -34,10 +34,43 @@ closes its active desktop connection. Do not restore an old ACL over newer
 permission changes during a code rollback.
 
 The independent identity blockers remain: legacy owner/approval checks are
-username based, canonical website-session exchange is absent, forwarded
-headers require a trusted proxy boundary, and the storage/control helper
+username based, canonical website-session exchange is absent, deployment of
+the explicit proxy boundary below is unverified, and the storage/control helper
 implementations and sudo policy have not been verified. Immutable account
 ownership, owner-role plus MFA proof, an audited grant migration and OS-level
 tenant isolation must be established before promoting this service as the
 website's tenant-isolated Cloud PC integration. This persistence fix alone
 does not satisfy those requirements.
+
+## Explicit HTTPS proxy boundary
+
+The candidate defaults to trusting no proxy headers. Native TLS continues to
+work without any proxy configuration. For a verified cloudflared deployment,
+set `CPC_TRUSTED_PROXY_CIDRS` to the explicit, narrow CIDRs of the immediate
+proxy connections. For example, use `127.0.0.1/32,::1/128` only after confirming
+that the tunnel connects from those local addresses and that unrelated
+processes cannot inject requests through that trusted transport. There are no
+implicit loopback or Cloudflare-range exceptions. Invalid CIDRs fail startup;
+hostnames, bare IPs and empty list entries are invalid. Do not trust broad
+public ranges merely to make a request pass.
+
+Only an allowlisted `RemoteAddr` can supply `CF-Visitor` or `CF-Connecting-IP`.
+Proxy HTTPS requires one valid JSON object containing exactly
+`{"scheme":"https"}`. Duplicate headers/keys, other fields or schemes, malformed
+JSON and trailing values fail closed. Client IP requires a single valid IP
+literal; invalid or untrusted forwarded IPs fall back to the immediate peer.
+Caller `Forwarded` and `X-Forwarded-*` do not establish identity, TLS or an IP.
+
+Cloud PC, sign-in and sign-out reject unverified cleartext writes with 426
+before reading form bodies or calling Accounts. Safe methods redirect to
+HTTPS. The shared website wrapper applies the same boundary to the remaining
+website/plugin routes. The standalone `/v1/` API retains its stricter native
+TLS-only requirement and still returns 426 for an HTTP connection even from a
+trusted HTTPS proxy; this change does not enable API keys over proxy HTTP.
+
+Tests use disposable HTTP authority fixtures and synthetic request data. They
+check both native TLS and explicitly trusted HTTPS proxy session paths,
+untrusted/duplicate/malformed headers, cleartext rejection before credential
+consumption, scheme-aware origin checks and the unchanged native API policy.
+They do not establish a real tunnel's peer addresses, certificate validity,
+production account exchange or tenant/resource isolation.

@@ -8,7 +8,6 @@ import (
 	"html/template"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/smtp"
@@ -102,14 +101,6 @@ func isApproved(username string) bool {
 		}
 	}
 	return false
-}
-
-func clientIP(r *http.Request) string {
-	if v := r.Header.Get("CF-Connecting-IP"); v != "" {
-		return v
-	}
-	h, _, _ := net.SplitHostPort(r.RemoteAddr)
-	return h
 }
 
 func limited(ip string) bool {
@@ -286,6 +277,9 @@ func sameOrigin(r *http.Request) bool {
 }
 
 func cloud(w http.ResponseWriter, r *http.Request) {
+	if !requireSecureBoundary(w, r) {
+		return
+	}
 	p := strings.TrimPrefix(r.URL.Path, pfx)
 	switch p {
 	case "/request", "/approve", "/deny", "/start", "/stop":
@@ -504,11 +498,21 @@ func sec(h http.Handler) http.Handler {
 		if !strings.HasPrefix(r.URL.Path, pfx+"/desktop/") {
 			w.Header().Set("X-Frame-Options", "DENY")
 		}
+		// The native API retains its stricter, handler-enforced native-TLS
+		// requirement, even when a trusted HTTPS proxy serves the website.
+		if !strings.HasPrefix(r.URL.Path, "/v1/") && !requireSecureBoundary(w, r) {
+			return
+		}
 		h.ServeHTTP(w, r)
 	})
 }
 
 func main() {
+	policy, err := parseTrustedProxies(os.Getenv("CPC_TRUSTED_PROXY_CIDRS"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	cpcProxyTrust = policy
 	m := http.NewServeMux()
 	m.HandleFunc(pfx, cloud)
 	m.HandleFunc(pfx+"/", cloud)
@@ -517,10 +521,6 @@ func main() {
 	m.HandleFunc("/vortex/signout", signout)
 	m.HandleFunc("/vortex/", func(w http.ResponseWriter, r *http.Request) {
 		// Public: stylesheet + desktop download artifacts (SHA256SUMS, installers).
-		if r.TLS == nil && r.Header.Get("CF-Visitor") == "" {
-			http.Redirect(w, r, "https://"+strings.Split(r.Host, ":")[0]+r.URL.RequestURI(), http.StatusMovedPermanently)
-			return
-		}
 		if r.URL.Path == "/vortex/donate" || r.URL.Path == "/vortex/terms" {
 			http.Redirect(w, r, r.URL.Path+"/"+qs(r), 301)
 			return
@@ -550,13 +550,7 @@ func main() {
 	gwURL, _ := url.Parse(env("CPC_GATEWAY", "http://127.0.0.1:8091"))
 	gwp := httputil.NewSingleHostReverseProxy(gwURL)
 	gwp.FlushInterval = -1
-	m.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
-		if r.TLS == nil { // never accept API keys over cleartext
-			http.Error(w, `{"error":{"code":426,"message":"use https"}}`, http.StatusUpgradeRequired)
-			return
-		}
-		gwp.ServeHTTP(w, r)
-	})
+	m.Handle("/v1/", nativeTLSOnly(gwp))
 	// Plugin store (127.0.0.1:8095). /plugins/ is the public API for the apps (RedX session via
 	// X-RedX-Session header). /vortex/store-api/ is the same API for the signed-in web "My plugins"
 	// page: it injects the web session's RedX token and requires X-Requested-With on writes (CSRF).
@@ -617,8 +611,6 @@ func toSignin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/vortex/signin?next="+url.QueryEscape(r.URL.RequestURI()), 303)
 }
 
-func secure(r *http.Request) bool { return r.TLS != nil || r.Header.Get("CF-Visitor") != "" }
-
 var signPage = template.Must(template.New("s").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sign in · Red-XAI Vortex</title><link rel="stylesheet" href="/vortex/style.css"></head><body><main class="wrap narrow">
 <a href="https://red-xai.com/" class="back">&larr; Red-XAI</a><h1>Sign in to <span>RedX</span></h1>
@@ -636,6 +628,9 @@ var signPage = template.Must(template.New("s").Parse(`<!doctype html><html lang=
 </main></body></html>`))
 
 func signin(w http.ResponseWriter, r *http.Request) {
+	if !requireSecureBoundary(w, r) {
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	show := func(d map[string]any) { signPage.Execute(w, d) }
@@ -764,6 +759,9 @@ func finish(w http.ResponseWriter, r *http.Request, rxs, next string) {
 }
 
 func signout(w http.ResponseWriter, r *http.Request) {
+	if !requireSecureBoundary(w, r) {
+		return
+	}
 	if r.Method == "POST" && sameOrigin(r) {
 		if tok, s := getSess(r); s != nil {
 			go acctCall("logout", "", s.rxs, map[string]any{})
