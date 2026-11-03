@@ -2,19 +2,18 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"html/template"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/smtp"
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +24,7 @@ const pfx = "/vortex/cloudpc"
 type sess struct {
 	rxs     string
 	user    string
+	account accountIdentity
 	checked time.Time
 	id      string
 	port    string
@@ -47,54 +47,21 @@ func env(k, d string) string {
 	return d
 }
 
-// Cloud PC access: owners (CPC_OWNERS, comma-separated usernames; default jf) are auto-approved.
-// Everyone else must Request access; an owner Approves from the panel.
+// Cloud PC access binds to canonical account IDs. An exact private owner-ID
+// allowlist additionally requires the authority's owner role and completed MFA.
 
 type aclFile struct {
-	Approved []string          `json:"approved"`
-	Pending  map[string]string `json:"pending"` // username -> requested_at RFC3339
+	Schema    int               `json:"schema"`
+	Approved  []string          `json:"approved"`
+	Pending   map[string]string `json:"pending"` // immutable account ID -> requested_at
+	Audit     []aclAudit        `json:"audit"`
+	AuditHead string            `json:"audit_head,omitempty"`
 }
 
 func aclPath() string { return env("CPC_ACL", "/var/lib/cloudpc/acl.json") }
 
-func loadACL() aclFile {
-	a := aclFile{Pending: map[string]string{}}
-	b, err := os.ReadFile(aclPath())
-	if err == nil {
-		json.Unmarshal(b, &a)
-		if a.Pending == nil {
-			a.Pending = map[string]string{}
-		}
-	}
-	return a
-}
-
-func saveACL(a aclFile) error {
-	os.MkdirAll(filepath.Dir(aclPath()), 0750)
-	b, _ := json.MarshalIndent(a, "", "  ")
-	return os.WriteFile(aclPath(), b, 0640)
-}
-
-func owners() []string {
-	v := env("CPC_OWNERS", "jf,maindirectory")
-	var out []string
-	for _, p := range strings.Split(v, ",") {
-		p = strings.ToLower(strings.TrimSpace(p))
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-func isOwner(username string) bool {
-	u := strings.ToLower(strings.TrimSpace(username))
-	for _, o := range owners() {
-		if u == o {
-			return true
-		}
-	}
-	return false
+func isOwner(s *sess) bool {
+	return s != nil && s.account.Owner && time.Now().UnixMilli() < s.account.ExpiresMs
 }
 
 func usernameOf(s *sess) string {
@@ -105,26 +72,23 @@ func usernameOf(s *sess) string {
 	return s.user
 }
 
-func isApproved(username string) bool {
-	if isOwner(username) {
+func isApproved(s *sess) bool {
+	if s == nil || !validAccountID(s.account.ID) || time.Now().UnixMilli() >= s.account.ExpiresMs {
+		return false
+	}
+	if isOwner(s) {
 		return true
 	}
-	a := loadACL()
-	u := strings.ToLower(username)
+	a, err := loadACL()
+	if err != nil {
+		return false
+	}
 	for _, x := range a.Approved {
-		if strings.ToLower(x) == u {
+		if x == s.account.ID {
 			return true
 		}
 	}
 	return false
-}
-
-func clientIP(r *http.Request) string {
-	if v := r.Header.Get("CF-Connecting-IP"); v != "" {
-		return v
-	}
-	h, _, _ := net.SplitHostPort(r.RemoteAddr)
-	return h
 }
 
 func limited(ip string) bool {
@@ -150,7 +114,10 @@ func acctCall(route, flow, session string, body any) (int, map[string]any) {
 		rd = bytes.NewReader(bb)
 		method = "POST"
 	}
-	req, _ := http.NewRequest(method, acct+route, rd)
+	req, err := http.NewRequest(method, acct+route, rd)
+	if err != nil {
+		return 503, map[string]any{}
+	}
 	req.Header.Set("accept", "application/json")
 	req.Header.Set("content-type", "application/json")
 	if flow != "" {
@@ -166,26 +133,33 @@ func acctCall(route, flow, session string, body any) (int, map[string]any) {
 	}
 	defer res.Body.Close()
 	m := map[string]any{}
-	json.NewDecoder(io.LimitReader(res.Body, 1<<16)).Decode(&m)
+	data, err := io.ReadAll(io.LimitReader(res.Body, (1<<16)+1))
+	if err != nil || len(data) > 1<<16 || strings.TrimSpace(strings.SplitN(res.Header.Get("Content-Type"), ";", 2)[0]) != "application/json" {
+		return 503, map[string]any{}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&m); err != nil || m == nil {
+		return 503, map[string]any{}
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return 503, map[string]any{}
+	}
 	return res.StatusCode, m
 }
 
 func str(m map[string]any, k string) string { v, _ := m[k].(string); return v }
 
-func meOf(rxs string) (string, bool) {
+func meOf(rxs string) (accountIdentity, bool) {
 	st, m := acctCall("me", "", rxs, nil)
 	if st != 200 {
-		return "", false
+		return accountIdentity{}, false
 	}
-	a, _ := m["account"].(map[string]any)
-	if a == nil || str(a, "id") == "" {
-		return "", false
-	}
-	return str(a, "id") + "\x00" + str(a, "username"), true
+	return canonicalAccount(m, time.Now())
 }
 
 func getSess(r *http.Request) (string, *sess) {
-	c, err := r.Cookie("cpc")
+	c, err := uniqueCookie(r, "cpc")
 	if err != nil {
 		return "", nil
 	}
@@ -196,17 +170,20 @@ func getSess(r *http.Request) (string, *sess) {
 		delete(sessions, c.Value)
 		return "", nil
 	}
-	if time.Since(s.checked) > 5*time.Minute {
-		rxs := s.rxs
-		mu.Unlock()
-		_, ok := meOf(rxs)
-		mu.Lock()
-		if !ok {
-			delete(sessions, c.Value)
-			return "", nil
-		}
-		s.checked = time.Now()
+	// A local Cloud PC cookie must not outlive revocation at Accounts. Also
+	// reject a changed subject or username instead of retaining stale rights.
+	rxs, expected := s.rxs, s.account
+	mu.Unlock()
+	who, ok := meOf(rxs)
+	mu.Lock()
+	if sessions[c.Value] != s {
+		return "", nil
 	}
+	if !ok || who.ID != expected.ID || who.Username != expected.Username || who.Owner != expected.Owner || time.Now().After(s.exp) {
+		delete(sessions, c.Value)
+		return "", nil
+	}
+	s.checked = time.Now()
 	return c.Value, s
 }
 
@@ -236,17 +213,17 @@ var page = template.Must(template.New("p").Parse(`<!doctype html><html lang="en"
 <section class="card" style="margin-top:1.5rem"><h2>Pending requests</h2>
 {{if .PendingList}}{{range .PendingList}}
 <form method="post" action="` + pfx + `/approve" style="display:inline-flex;gap:.5rem;align-items:center;margin:.4rem 0">
-<input type="hidden" name="user" value="{{.}}"><span>{{.}}</span>
+<input type="hidden" name="account_id" value="{{.}}"><span>{{.}}</span>
 <button class="btn">Approve</button></form>
 <form method="post" action="` + pfx + `/deny" style="display:inline-flex;gap:.5rem;align-items:center;margin:.4rem 0">
-<input type="hidden" name="user" value="{{.}}">
+<input type="hidden" name="account_id" value="{{.}}">
 <button class="btn ghost">Deny</button></form>
 {{end}}{{else}}<p class="sub small">No pending requests.</p>{{end}}
 </section>
 <section class="card" style="margin-top:1rem"><h2>Approved users</h2>
 {{if .ApprovedList}}{{range .ApprovedList}}
 <form method="post" action="` + pfx + `/deny" style="display:flex;gap:.5rem;align-items:center;margin:.4rem 0">
-<input type="hidden" name="user" value="{{.}}"><span>{{.}}</span>
+<input type="hidden" name="account_id" value="{{.}}"><span>{{.}}</span>
 <button class="btn ghost">Revoke</button></form>
 {{end}}{{else}}<p class="sub small">No approved non-owner users.</p>{{end}}
 </section>
@@ -261,19 +238,19 @@ func render(w http.ResponseWriter, s *sess, msg string) {
 	var pendingList, approvedList []string
 	if s != nil {
 		u = usernameOf(s)
-		owner = isOwner(u)
-		approved = isApproved(u)
-		a := loadACL()
-		_, pending = a.Pending[strings.ToLower(u)]
+		owner = isOwner(s)
+		approved = isApproved(s)
+		a, err := loadACL()
+		if err != nil {
+			http.Error(w, "Cloud PC permissions are temporarily unavailable.", http.StatusServiceUnavailable)
+			return
+		}
+		_, pending = a.Pending[s.account.ID]
 		if owner {
 			for k := range a.Pending {
 				pendingList = append(pendingList, k)
 			}
-			for _, x := range a.Approved {
-				if !isOwner(x) {
-					approvedList = append(approvedList, x)
-				}
-			}
+			approvedList = append(approvedList, a.Approved...)
 		}
 	}
 	page.Execute(w, map[string]any{"Msg": msg, "User": u, "Owner": owner, "Approved": approved, "Pending": pending, "PendingList": pendingList, "ApprovedList": approvedList})
@@ -282,14 +259,34 @@ func render(w http.ResponseWriter, s *sess, msg string) {
 func sameOrigin(r *http.Request) bool {
 	o := r.Header.Get("Origin")
 	if o == "" || o == "null" {
-		return o == ""
+		return false
 	}
 	u, err := url.Parse(o)
-	return err == nil && u.Host == r.Host
+	scheme := "http"
+	if secure(r) {
+		scheme = "https"
+	}
+	return err == nil && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == "" &&
+		strings.EqualFold(u.Host, r.Host) && u.Scheme == scheme
 }
 
 func cloud(w http.ResponseWriter, r *http.Request) {
+	if !requireSecureBoundary(w, r) {
+		return
+	}
 	p := strings.TrimPrefix(r.URL.Path, pfx)
+	switch p {
+	case "/request", "/approve", "/deny", "/start", "/stop":
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+	}
+	if r.Method == http.MethodPost && !sameOrigin(r) {
+		http.Error(w, "bad origin", http.StatusForbidden)
+		return
+	}
 	tok, s := getSess(r)
 	if s != nil && !termsOK(w, r) {
 		return
@@ -299,11 +296,20 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 			toSignin(w, r)
 			return
 		}
-		if s.port == "" {
-			http.Redirect(w, r, pfx+"/", 303)
+		if !isApproved(s) {
+			http.Error(w, "Cloud PC access is not approved.", http.StatusForbidden)
+			return
+		}
+		if (r.Header.Get("Origin") != "" || strings.EqualFold(r.Header.Get("Upgrade"), "websocket")) && !sameOrigin(r) {
+			http.Error(w, "bad origin", http.StatusForbidden)
 			return
 		}
 		mu.Lock()
+		if s.port == "" {
+			mu.Unlock()
+			http.Redirect(w, r, pfx+"/", 303)
+			return
+		}
 		if time.Since(s.touched) > time.Minute {
 			s.touched = time.Now()
 			go run("cloudpc", "/usr/local/sbin/cloudpc-ctl", "touch", s.id)
@@ -313,6 +319,23 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 		t, _ := url.Parse("http://127.0.0.1:" + port)
 		rp := httputil.NewSingleHostReverseProxy(t)
 		rp.FlushInterval = -1
+		// An established desktop socket must also lose access when its website
+		// session or Cloud PC approval is revoked, without waiting for reconnect.
+		sessionRequest := &http.Request{Header: make(http.Header)}
+		sessionRequest.AddCookie(&http.Cookie{Name: "cpc", Value: tok})
+		rp.ModifyResponse = func(response *http.Response) error {
+			if response.StatusCode == http.StatusSwitchingProtocols {
+				go func() {
+					ticker := time.NewTicker(30 * time.Second)
+					defer ticker.Stop()
+					watchDesktopAuthorization(r.Context(), ticker.C, func() bool {
+						_, current := getSess(sessionRequest)
+						return current == s && isApproved(current)
+					}, response.Body)
+				}()
+			}
+			return nil
+		}
 		rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("desktop proxy: %v", err)
 			http.Error(w, "desktop unreachable", 502)
@@ -322,12 +345,11 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 			r.URL.Path = "/"
 		}
 		r.Header.Del("Cookie")
+		r.Header.Del("Authorization")
+		r.Header.Del("X-RedX-Session")
+		r.Header.Del("X-RedX-Flow")
 		r.Host = "127.0.0.1:" + port
 		rp.ServeHTTP(w, r)
-		return
-	}
-	if r.Method == "POST" && !sameOrigin(r) {
-		http.Error(w, "bad origin", 403)
 		return
 	}
 	if s == nil {
@@ -343,69 +365,105 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 		}
 		render(w, s, "")
 	case "/request":
-		u := usernameOf(s)
-		if isApproved(u) {
+		u := s.account.ID
+		if isApproved(s) {
 			render(w, s, "You already have access.")
 			return
 		}
-		a := loadACL()
-		a.Pending[strings.ToLower(u)] = time.Now().UTC().Format(time.RFC3339)
-		_ = saveACL(a)
+		capacityFull := false
+		changed, err := mutateACLWhen(func(a *aclFile) bool {
+			if _, exists := a.Pending[u]; exists {
+				return false
+			}
+			for _, id := range a.Approved {
+				if id == u {
+					return false
+				}
+			}
+			a.Pending[u] = time.Now().UTC().Format(time.RFC3339)
+			a.record("request", u, u)
+			if data, err := json.MarshalIndent(a, "", "  "); err != nil || len(data) > maxACLBytes-aclRequestReserve {
+				capacityFull = true
+				return false
+			}
+			return true
+		})
+		if err != nil {
+			http.Error(w, "Could not save Cloud PC permissions. No request was acknowledged.", http.StatusServiceUnavailable)
+			return
+		}
+		if capacityFull {
+			http.Error(w, "Cloud PC request capacity is temporarily unavailable. No request was saved.", http.StatusServiceUnavailable)
+			return
+		}
+		if !changed {
+			render(w, s, "Your access is already approved or requested.")
+			return
+		}
 		ownerAlert(u)
 		render(w, s, "Access requested. The owner has been notified.")
 	case "/approve":
-		if !isOwner(usernameOf(s)) {
+		if !isOwner(s) {
 			http.Error(w, "forbidden", 403)
 			return
 		}
-		u := strings.ToLower(strings.TrimSpace(r.FormValue("user")))
-		if u == "" {
+		u := r.FormValue("account_id")
+		if !validAccountID(u) {
 			render(w, s, "Missing user.")
 			return
 		}
-		a := loadACL()
-		delete(a.Pending, u)
-		found := false
-		for _, x := range a.Approved {
-			if strings.ToLower(x) == u {
-				found = true
-				break
+		if err := mutateACL(func(a *aclFile) {
+			delete(a.Pending, u)
+			found := false
+			for _, x := range a.Approved {
+				if x == u {
+					found = true
+					break
+				}
 			}
+			if !found {
+				a.Approved = append(a.Approved, u)
+			}
+			a.record("approve", s.account.ID, u)
+		}); err != nil {
+			http.Error(w, "Could not save Cloud PC permissions. Approval was not acknowledged.", http.StatusServiceUnavailable)
+			return
 		}
-		if !found {
-			a.Approved = append(a.Approved, u)
-		}
-		_ = saveACL(a)
-		notifyLocal("user:"+u, "cloudpc_decision", "Cloud PC access approved", "You can now open your Cloud PC desktop.", pfx+"/")
+		// The legacy notification gateway routes user:<username> by mutable key
+		// names. Do not send a private decision until an ID-bound recipient
+		// contract is verified; the saved decision remains visible in Cloud PC.
 		render(w, s, "Approved "+u+".")
 	case "/deny":
-		if !isOwner(usernameOf(s)) {
+		if !isOwner(s) {
 			http.Error(w, "forbidden", 403)
 			return
 		}
-		u := strings.ToLower(strings.TrimSpace(r.FormValue("user")))
-		if u == "" {
+		u := r.FormValue("account_id")
+		if !validAccountID(u) {
 			render(w, s, "Missing user.")
 			return
 		}
-		a := loadACL()
-		delete(a.Pending, u)
-		kept := a.Approved[:0]
-		for _, x := range a.Approved {
-			if strings.ToLower(x) != u {
-				kept = append(kept, x)
+		if err := mutateACL(func(a *aclFile) {
+			delete(a.Pending, u)
+			kept := a.Approved[:0]
+			for _, x := range a.Approved {
+				if x != u {
+					kept = append(kept, x)
+				}
 			}
+			a.Approved = kept
+			a.record("deny", s.account.ID, u)
+		}); err != nil {
+			http.Error(w, "Could not save Cloud PC permissions. Revocation was not acknowledged.", http.StatusServiceUnavailable)
+			return
 		}
-		a.Approved = kept
-		_ = saveACL(a)
-		notifyLocal("user:"+u, "cloudpc_decision", "Cloud PC access denied", "An owner declined or revoked your Cloud PC access.", "")
 		render(w, s, "Denied/revoked "+u+".")
 	case "/start":
 		if s == nil {
 			http.Redirect(w, r, pfx+"/", 303)
 			return
 		}
-		if !isApproved(usernameOf(s)) {
+		if !isApproved(s) {
 			render(w, s, "Cloud PC access is not approved yet. Request access first.")
 			return
 		}
@@ -437,6 +495,23 @@ func cloud(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func watchDesktopAuthorization(ctx context.Context, ticks <-chan time.Time, allowed func() bool, connection io.Closer) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, ok := <-ticks:
+			if !ok {
+				return
+			}
+			if !allowed() {
+				_ = connection.Close()
+				return
+			}
+		}
+	}
+}
+
 func sec(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -444,11 +519,33 @@ func sec(h http.Handler) http.Handler {
 		if !strings.HasPrefix(r.URL.Path, pfx+"/desktop/") {
 			w.Header().Set("X-Frame-Options", "DENY")
 		}
+		// The native API retains its stricter, handler-enforced native-TLS
+		// requirement, even when a trusted HTTPS proxy serves the website.
+		if !strings.HasPrefix(r.URL.Path, "/v1/") && !requireSecureBoundary(w, r) {
+			return
+		}
 		h.ServeHTTP(w, r)
 	})
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "prepare-acl-migration" {
+		if err := prepareACLMigration(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		log.Print("Prepared a separate review ACL; original permissions are unchanged. Verify mapping provenance before promotion.")
+		return
+	}
+	ownerIDs, err := parseOwnerAccountIDs(os.Getenv("CPC_OWNER_ACCOUNT_IDS"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	cpcOwnerIDs = ownerIDs
+	policy, err := parseTrustedProxies(os.Getenv("CPC_TRUSTED_PROXY_CIDRS"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	cpcProxyTrust = policy
 	m := http.NewServeMux()
 	m.HandleFunc(pfx, cloud)
 	m.HandleFunc(pfx+"/", cloud)
@@ -457,10 +554,6 @@ func main() {
 	m.HandleFunc("/vortex/signout", signout)
 	m.HandleFunc("/vortex/", func(w http.ResponseWriter, r *http.Request) {
 		// Public: stylesheet + desktop download artifacts (SHA256SUMS, installers).
-		if r.TLS == nil && r.Header.Get("CF-Visitor") == "" {
-			http.Redirect(w, r, "https://"+strings.Split(r.Host, ":")[0]+r.URL.RequestURI(), http.StatusMovedPermanently)
-			return
-		}
 		if r.URL.Path == "/vortex/donate" || r.URL.Path == "/vortex/terms" {
 			http.Redirect(w, r, r.URL.Path+"/"+qs(r), 301)
 			return
@@ -490,13 +583,7 @@ func main() {
 	gwURL, _ := url.Parse(env("CPC_GATEWAY", "http://127.0.0.1:8091"))
 	gwp := httputil.NewSingleHostReverseProxy(gwURL)
 	gwp.FlushInterval = -1
-	m.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
-		if r.TLS == nil { // never accept API keys over cleartext
-			http.Error(w, `{"error":{"code":426,"message":"use https"}}`, http.StatusUpgradeRequired)
-			return
-		}
-		gwp.ServeHTTP(w, r)
-	})
+	m.Handle("/v1/", nativeTLSOnly(gwp))
 	// Plugin store (127.0.0.1:8095). /plugins/ is the public API for the apps (RedX session via
 	// X-RedX-Session header). /vortex/store-api/ is the same API for the signed-in web "My plugins"
 	// page: it injects the web session's RedX token and requires X-Requested-With on writes (CSRF).
@@ -557,8 +644,6 @@ func toSignin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/vortex/signin?next="+url.QueryEscape(r.URL.RequestURI()), 303)
 }
 
-func secure(r *http.Request) bool { return r.TLS != nil || r.Header.Get("CF-Visitor") != "" }
-
 var signPage = template.Must(template.New("s").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sign in · Red-XAI Vortex</title><link rel="stylesheet" href="/vortex/style.css"></head><body><main class="wrap narrow">
 <a href="https://red-xai.com/" class="back">&larr; Red-XAI</a><h1>Sign in to <span>RedX</span></h1>
@@ -576,6 +661,9 @@ var signPage = template.Must(template.New("s").Parse(`<!doctype html><html lang=
 </main></body></html>`))
 
 func signin(w http.ResponseWriter, r *http.Request) {
+	if !requireSecureBoundary(w, r) {
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	show := func(d map[string]any) { signPage.Execute(w, d) }
@@ -598,7 +686,7 @@ func signin(w http.ResponseWriter, r *http.Request) {
 	}
 	step := r.FormValue("step")
 	if step == "2fa" || step == "call" {
-		c, err := r.Cookie("cpcf")
+		c, err := uniqueCookie(r, "cpcf")
 		mu.Lock()
 		var p *pend
 		if err == nil {
@@ -626,11 +714,11 @@ func signin(w http.ResponseWriter, r *http.Request) {
 			method = "call"
 		}
 		st, m := acctCall("login/2fa", p.flow, "", map[string]any{"method": method, "code": strings.TrimSpace(r.FormValue("code"))})
-		if st == 200 && str(m, "token") != "" {
+		if token := completedToken(m); st == 200 && token != "" {
 			mu.Lock()
 			delete(pending, c.Value)
 			mu.Unlock()
-			finish(w, r, str(m, "token"), p.next)
+			finish(w, r, token, p.next)
 			return
 		}
 		fail(ip)
@@ -668,8 +756,8 @@ func signin(w http.ResponseWriter, r *http.Request) {
 	case "2fa_setup":
 		show(map[string]any{"Msg": "Finish setting up two-step sign-in on red-xai.com first, then come back.", "Next": next})
 	default:
-		if str(m, "token") != "" {
-			finish(w, r, str(m, "token"), next)
+		if token := completedToken(m); token != "" {
+			finish(w, r, token, next)
 			return
 		}
 		show(map[string]any{"Msg": "Sign-in failed.", "Next": next})
@@ -689,7 +777,7 @@ func finish(w http.ResponseWriter, r *http.Request, rxs, next string) {
 		signPage.Execute(w, map[string]any{"Msg": "Sign-in failed.", "Next": next})
 		return
 	}
-	h := sum256([]byte("cloudpc-redx:" + strings.SplitN(who, "\x00", 2)[0]))
+	h := sum256([]byte("cloudpc-redx:" + who.ID))
 	b, err := randBytes(32)
 	if err != nil {
 		http.Error(w, "error", 500)
@@ -697,13 +785,20 @@ func finish(w http.ResponseWriter, r *http.Request, rxs, next string) {
 	}
 	t := hex.EncodeToString(b)
 	mu.Lock()
-	sessions[t] = &sess{rxs: rxs, user: who, checked: time.Now(), id: hex.EncodeToString(h[:8]), exp: time.Now().Add(12 * time.Hour)}
+	expires := time.Now().Add(12 * time.Hour)
+	if canonicalExpiry := time.UnixMilli(who.ExpiresMs); canonicalExpiry.Before(expires) {
+		expires = canonicalExpiry
+	}
+	sessions[t] = &sess{rxs: rxs, user: who.ID + "\x00" + who.Username, account: who, checked: time.Now(), id: hex.EncodeToString(h[:8]), exp: expires}
 	mu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: "cpc", Value: t, Path: "/vortex", HttpOnly: true, Secure: secure(r), SameSite: http.SameSiteLaxMode, MaxAge: 43200})
 	http.Redirect(w, r, next, 303)
 }
 
 func signout(w http.ResponseWriter, r *http.Request) {
+	if !requireSecureBoundary(w, r) {
+		return
+	}
 	if r.Method == "POST" && sameOrigin(r) {
 		if tok, s := getSess(r); s != nil {
 			go acctCall("logout", "", s.rxs, map[string]any{})
