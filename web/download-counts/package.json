@@ -1,0 +1,14 @@
+{
+  "name": "redx-download-counts",
+  "private": true,
+  "type": "module",
+  "description": "Shared download counters for red-xai.com Download buttons.",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "demo": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "puppeteer-core": "24.31.0"
+  }
+}
